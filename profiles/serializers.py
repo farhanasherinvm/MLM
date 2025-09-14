@@ -5,16 +5,38 @@ from users.models import CustomUser
 
 class ProfileSerializer(serializers.ModelSerializer):
     referrals = serializers.SerializerMethodField()
+    referred_by_id = serializers.SerializerMethodField()
+    referred_by_name = serializers.SerializerMethodField()
+    count_out_of_2 = serializers.SerializerMethodField()
+    percentage = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
+    date_of_join = serializers.DateTimeField(source="user.created_at", format="%Y-%m-%d %H:%M:%S")
 
     class Meta:
         model = Profile
         fields = [
-            "first_name", "last_name", "email", "pincode", "mobile", "whatsapp_number",
-            "district", "state", "address", "place", "profile_image", "referrals",
+            "user_id", "first_name", "last_name", "email", "mobile",
+            "status", "date_of_join", "count_out_of_2", "percentage",
+            "referred_by_id", "referred_by_name", "referrals",
         ]
-        read_only_fields = [
-            "first_name", "last_name", "email", "pincode", "mobile", "whatsapp_number"
-        ]
+
+    def get_user_id(self, obj):
+        return obj.user.user_id
+
+    def get_status(self, obj):
+        return "Active" if obj.user.is_active else "Inactive"
+
+    def get_referred_by_id(self, obj):
+        return obj.user.referred_by.user_id if obj.user.referred_by else None
+
+    def get_referred_by_name(self, obj):
+        return f"{obj.user.referred_by.first_name} {obj.user.referred_by.last_name}" if obj.user.referred_by else None
+
+    def get_count_out_of_2(self, obj):
+        return f"{obj.user.referrals.count()}/2"
+
+    def get_percentage(self, obj):
+        return f"{(obj.user.referrals.count() / 2) * 100:.0f}%"
 
     def get_referrals(self, obj):
         user = obj.user  
@@ -23,13 +45,12 @@ class ProfileSerializer(serializers.ModelSerializer):
             if level > max_level:
                 return {}
 
-            # Always 2 slots
             slots = [
                 {"position": "Left", "status": "Not Available"},
                 {"position": "Right", "status": "Not Available"},
             ]
 
-            referrals = list(CustomUser.objects.filter(referred_by=user)[:2])  # max 2 children
+            referrals = list(CustomUser.objects.filter(referred_by=user)[:2])
 
             for i, child in enumerate(referrals):
                 slots[i] = {
@@ -50,6 +71,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             return {f"Level {level}": slots}
 
         return build_levels(user)
+
 
 class KYCSerializer(serializers.ModelSerializer):
 
@@ -73,3 +95,27 @@ class KYCSerializer(serializers.ModelSerializer):
 
 class ReferralSerializer(serializers.Serializer):
     referral_url = serializers.CharField(read_only=True)
+
+
+class ReferralListSerializer(serializers.ModelSerializer):
+    level = serializers.IntegerField()
+    status = serializers.SerializerMethodField()
+    joined_date = serializers.DateTimeField(source="created_at", read_only=True)
+    count = serializers.SerializerMethodField()
+    percentage = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CustomUser
+        fields = [
+            "user_id", "first_name", "last_name", "email", "mobile",
+            "level", "status", "joined_date", "count", "percentage"
+        ]
+
+    def get_status(self, obj):
+        return "Active" if obj.is_active else "Inactive"
+
+    def get_count(self, obj):
+        return f"{obj.referrals.count()}/2"
+
+    def get_percentage(self, obj):
+        return f"{(obj.referrals.count() / 2) * 100}%"

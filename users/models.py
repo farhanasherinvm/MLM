@@ -20,16 +20,25 @@ class CustomUserManager(BaseUserManager):
         user.save(using=self._db)
         return user
 
+    def create_superuser(self, email, password=None, **extra_fields):
+        extra_fields.setdefault("is_staff", True)
+        extra_fields.setdefault("is_superuser", True)
+        extra_fields.setdefault("is_active", True)
+
+        if extra_fields.get("is_staff") is not True:
+            raise ValueError("Superuser must have is_staff=True.")
+        if extra_fields.get("is_superuser") is not True:
+            raise ValueError("Superuser must have is_superuser=True.")
+
+        return self.create_user(email, password, **extra_fields)
+
     def generate_dm_id(self):
-        """
-        Generate a random DM ID, ensure uniqueness
-        """
+        """Generate a random DM ID, ensure uniqueness"""
         while True:
             rand_part = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
             new_id = f"DM{rand_part}"
             if not self.model.objects.filter(user_id=new_id).exists():
                 return new_id
-
 
 class CustomUser(AbstractBaseUser, PermissionsMixin):
     PAYMENT_CHOICES = [
