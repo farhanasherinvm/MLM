@@ -33,6 +33,7 @@ razorpay==1.4.2
 razorpay-py==0.0.2
 reportlab==4.4.3
 requests==2.32.4
+setuptools==80.9.0
 six==1.17.0
 soupsieve==2.7
 sqlparse==0.5.3

@@ -27,7 +27,7 @@ SECRET_KEY = 'django-insecure-5*(zbso#o2n0ur6wt1-2ku#r^!ev0m9=ob8y67d1u37522s@rr
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ["https://mlm-pmif.onrender.com"]
+ALLOWED_HOSTS = ["https://mlm-pmif.onrender.com" ,'127.0.0.1:8000','127.0.0.1', 'localhost']
 
 
 # Application definition
@@ -103,13 +103,27 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 #}
 
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': 'neondb',
+#         'USER': 'neondb_owner',
+#         'PASSWORD': 'npg_tVEbBRgya7M1',
+#         'HOST': 'ep-delicate-surf-adlw8o3w-pooler.c-2.us-east-1.aws.neon.tech',
+#         'PORT': '5432',
+#         'OPTIONS': {
+#             'sslmode': 'require',
+#         },
+#         'CONN_MAX_AGE': 600,
+#     }
+# }
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'neondb',
         'USER': 'neondb_owner',
-        'PASSWORD': 'npg_tVEbBRgya7M1',
-        'HOST': 'ep-delicate-surf-adlw8o3w-pooler.c-2.us-east-1.aws.neon.tech',
+        'PASSWORD': 'npg_gusviL3OT6qr',
+        'HOST': 'ep-odd-cake-admzygcm-pooler.c-2.us-east-1.aws.neon.tech',
         'PORT': '5432',
         'OPTIONS': {
             'sslmode': 'require',
@@ -117,7 +131,7 @@ DATABASES = {
         'CONN_MAX_AGE': 600,
     }
 }
-
+# 'postgresql://neondb_owner:npg_gusviL3OT6qr@ep-odd-cake-admzygcm-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require'
 # ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv())
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
