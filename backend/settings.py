@@ -14,7 +14,6 @@ from pathlib import Path
 import os
 from datetime import timedelta
 
-
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -41,9 +40,11 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
+    'rest_framework.authtoken',
     'profiles',
-     "rest_framework_simplejwt",
+    'rest_framework_simplejwt',
     'users',
+    'rest_framework_simplejwt.token_blacklist',
    
     
 ]
@@ -128,7 +129,7 @@ EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 EMAIL_HOST_USER = 'zecserbusiness@gmail.com'
 EMAIL_HOST_PASSWORD = 'wlsx ausq sxkm qxhr'
-
+# DEFAULT_FROM_EMAIL = 'zecserbusiness@gmail.com'
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
@@ -159,3 +160,6 @@ SIMPLE_JWT = {
     'REFRESH_TOKEN_LIFETIME': timedelta(days=2),  
 
 }
+
+RAZORPAY_KEY_ID ='rzp_test_nGk98ngKrPHf2J'
+RAZORPAY_KEY_SECRET ='Gh7CpAcNtrKTQsE35rLEAm19'

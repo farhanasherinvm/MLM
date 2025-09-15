@@ -119,3 +119,143 @@ class ReferralListSerializer(serializers.ModelSerializer):
 
     def get_percentage(self, obj):
         return f"{(obj.referrals.count() / 2) * 100}%"
+    
+
+#    Serializer for Admin user listing
+
+class AdminUserListSerializer(serializers.ModelSerializer):
+    """
+    Compact serializer for admin listing
+    """
+    username = serializers.SerializerMethodField()
+    profile_image = serializers.SerializerMethodField()
+    level = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CustomUser
+        fields = ["username", "user_id", "level", "profile_image"]
+
+    def get_username(self, obj):
+        first = getattr(obj, "first_name", "") or ""
+        last = getattr(obj, "last_name", "") or ""
+        full = f"{first} {last}".strip()
+        return full if full else obj.user_id
+
+    def get_profile_image(self, obj):
+        try:
+            profile = getattr(obj, "profile", None)
+            if profile and profile.profile_image:
+                return profile.profile_image.url
+        except Exception:
+            return None
+        return None
+
+    def get_level(self, obj):
+        try:
+            level = 0
+            visited = set()
+            current = obj
+            while getattr(current, "referred_by", None):
+                rid = getattr(current.referred_by, "user_id", None)
+                if not rid or rid in visited:
+                    break
+                visited.add(rid)
+                level += 1
+                current = current.referred_by
+            return level
+        except Exception:
+            return 0
+
+
+class AdminUserDetailSerializer(serializers.ModelSerializer):
+    profile_image = serializers.SerializerMethodField()
+    blocked_status = serializers.SerializerMethodField()  # new field
+
+    class Meta:
+        model = CustomUser
+        fields = [
+            "user_id", "first_name", "last_name", "email", "mobile",
+            "is_active", "blocked_status", "profile_image",
+        ]
+        read_only_fields = ["user_id", "email"]
+
+    def update(self, instance, validated_data):
+        profile_data = validated_data.pop("profile", {})
+        # update user fields
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        # update profile fields
+        profile = getattr(instance, "profile", None)
+        if profile and "profile_image" in profile_data:
+            profile.profile_image = profile_data["profile_image"]
+            profile.save()
+        return instance
+    
+    def get_profile_image(self, obj):
+        if hasattr(obj, "profile") and obj.profile.profile_image:
+            request = self.context.get("request")
+            return request.build_absolute_uri(obj.profile.profile_image.url) if request else obj.profile.profile_image.url
+        return None
+
+    def get_blocked_status(self, obj):
+        return "Unblocked" if obj.is_active else "Blocked"
+    
+
+class AdminNetworkUserSerializer(serializers.ModelSerializer):
+    username = serializers.SerializerMethodField()
+    sponsor = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
+    joindate = serializers.DateTimeField(source="date_of_joining", format="%Y-%m-%d", read_only=True)
+    profile_image = serializers.SerializerMethodField()
+    level = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CustomUser
+        fields = [
+            "username",
+            "sponsor",
+            "level",
+            "joindate",
+            "status",
+            "profile_image",
+        ]
+
+    def get_username(self, obj):
+        return f"{obj.first_name} {obj.last_name}".strip() or obj.user_id
+
+    def get_sponsor(self, obj):
+        if obj.sponsor_id:
+            try:
+                sponsor = CustomUser.objects.get(user_id=obj.sponsor_id)
+                sponsor_name = f"{sponsor.first_name} {sponsor.last_name}".strip()
+                return f"{sponsor.user_id} / {sponsor_name}"
+            except CustomUser.DoesNotExist:
+                return "N/A"
+        return "N/A"
+
+    def get_status(self, obj):
+        return "Active" if obj.is_active else "Blocked"
+
+    def get_profile_image(self, obj):
+        if hasattr(obj, "profile") and obj.profile and obj.profile.profile_image:
+            request = self.context.get("request")
+            return request.build_absolute_uri(obj.profile.profile_image.url) if request else obj.profile.profile_image.url
+        return None
+
+    def get_level(self, obj):
+        """Recalculate level by walking up the referral chain"""
+        try:
+            level = 0
+            visited = set()
+            current = obj
+            while getattr(current, "referred_by", None):
+                rid = getattr(current.referred_by, "user_id", None)
+                if not rid or rid in visited:
+                    break
+                visited.add(rid)
+                level += 1
+                current = current.referred_by
+            return level
+        except Exception:
+            return 0
