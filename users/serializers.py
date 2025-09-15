@@ -22,23 +22,36 @@ class RegistrationSerializer(serializers.Serializer):
     confirm_password = serializers.CharField(write_only=True)
 
     def validate(self, data):
+        # ✅ Passwords must match
         if data["password"] != data["confirm_password"]:
             raise serializers.ValidationError({"password": "Passwords do not match."})
-        
+
+        # ✅ Unique email check
         if CustomUser.objects.filter(email=data["email"]).exists():
             raise serializers.ValidationError({"email": "Email already exists."})
         
+        # ✅ Unique mobile check
         if CustomUser.objects.filter(mobile=data["mobile"]).exists():
             raise serializers.ValidationError({"mobile": "Mobile number already exists."})
-        
-        sponsor_id = data.get('sponsor_id')
+
+        # ✅ Sponsor must be provided
+        sponsor_id = data.get("sponsor_id")
+
         if not sponsor_id:
             raise serializers.ValidationError({"sponsor_id": "Sponsor ID is required."})
+
+        # ✅ Sponsor must exist
+        if not CustomUser.objects.filter(user_id=sponsor_id).exists():
+            raise serializers.ValidationError({"sponsor_id": "Sponsor ID does not exist in the system."})
+
+        # ✅ Sponsor must not exceed 2 referrals
         if not validate_sponsor(sponsor_id):
             raise serializers.ValidationError(
-                {"sponsor_id": "This sponsor is invalid or already has 2 referrals. Choose another sponsor."}
+                {"sponsor_id": "This sponsor already has 2 referrals. Choose another sponsor."}
             )
+
         return data
+    
     def create_payment(self, validated_data):
         data_copy = dict(validated_data)
         data_copy.pop("confirm_password")
