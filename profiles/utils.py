@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+
 CustomUser = get_user_model()
 
 def get_all_referrals(user, max_level=6):
@@ -7,12 +8,12 @@ def get_all_referrals(user, max_level=6):
     def fetch(u, level):
         if level > max_level:
             return
-        
-        # Change `referred_by` to `sponsor_id`
-        referrals = CustomUser.objects.filter(sponsor_id=u)
+
+       
+        referrals = CustomUser.objects.filter(sponsor_id=u.user_id)
         
         for r in referrals:
-            r.level = level   # attach level temporarily
+            r.temp_level = level  # temporary attribute
             result.append(r)
             fetch(r, level + 1)
 

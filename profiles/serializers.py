@@ -123,13 +123,11 @@ class KYCSerializer(serializers.ModelSerializer):
         read_only_fields = ["verified", "created_at"]
 
 class ReferralSerializer(serializers.Serializer):
-    referral_url = serializers.CharField(read_only=True)
-
-
+    referral_id = serializers.CharField()
 class ReferralListSerializer(serializers.ModelSerializer):
-    level = serializers.IntegerField()
+    level = serializers.IntegerField(source="temp_level")
     status = serializers.SerializerMethodField()
-    joined_date = serializers.DateTimeField(source="created_at", read_only=True)
+    joined_date = serializers.DateTimeField(source="date_of_joining", read_only=True)
     count = serializers.SerializerMethodField()
     percentage = serializers.SerializerMethodField()
 
@@ -144,11 +142,12 @@ class ReferralListSerializer(serializers.ModelSerializer):
         return "Active" if obj.is_active else "Inactive"
 
     def get_count(self, obj):
-        return f"{obj.referrals.count()}/2"
+        referrals_count = CustomUser.objects.filter(sponsor_id=obj.user_id).count()
+        return f"{referrals_count}/2"
 
     def get_percentage(self, obj):
-        return f"{(obj.referrals.count() / 2) * 100}%"
-    
+        referrals_count = CustomUser.objects.filter(sponsor_id=obj.user_id).count()
+        return f"{(referrals_count / 2) * 100}%"
 
 #    Serializer for Admin user listing
 
