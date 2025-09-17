@@ -4,14 +4,19 @@ from users.models import CustomUser
 
 
 class ProfileSerializer(serializers.ModelSerializer):
+    user_id = serializers.CharField(source='user.user_id', read_only=True)
+    first_name = serializers.CharField(source='user.first_name')
+    last_name = serializers.CharField(source='user.last_name')
+    email = serializers.EmailField(source='user.email')
+    mobile = serializers.CharField(source='user.mobile')
+    date_of_join = serializers.DateTimeField(source="user.date_of_joining", format="%Y-%m-%d %H:%M:%S", read_only=True)
     referrals = serializers.SerializerMethodField()
     referred_by_id = serializers.SerializerMethodField()
     referred_by_name = serializers.SerializerMethodField()
     count_out_of_2 = serializers.SerializerMethodField()
     percentage = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
-    date_of_join = serializers.DateTimeField(source="user.created_at", format="%Y-%m-%d %H:%M:%S")
-
+    date_of_join = serializers.DateTimeField(source="user.date_of_joining", format="%Y-%m-%d %H:%M:%S", read_only=True)
     class Meta:
         model = Profile
         fields = [
@@ -19,6 +24,16 @@ class ProfileSerializer(serializers.ModelSerializer):
             "status", "date_of_join", "count_out_of_2", "percentage",
             "referred_by_id", "referred_by_name", "referrals",
         ]
+    def update(self, instance, validated_data):
+        user_data = validated_data.pop('user', {})
+        instance = super().update(instance, validated_data)
+        
+        user = instance.user
+        for attr, value in user_data.items():
+            setattr(user, attr, value)
+        user.save()
+        
+        return instance
 
     def get_user_id(self, obj):
         return obj.user.user_id
@@ -27,50 +42,64 @@ class ProfileSerializer(serializers.ModelSerializer):
         return "Active" if obj.user.is_active else "Inactive"
 
     def get_referred_by_id(self, obj):
-        return obj.user.referred_by.user_id if obj.user.referred_by else None
+        return obj.user.sponsor_id if obj.user.sponsor_id else None
 
     def get_referred_by_name(self, obj):
-        return f"{obj.user.referred_by.first_name} {obj.user.referred_by.last_name}" if obj.user.referred_by else None
+        try:
+            # Look up the sponsor based on the sponsor_id.
+            sponsor = CustomUser.objects.get(user_id=obj.user.sponsor_id)
+            return f"{sponsor.first_name} {sponsor.last_name}"
+        except CustomUser.DoesNotExist:
+            return None
+        except AttributeError:
+            # Handle cases where obj.user.sponsor_id is None
+            return None
 
     def get_count_out_of_2(self, obj):
-        return f"{obj.user.referrals.count()}/2"
+        # Directly query the CustomUser model to count referrals
+        referred_count = CustomUser.objects.filter(sponsor_id=obj.user.user_id).count()
+        return f"{referred_count}/2"
 
     def get_percentage(self, obj):
-        return f"{(obj.user.referrals.count() / 2) * 100:.0f}%"
+        # Directly query the CustomUser model to get the count
+        referred_count = CustomUser.objects.filter(sponsor_id=obj.user.user_id).count()
+        return f"{(referred_count / 2) * 100:.0f}%"
 
     def get_referrals(self, obj):
-        user = obj.user  
+        user_id = obj.user.user_id
+        
+        return self.build_levels(user_id)
 
-        def build_levels(user, level=1, max_level=6):
-            if level > max_level:
-                return {}
+    
+    def build_levels(self, user_id, level=1, max_level=6):
+        if level > max_level:
+            return {}
 
-            slots = [
-                {"position": "Left", "status": "Not Available"},
-                {"position": "Right", "status": "Not Available"},
-            ]
+        slots = [
+            {"position": "Left", "status": "Not Available"},
+            {"position": "Right", "status": "Not Available"},
+        ]
 
-            referrals = list(CustomUser.objects.filter(referred_by=user)[:2])
+        referrals = list(CustomUser.objects.filter(sponsor_id=user_id)[:2])
 
-            for i, child in enumerate(referrals):
-                slots[i] = {
-                    "position": "Left" if i == 0 else "Right",
-                    "user_id": child.user_id,
-                    "name": f"{child.first_name} {child.last_name}",
-                    "email": child.email,
-                    "mobile": child.mobile,
-                    "status": "Active" if child.is_active else "Inactive",
-                    "date_of_join": child.created_at.strftime("%Y-%m-%d %H:%M:%S"),
-                    "count_out_of_2": f"{child.referrals.count()}/2",
-                    "percentage": f"{(child.referrals.count() / 2) * 100:.0f}%",
-                    "referred_by_id": child.referred_by.user_id if child.referred_by else None,
-                    "referred_by_name": f"{child.referred_by.first_name} {child.referred_by.last_name}" if child.referred_by else None,
-                    "next_level": build_levels(child, level + 1, max_level),
-                }
+        for i, child in enumerate(referrals):
+            slots[i] = {
+                "position": "Left" if i == 0 else "Right",
+                "user_id": child.user_id,
+                "name": f"{child.first_name} {child.last_name}",
+                "email": child.email,
+                "mobile": child.mobile,
+                "status": "Active" if child.is_active else "Inactive",
+                "date_of_join": child.date_of_joining.strftime("%Y-%m-%d %H:%M:%S"),
+                "count_out_of_2": f"{CustomUser.objects.filter(sponsor_id=child.user_id).count()}/2",
+                "percentage": f"{(CustomUser.objects.filter(sponsor_id=child.user_id).count() / 2) * 100:.0f}%",
+                "referred_by_id": child.sponsor_id,
+                "referred_by_name": f"{child.sponsor_id}",
+                "next_level": self.build_levels(child.user_id, level + 1, max_level),
+            }
 
-            return {f"Level {level}": slots}
+        return {f"Level {level}": slots}
 
-        return build_levels(user)
 
 
 class KYCSerializer(serializers.ModelSerializer):

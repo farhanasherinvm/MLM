@@ -7,7 +7,10 @@ def get_all_referrals(user, max_level=6):
     def fetch(u, level):
         if level > max_level:
             return
-        referrals = CustomUser.objects.filter(referred_by=u)
+        
+        # Change `referred_by` to `sponsor_id`
+        referrals = CustomUser.objects.filter(sponsor_id=u)
+        
         for r in referrals:
             r.level = level   # attach level temporarily
             result.append(r)

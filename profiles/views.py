@@ -47,7 +47,7 @@ class ReferralView(APIView):
     permission_classes = [permissions.IsAuthenticated]  
     def get(self, request):
         user = request.user
-        referral_link = {user.user_id}
+        referral_data = {user.user_id}
         serializer = ReferralSerializer({"referral_url": referral_link})
         return Response(serializer.data)
   
@@ -59,23 +59,25 @@ class ReferralListView(APIView):
 
     def get(self, request):
         user = request.user
-        referrals = get_all_referrals(user, 6)
+        
+        
+        all_referrals = get_all_referrals(user, 6)
 
-        # 🔎 Search filters
+        #  Search filters 
         email = request.query_params.get("email")
         status = request.query_params.get("status")
 
         if email:
-            referrals = [r for r in referrals if email.lower() in r.email.lower()]
+            all_referrals = [r for r in all_referrals if email.lower() in r.email.lower()]
         if status:
             if status.lower() == "active":
-                referrals = [r for r in referrals if r.is_active]
+                all_referrals = [r for r in all_referrals if r.is_active]
             elif status.lower() == "inactive":
-                referrals = [r for r in referrals if not r.is_active]
-
-        serializer = ReferralListSerializer(referrals, many=True)
+                all_referrals = [r for r in all_referrals if not r.is_active]
+        
+        # Pass the flattened list directly to the serializer
+        serializer = ReferralListSerializer(all_referrals, many=True)
         return Response(serializer.data)
-
 
 
 class AdminHomeView(APIView):
