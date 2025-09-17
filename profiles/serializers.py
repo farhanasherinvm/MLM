@@ -2,6 +2,60 @@ from rest_framework import serializers
 from .models import Profile,KYC
 from users.models import CustomUser
 
+def get_all_referrals(user_obj, max_level=6):
+    """
+    Returns a list of all referrals under a user up to `max_level` levels.
+    """
+    referrals = []
+    level_users = [user_obj]  # start with current user
+    current_level = 0
+
+    while level_users and current_level < max_level:
+        next_level_users = []
+        for user in level_users:
+            children = CustomUser.objects.filter(sponsor_id=user.user_id)
+            next_level_users.extend(children)
+            referrals.extend(children)
+        level_users = next_level_users
+        current_level += 1
+
+    return referrals
+
+class ReferralListSerializer(serializers.ModelSerializer):
+    level = serializers.IntegerField() 
+    status = serializers.SerializerMethodField()
+    joined_date = serializers.DateTimeField(source="date_of_joining", read_only=True)
+    direct_count = serializers.SerializerMethodField()
+    total_count = serializers.SerializerMethodField()
+    percentage = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CustomUser
+        fields = [
+            "user_id", "first_name", "last_name", "email", "mobile",
+            "level", "status", "joined_date",
+            "direct_count", "total_count", "percentage"
+        ]
+
+    def get_status(self, obj):
+        return "Active" if obj.is_active else "Inactive"
+
+    def get_direct_count(self, obj):
+        # Count of direct referrals (level 1 referrals)
+        return CustomUser.objects.filter(sponsor_id=obj.user_id).count()
+
+    def get_total_count(self, obj):
+        # Count of all referrals under this user up to 6 levels
+        all_referrals = get_all_referrals(obj, max_level=6)
+        return len(all_referrals)
+
+    def get_percentage(self, obj):
+        # Assuming goal is 2 direct referrals per user
+        direct = self.get_direct_count(obj)
+        percentage = (direct / 2) * 100
+        return f"{percentage}%"
+
+
 
 class ProfileSerializer(serializers.ModelSerializer):
     user_id = serializers.CharField(source='user.user_id', read_only=True)
@@ -124,30 +178,6 @@ class KYCSerializer(serializers.ModelSerializer):
 
 class ReferralSerializer(serializers.Serializer):
     referral_id = serializers.CharField()
-class ReferralListSerializer(serializers.ModelSerializer):
-    level = serializers.IntegerField(source="temp_level")
-    status = serializers.SerializerMethodField()
-    joined_date = serializers.DateTimeField(source="date_of_joining", read_only=True)
-    count = serializers.SerializerMethodField()
-    percentage = serializers.SerializerMethodField()
-
-    class Meta:
-        model = CustomUser
-        fields = [
-            "user_id", "first_name", "last_name", "email", "mobile",
-            "level", "status", "joined_date", "count", "percentage"
-        ]
-
-    def get_status(self, obj):
-        return "Active" if obj.is_active else "Inactive"
-
-    def get_count(self, obj):
-        referrals_count = CustomUser.objects.filter(sponsor_id=obj.user_id).count()
-        return f"{referrals_count}/2"
-
-    def get_percentage(self, obj):
-        referrals_count = CustomUser.objects.filter(sponsor_id=obj.user_id).count()
-        return f"{(referrals_count / 2) * 100}%"
 
 #    Serializer for Admin user listing
 

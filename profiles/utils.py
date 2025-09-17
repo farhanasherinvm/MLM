@@ -1,5 +1,5 @@
-from django.contrib.auth import get_user_model
 
+from django.contrib.auth import get_user_model
 CustomUser = get_user_model()
 
 def get_all_referrals(user, max_level=6):
@@ -9,11 +9,9 @@ def get_all_referrals(user, max_level=6):
         if level > max_level:
             return
 
-       
         referrals = CustomUser.objects.filter(sponsor_id=u.user_id)
-        
         for r in referrals:
-            r.temp_level = level  # temporary attribute
+            r.temp_level = level
             result.append(r)
             fetch(r, level + 1)
 
