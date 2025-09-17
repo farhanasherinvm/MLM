@@ -48,10 +48,12 @@ INSTALLED_APPS = [
     'level',
     'reports',
     'notifications',
+    'corsheaders',
     
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware', 
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -207,3 +209,9 @@ SIMPLE_JWT = {
 
 RAZORPAY_KEY_ID ='rzp_test_nGk98ngKrPHf2J'
 RAZORPAY_KEY_SECRET ='Gh7CpAcNtrKTQsE35rLEAm19'
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",  # For local development with your Vite/React/Vue app
+    "http://127.0.0.1:5173",  # A common alternative for local host
+    # Add your deployed frontend URL here when you have one (e.g., "https://your-frontend-domain.com")
+]
