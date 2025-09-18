@@ -2,6 +2,7 @@ import os
 import uuid
 import random
 from django.db import models
+from cloudinary_storage.storage import MediaCloudinaryStorage
 from django.contrib.auth.models import (
     AbstractBaseUser, PermissionsMixin, BaseUserManager
 )
@@ -169,7 +170,7 @@ class AdminAccountDetails(models.Model):
     account_number = models.CharField(max_length=50)
     ifsc_code = models.CharField(max_length=20)
     branch = models.CharField(max_length=100)
-    qr_code = models.ImageField(upload_to="payments/qr/", blank=True, null=True)
+    qr_code = models.ImageField(upload_to="payments/qr/", default="", storage=MediaCloudinaryStorage(), blank=True, null=True)
 
     def __str__(self):
         return f"Admin Account {self.account_number}"
@@ -192,7 +193,7 @@ class UserAccountDetails(models.Model):
     branch = models.CharField(max_length=100)
     upi_number = models.CharField(max_length=50)   # auto-filled from registration
     upi_type = models.CharField(max_length=20, choices=PAYMENT_CHOICES)  # auto-filled from registration
-    qr_code = models.ImageField(upload_to="user_qr_codes/", blank=True, null=True)
+    qr_code = models.ImageField(upload_to="user_qr_codes/", default="", storage=MediaCloudinaryStorage(), blank=True, null=True)
 
     def __str__(self):
         return f"AccountDetails({self.user.user_id})"

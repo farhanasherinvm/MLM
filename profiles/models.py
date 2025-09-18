@@ -1,6 +1,6 @@
 from django.db import models
 from django.conf import settings
-
+from cloudinary_storage.storage import MediaCloudinaryStorage
 def upload_to_kyc(instance, filename):
     return f"kyc/{instance.user.id}/{filename}"
 
@@ -13,7 +13,7 @@ class Profile(models.Model):
     state = models.CharField(max_length=100, blank=True, null=True)
     address = models.TextField(blank=True, null=True)
     place = models.CharField(max_length=100, blank=True, null=True)
-    profile_image = models.ImageField(upload_to='profile_images/', blank=True, null=True)
+    profile_image = models.ImageField(upload_to='profile_images/', default="", storage=MediaCloudinaryStorage(), blank=True, null=True)
 
     # Fetchable fields from user for convenience
     first_name = models.CharField(max_length=100)
@@ -39,11 +39,11 @@ class KYC(models.Model):
 
     # PAN details
     pan_number = models.CharField(max_length=20, unique=True)
-    pan_image = models.ImageField(upload_to=upload_to_kyc, null=True, blank=True)
+    pan_image = models.ImageField(upload_to=upload_to_kyc, default="", storage=MediaCloudinaryStorage(), null=True, blank=True)
 
     # ID details
     id_number = models.CharField(max_length=50, unique=True)
-    id_card_image = models.ImageField(upload_to=upload_to_kyc, null=True, blank=True)
+    id_card_image = models.ImageField(upload_to=upload_to_kyc, default="", storage=MediaCloudinaryStorage(), null=True, blank=True)
 
     # Nominee details
     nominee_name = models.CharField(max_length=100)

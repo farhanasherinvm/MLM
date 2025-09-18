@@ -10,5 +10,6 @@ urlpatterns = [
     path("referral/", ReferralView.as_view(), name="referral"),#get refferal link
     path("referrals/list/", ReferralListView.as_view(), name="referrals"),
     path("admin/home/", AdminHomeView.as_view(), name="admin-home"),
+   
 
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

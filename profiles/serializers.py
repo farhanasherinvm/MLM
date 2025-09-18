@@ -2,77 +2,215 @@ from rest_framework import serializers
 from .models import Profile,KYC
 from users.models import CustomUser
 
+def get_all_referrals(user_obj, max_level=6):
+    """
+    Returns a list of all referrals under a user up to `max_level` levels.
+    """
+    referrals = []
+    level_users = [user_obj]  # start with current user
+    current_level = 0
+
+    while level_users and current_level < max_level:
+        next_level_users = []
+        for user in level_users:
+            children = CustomUser.objects.filter(sponsor_id=user.user_id)
+            next_level_users.extend(children)
+            referrals.extend(children)
+        level_users = next_level_users
+        current_level += 1
+
+    return referrals
+
+class ReferralListSerializer(serializers.ModelSerializer):
+    level = serializers.IntegerField() 
+    status = serializers.SerializerMethodField()
+    joined_date = serializers.DateTimeField(source="date_of_joining", format="%Y-%m-%d %H:%M:%S", read_only=True)
+    direct_count = serializers.SerializerMethodField()
+    total_count = serializers.SerializerMethodField()
+    percentage = serializers.SerializerMethodField()
+
+    # Profile-related fields
+    district = serializers.SerializerMethodField()
+    state = serializers.SerializerMethodField()
+    address = serializers.SerializerMethodField()
+    place = serializers.SerializerMethodField()
+    pincode = serializers.SerializerMethodField()
+    whatsapp_number = serializers.SerializerMethodField()
+    profile_image = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CustomUser
+        fields = [
+            "user_id", "first_name", "last_name", "email", "mobile",
+            "level", "status", "joined_date",
+            "direct_count", "total_count", "percentage",
+            "district", "state", "address", "place", "pincode",
+            "whatsapp_number", "profile_image",
+        ]
+
+    def get_status(self, obj):
+        return "Active" if obj.is_active else "Inactive"
+
+    def get_direct_count(self, obj):
+        return CustomUser.objects.filter(sponsor_id=obj.user_id).count()
+
+    def get_total_count(self, obj):
+        all_referrals = get_all_referrals(obj, max_level=6)
+        return len(all_referrals)
+
+    def get_percentage(self, obj):
+        direct = self.get_direct_count(obj)
+        percentage = (direct / 2) * 100  # goal = 2 direct referrals
+        return f"{percentage:.0f}%"
+
+    # Profile fields
+    def get_district(self, obj):
+        profile = getattr(obj, "profile", None)
+        return profile.district if profile else None
+
+    def get_state(self, obj):
+        profile = getattr(obj, "profile", None)
+        return profile.state if profile else None
+
+    def get_address(self, obj):
+        profile = getattr(obj, "profile", None)
+        return profile.address if profile else None
+
+    def get_place(self, obj):
+        profile = getattr(obj, "profile", None)
+        return profile.place if profile else None
+
+    def get_pincode(self, obj):
+        profile = getattr(obj, "profile", None)
+        return profile.pincode if profile else None
+
+    def get_whatsapp_number(self, obj):
+        profile = getattr(obj, "profile", None)
+        return profile.whatsapp_number if profile else None
+
+    def get_profile_image(self, obj):
+        profile = getattr(obj, "profile", None)
+        if profile and profile.profile_image:
+            return profile.profile_image.url
+        return None
+
+
 
 class ProfileSerializer(serializers.ModelSerializer):
+    user_id = serializers.CharField(source='user.user_id', read_only=True)
+    first_name = serializers.CharField(source='user.first_name')
+    last_name = serializers.CharField(source='user.last_name')
+    email = serializers.EmailField(source='user.email')
+    mobile = serializers.CharField(source='user.mobile')
+    date_of_join = serializers.DateTimeField(source="user.date_of_joining", format="%Y-%m-%d %H:%M:%S", read_only=True)
+
     referrals = serializers.SerializerMethodField()
     referred_by_id = serializers.SerializerMethodField()
     referred_by_name = serializers.SerializerMethodField()
     count_out_of_2 = serializers.SerializerMethodField()
     percentage = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
-    date_of_join = serializers.DateTimeField(source="user.created_at", format="%Y-%m-%d %H:%M:%S")
+
+    district = serializers.CharField(read_only=True)
+    state = serializers.CharField(read_only=True)
+    address = serializers.CharField(read_only=True)
+    place = serializers.CharField(read_only=True)
+    pincode = serializers.CharField(read_only=True)
+    whatsapp_number = serializers.CharField(read_only=True)
+    profile_image = serializers.SerializerMethodField()
 
     class Meta:
         model = Profile
         fields = [
             "user_id", "first_name", "last_name", "email", "mobile",
             "status", "date_of_join", "count_out_of_2", "percentage",
-            "referred_by_id", "referred_by_name", "referrals",
+            "referred_by_id", "referred_by_name",
+            "district", "state", "address", "place", "pincode",
+            "whatsapp_number", "profile_image",
+            "referrals",
         ]
 
-    def get_user_id(self, obj):
-        return obj.user.user_id
+    def update(self, instance, validated_data):
+        user_data = validated_data.pop('user', {})
+        instance = super().update(instance, validated_data)
+        user = instance.user
+        for attr, value in user_data.items():
+            setattr(user, attr, value)
+        user.save()
+        return instance
 
     def get_status(self, obj):
         return "Active" if obj.user.is_active else "Inactive"
 
     def get_referred_by_id(self, obj):
-        return obj.user.referred_by.user_id if obj.user.referred_by else None
+        return obj.user.sponsor_id if obj.user.sponsor_id else None
 
     def get_referred_by_name(self, obj):
-        return f"{obj.user.referred_by.first_name} {obj.user.referred_by.last_name}" if obj.user.referred_by else None
+        return self.get_referred_by_name_for(obj.user)
+
+    def get_referred_by_name_for(self, user):
+        if user.sponsor_id:
+            try:
+                sponsor = CustomUser.objects.get(user_id=user.sponsor_id)
+                return f"{sponsor.first_name} {sponsor.last_name}"
+            except CustomUser.DoesNotExist:
+                return None
+        return None
 
     def get_count_out_of_2(self, obj):
-        return f"{obj.user.referrals.count()}/2"
+        referred_count = CustomUser.objects.filter(sponsor_id=obj.user.user_id).count()
+        return f"{referred_count}/2"
 
     def get_percentage(self, obj):
-        return f"{(obj.user.referrals.count() / 2) * 100:.0f}%"
+        referred_count = CustomUser.objects.filter(sponsor_id=obj.user.user_id).count()
+        return f"{(referred_count / 2) * 100:.0f}%"
+
+    def get_profile_image(self, obj):
+        profile = getattr(obj, "profile", None)
+        if profile and profile.profile_image:
+            return profile.profile_image.url
+        return None
 
     def get_referrals(self, obj):
-        user = obj.user  
+        return self.build_levels(obj.user.user_id)
 
-        def build_levels(user, level=1, max_level=6):
-            if level > max_level:
-                return {}
+    def build_levels(self, user_id, level=1, max_level=6):
+        if level > max_level:
+            return {}
 
-            slots = [
-                {"position": "Left", "status": "Not Available"},
-                {"position": "Right", "status": "Not Available"},
-            ]
+        slots = [
+            {"position": "Left", "status": "Not Available"},
+            {"position": "Right", "status": "Not Available"},
+        ]
 
-            referrals = list(CustomUser.objects.filter(referred_by=user)[:2])
+        referrals = list(CustomUser.objects.filter(sponsor_id=user_id)[:2])
 
-            for i, child in enumerate(referrals):
-                slots[i] = {
-                    "position": "Left" if i == 0 else "Right",
-                    "user_id": child.user_id,
-                    "name": f"{child.first_name} {child.last_name}",
-                    "email": child.email,
-                    "mobile": child.mobile,
-                    "status": "Active" if child.is_active else "Inactive",
-                    "date_of_join": child.created_at.strftime("%Y-%m-%d %H:%M:%S"),
-                    "count_out_of_2": f"{child.referrals.count()}/2",
-                    "percentage": f"{(child.referrals.count() / 2) * 100:.0f}%",
-                    "referred_by_id": child.referred_by.user_id if child.referred_by else None,
-                    "referred_by_name": f"{child.referred_by.first_name} {child.referred_by.last_name}" if child.referred_by else None,
-                    "next_level": build_levels(child, level + 1, max_level),
-                }
+        for i, child in enumerate(referrals):
+            profile = getattr(child, "profile", None)
+            slots[i] = {
+                "position": "Left" if i == 0 else "Right",
+                "user_id": child.user_id,
+                "name": f"{child.first_name} {child.last_name}",
+                "email": child.email,
+                "mobile": child.mobile,
+                "district": profile.district if profile else None,
+                "state": profile.state if profile else None,
+                "address": profile.address if profile else None,
+                "place": profile.place if profile else None,
+                "pincode": profile.pincode if profile else None,
+                "whatsapp_number": profile.whatsapp_number if profile else None,
+                "profile_image": profile.profile_image.url if profile and profile.profile_image else None,
+                "status": "Active" if child.is_active else "Inactive",
+                "date_of_join": child.date_of_joining.strftime("%Y-%m-%d %H:%M:%S"),
+                "count_out_of_2": f"{CustomUser.objects.filter(sponsor_id=child.user_id).count()}/2",
+                "percentage": f"{(CustomUser.objects.filter(sponsor_id=child.user_id).count() / 2) * 100:.0f}%",
+                "referred_by_id": child.sponsor_id,
+                "referred_by_name": self.get_referred_by_name_for(child),
+                "next_level": self.build_levels(child.user_id, level + 1, max_level),
+            }
 
-            return {f"Level {level}": slots}
-
-        return build_levels(user)
-
-
+        return {f"Level {level}": slots}
+        
 class KYCSerializer(serializers.ModelSerializer):
 
     id_number_nominee = serializers.CharField(source='id_number')
@@ -94,32 +232,7 @@ class KYCSerializer(serializers.ModelSerializer):
         read_only_fields = ["verified", "created_at"]
 
 class ReferralSerializer(serializers.Serializer):
-    referral_url = serializers.CharField(read_only=True)
-
-
-class ReferralListSerializer(serializers.ModelSerializer):
-    level = serializers.IntegerField()
-    status = serializers.SerializerMethodField()
-    joined_date = serializers.DateTimeField(source="created_at", read_only=True)
-    count = serializers.SerializerMethodField()
-    percentage = serializers.SerializerMethodField()
-
-    class Meta:
-        model = CustomUser
-        fields = [
-            "user_id", "first_name", "last_name", "email", "mobile",
-            "level", "status", "joined_date", "count", "percentage"
-        ]
-
-    def get_status(self, obj):
-        return "Active" if obj.is_active else "Inactive"
-
-    def get_count(self, obj):
-        return f"{obj.referrals.count()}/2"
-
-    def get_percentage(self, obj):
-        return f"{(obj.referrals.count() / 2) * 100}%"
-    
+    referral_id = serializers.CharField()
 
 #    Serializer for Admin user listing
 

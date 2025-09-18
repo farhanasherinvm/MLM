@@ -41,17 +41,20 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'rest_framework.authtoken',
-    'profiles',
-    'rest_framework_simplejwt',
-    'users',
     'rest_framework_simplejwt.token_blacklist',
+    'rest_framework_simplejwt',
+    'cloudinary_storage',
+    'cloudinary',
+    'corsheaders',
+    'profiles',
+    'users',
     'level',
     'reports',
-    'notifications',
-    
+    'notifications',  
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware', 
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -133,8 +136,8 @@ DATABASES = {
 }
 # 'postgresql://neondb_owner:npg_gusviL3OT6qr@ep-odd-cake-admzygcm-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require'
 # ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv())
-MEDIA_URL = '/media/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+# MEDIA_URL = '/media/'
+# MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 
 # Password validation
@@ -173,12 +176,28 @@ EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 EMAIL_HOST_USER = 'zecserbusiness@gmail.com'
 EMAIL_HOST_PASSWORD = 'wlsx ausq sxkm qxhr'
-# DEFAULT_FROM_EMAIL = 'zecserbusiness@gmail.com'
 
+# Cloudinary Settings
+CLOUDINARY_CLOUD_NAME = "dunlntdy3"
+CLOUDINARY_API_KEY = "454341219174761"
+CLOUDINARY_API_SECRET = "NIhM0PgdElTPwPg6dZr2LQmBprE"
+CLOUDINARY_STORAGE = {
+    'CLOUD_NAME': 'dunlntdy3',
+    'API_KEY': '454341219174761',
+    'API_SECRET': 'NIhM0PgdElTPwPg6dZr2LQmBprE',
+}
+# Set Cloudinary as the default storage backend for media files
+DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
+
+# ------------------ STATIC FILES ------------------
+STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = 'static/'
+# STATIC_URL = 'static/'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -194,6 +213,9 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
+    'DEFAULT_FILTER_BACKENDS': ['django_filters.rest_framework.DjangoFilterBackend'],
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 12,
 }
 
 
@@ -207,3 +229,9 @@ SIMPLE_JWT = {
 
 RAZORPAY_KEY_ID ='rzp_test_nGk98ngKrPHf2J'
 RAZORPAY_KEY_SECRET ='Gh7CpAcNtrKTQsE35rLEAm19'
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",  # For local development with your Vite/React/Vue app
+    "http://127.0.0.1:5173",  # A common alternative for local host
+    # Add your deployed frontend URL here when you have one (e.g., "https://your-frontend-domain.com")
+]
