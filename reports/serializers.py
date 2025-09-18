@@ -5,6 +5,25 @@ from django.db.models import Count, Sum, Q
 from datetime import datetime
 from django.utils import timezone
 
+class LatestReferUserSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    email_id = serializers.EmailField()
+    first_name = serializers.CharField()
+    last_name = serializers.CharField()
+    amount = serializers.DecimalField(max_digits=10, decimal_places=2)
+    time = serializers.DateTimeField()
+
+class LatestLevelPaymentSerializer(serializers.Serializer):
+    amount = serializers.DecimalField(max_digits=10, decimal_places=2)
+    time = serializers.DateTimeField()
+    done = serializers.BooleanField()
+
+class LatestReportSerializer(serializers.Serializer):
+    latest_refer_help = serializers.CharField()
+    latest_refer_user = LatestReferUserSerializer()
+    latest_level_help = serializers.CharField()
+    latest_level_payment = LatestLevelPaymentSerializer()
+
 class PaymentReportSerializer(serializers.ModelSerializer):
     username = serializers.SerializerMethodField()
     level_name = serializers.CharField(source='level.name')
@@ -41,13 +60,20 @@ class DashboardReportSerializer(serializers.Serializer):
     new_users_per_level = serializers.ListField(child=serializers.DictField())
     recent_payments = serializers.ListField(child=LevelPaymentReportSerializer())
     new_user_registrations = serializers.ListField(child=serializers.DictField())
+    latest_report = LatestReportSerializer()
 
     def to_representation(self, instance):
         return {
-            'total_members': instance['total_members'],
-            'total_income': instance['total_income'],
-            'total_active_level_6': instance['total_active_level_6'],
-            'new_users_per_level': instance['new_users_per_level'],
-            'recent_payments': instance['recent_payments'],
-            'new_user_registrations': instance['new_user_registrations'],
+            'total_members': instance.get('total_members', 0),
+            'total_income': instance.get('total_income', 0.00),
+            'total_active_level_6': instance.get('total_active_level_6', 0),
+            'new_users_per_level': instance.get('new_users_per_level', []),
+            'recent_payments': instance.get('recent_payments', []),
+            'new_user_registrations': instance.get('new_user_registrations', []),
+            'latest_report': instance.get('latest_report', {
+                'latest_refer_help': 'N/A',
+                'latest_refer_user': {'name': 'N/A', 'email_id': 'N/A', 'first_name': 'N/A', 'last_name': 'N/A', 'amount': 0, 'time': 'N/A'},
+                'latest_level_help': 'N/A',
+                'latest_level_payment': {'amount': 0, 'time': 'N/A', 'done': False}
+            })
         }

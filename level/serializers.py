@@ -4,6 +4,12 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
+class LevelCompletionSerializer(serializers.Serializer):
+    total_referred_users = serializers.IntegerField()
+    levels_completed_by_referred = serializers.IntegerField()
+    percentage_completed = serializers.FloatField()
+
 class LevelSerializer(serializers.ModelSerializer):
     class Meta:
         model = Level

@@ -15,6 +15,8 @@ from users.models import CustomUser
 from django.db.models import Count, Sum, Q
 from django.utils import timezone
 from datetime import timedelta
+from rest_framework.views import APIView
+from rest_framework import status
 import logging
 
 logger = logging.getLogger(__name__)
@@ -43,7 +45,7 @@ class PaymentReportViewSet(viewsets.ReadOnlyModelViewSet):
         response = HttpResponse(content_type='text/csv')
         response['Content-Disposition'] = 'attachment; filename="payment_report.csv"'
         writer = csv.writer(response)
-        writer.writerow(['Username', 'Level', 'Amount', 'Payment Mode', 'Transaction ID', 'Status', 'Approved At'])
+        writer.writerow(['Username', 'Level', 'Amount', 'Payment_Mode', 'Transaction_ID', 'Status', 'Approved_At'])
         for obj in queryset:
             writer.writerow([
                 getattr(obj.user, 'email', getattr(obj.user, 'user_id', 'Unknown')),
@@ -66,7 +68,7 @@ class PaymentReportViewSet(viewsets.ReadOnlyModelViewSet):
         y -= 20
         p.drawString(100, y, f"Generated: {timezone.now().strftime('%Y-%m-%d %H:%M:%S')} IST")
         y -= 40
-        headers = ['Username', 'Level', 'Amount', 'Payment Mode', 'Transaction ID', 'Status', 'Approved At']
+        headers = ['Username', 'Level', 'Amount', 'Payment_Mode', 'Transaction_ID', 'Status', 'Approved_At']
         for i, header in enumerate(headers):
             p.drawString(100 + i * 80, y, header)
         y -= 20
@@ -99,8 +101,8 @@ class PaymentReportViewSet(viewsets.ReadOnlyModelViewSet):
         response = HttpResponse(content_type='text/csv')
         response['Content-Disposition'] = 'attachment; filename="payment_details_report.csv"'
         writer = csv.writer(response)
-        writer.writerow(['Payment ID', 'Payment Token', 'Level Name', 'User ID', 'Username', 'Amount', 'Status', 
-                        'Razorpay Order ID', 'Razorpay Payment ID', 'Razorpay Signature', 'Created At'])
+        writer.writerow(['Payment_ID', 'Payment_Token', 'Level_Name', 'User_ID', 'Username', 'Amount', 'Status', 
+                        'Razorpay_Order_ID', 'Razorpay_Payment_ID', 'Razorpay_Signature', 'Created_At'])
         for obj in queryset:
             writer.writerow([
                 obj.id,
@@ -127,8 +129,8 @@ class PaymentReportViewSet(viewsets.ReadOnlyModelViewSet):
         y -= 20
         p.drawString(100, y, f"Generated: {timezone.now().strftime('%Y-%m-%d %H:%M:%S')} IST")
         y -= 40
-        headers = ['Payment ID', 'Payment Token', 'Level Name', 'User ID', 'Username', 'Amount', 'Status', 
-                  'Razorpay Order ID', 'Razorpay Payment ID', 'Razorpay Signature', 'Created At']
+        headers = ['Payment_ID', 'Payment_Token', 'Level_Name', 'User_ID', 'Username', 'Amount', 'Status', 
+                  'Razorpay_Order_ID', 'Razorpay_Payment_ID', 'Razorpay_Signature', 'Created_At']
         for i, header in enumerate(headers):
             p.drawString(100 + i * 60, y, header)
         y -= 20
@@ -180,7 +182,7 @@ class PaymentReportViewSet(viewsets.ReadOnlyModelViewSet):
             report_data.append({
                 'username': f"{user.first_name} {user.last_name}".strip() or user.email,
                 'level_completed': completed_levels,
-                'received': total_received,
+                'total_received': total_received,
                 'received_count': received_count,
                 'refer_help_amount': refer_help_amount,
                 'amount_if_paid': refer_help_paid_amount,
@@ -191,10 +193,9 @@ class PaymentReportViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(report_data)
 
 class DashboardReportViewSet(viewsets.ViewSet):
-    # permission_classes = [IsAdminUser]
+    permission_classes = [IsAdminUser]
 
     def list(self, request):
-        # Total members: Count of all active users
         total_members = CustomUser.objects.filter(is_active=True).count()
         logger.debug(f"Total members: {total_members}")
 
@@ -247,13 +248,103 @@ class DashboardReportViewSet(viewsets.ViewSet):
             })
         logger.debug(f"New user registrations count: {len(new_user_registrations)}")
 
+        # Latest report: Data for latest help requests and payment
+        latest_refer_help = UserLevel.objects.filter(level__name='Refer Help').order_by('-approved_at').first()
+        latest_level_help = UserLevel.objects.filter(level__name__contains='Level').order_by('-approved_at').first()
+        latest_level_payment = LevelPayment.objects.order_by('-created_at').first()
+
+        latest_report = {
+            'latest_refer_help': latest_refer_help.level.name if latest_refer_help else 'N/A',
+            'latest_refer_user': {
+                'name': f"{latest_refer_help.user.first_name} {latest_refer_help.user.last_name}".strip() if latest_refer_help else 'N/A',
+                'email_id': latest_refer_help.user.email if latest_refer_help else 'N/A',
+                'first_name': latest_refer_help.user.first_name if latest_refer_help else 'N/A',
+                'last_name': latest_refer_help.user.last_name if latest_refer_help else 'N/A',
+                'amount': latest_refer_help.level.amount if latest_refer_help else 0,
+                'time': latest_refer_help.approved_at.strftime('%Y-%m-%d %H:%M:%S') if latest_refer_help and latest_refer_help.approved_at else 'N/A'
+            } if latest_refer_help else {
+                'name': 'N/A', 'email_id': 'N/A', 'first_name': 'N/A', 'last_name': 'N/A', 'amount': 0, 'time': 'N/A'
+            },
+            'latest_level_help': latest_level_help.level.name if latest_level_help else 'N/A',
+            'latest_level_payment': {
+                'amount': latest_level_payment.amount if latest_level_payment else 0,
+                'time': latest_level_payment.created_at.strftime('%Y-%m-%d %H:%M:%S') if latest_level_payment else 'N/A',
+                'done': latest_level_payment.status == 'Verified' if latest_level_payment else False
+            } if latest_level_payment else {'amount': 0, 'time': 'N/A', 'done': False}
+        }
+
         data = {
             'total_members': total_members,
             'total_income': total_income,
             'total_active_level_6': active_level_6,
             'new_users_per_level': new_users_per_level,
             'recent_payments': recent_payments,
-            'new_user_registrations': new_user_registrations
+            'new_user_registrations': new_user_registrations,
+            'latest_report': latest_report
         }
         serializer = DashboardReportSerializer(data)
         return Response(serializer.data)
+
+
+# New User Permission Class
+class UserReportViewSet(viewsets.ViewSet):
+    # No permission_classes specified, assumes IsAuthenticated by default or custom logic if needed
+
+    @action(detail=False, methods=['get'], url_path='user-report')
+    def user_report(self, request):
+        logger.debug("User report endpoint hit for user %s", request.user.user_id)
+        user = request.user
+        user_levels = UserLevel.objects.filter(user=user)
+        completed_levels = user_levels.filter(status='paid', level__order__lte=6).count()
+        total_received = user_levels.aggregate(total=Sum('received'))['total'] or 0
+        pending_send_count = user_levels.filter(status='pending').count()
+        total_amount_generated = user_levels.filter(status='paid').aggregate(total=Sum('level__amount'))['total'] or 0
+
+        data = {
+            'username': f"{user.first_name} {user.last_name}".strip() or user.email,
+            'level_completed': completed_levels,
+            'total_received': total_received,
+            'pending_send_count': pending_send_count,
+            'total_amount_generated': total_amount_generated
+        }
+        return Response(data)
+
+class UserLatestReportView(APIView):
+    def get(self, request, *args, **kwargs):
+        logger.debug("User latest report endpoint hit for user %s", request.user.user_id)
+        if not request.user.is_authenticated:
+            return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        user = request.user
+        # Find users referred by the current user using sponsor_id
+        referred_users = CustomUser.objects.filter(sponsor_id=user.user_id)
+        user_levels = UserLevel.objects.filter(user__in=[user] + list(referred_users)).order_by('-approved_at')
+
+        latest_refer_help = user_levels.filter(level__name='Refer Help').first()
+        latest_level_help = user_levels.filter(level__name__contains='Level').order_by('-approved_at').first()
+        latest_level_payment = LevelPayment.objects.filter(user_level__user__in=[user] + list(referred_users)).order_by('-created_at').first()
+
+        latest_report = {
+            'latest_refer_help': latest_refer_help.level.name if latest_refer_help else 'N/A',
+            'latest_refer_user': {
+                'name': f"{latest_refer_help.user.first_name} {latest_refer_help.user.last_name}".strip() if latest_refer_help else 'N/A',
+                'email_id': latest_refer_help.user.email if latest_refer_help else 'N/A',
+                'first_name': latest_refer_help.user.first_name if latest_refer_help else 'N/A',
+                'last_name': latest_refer_help.user.last_name if latest_refer_help else 'N/A',
+                'amount': latest_refer_help.level.amount if latest_refer_help else 0,
+                'time': latest_refer_help.approved_at.strftime('%Y-%m-%d %H:%M:%S') if latest_refer_help and latest_refer_help.approved_at else 'N/A'
+            } if latest_refer_help else {
+                'name': 'N/A', 'email_id': 'N/A', 'first_name': 'N/A', 'last_name': 'N/A', 'amount': 0, 'time': 'N/A'
+            },
+            'latest_level_help': latest_level_help.level.name if latest_level_help else 'N/A',
+            'latest_level_payment': {
+                'amount': latest_level_payment.amount if latest_level_payment else 0,
+                'time': latest_level_payment.created_at.strftime('%Y-%m-%d %H:%M:%S') if latest_level_payment else 'N/A',
+                'done': latest_level_payment.status == 'Verified' if latest_level_payment else False
+            } if latest_level_payment else {'amount': 0, 'time': 'N/A', 'done': False}
+        }
+
+        data = {
+            'latest_report': latest_report
+        }
+        return Response(data, status=status.HTTP_200_OK)    

@@ -15,6 +15,7 @@ from django.db import transaction
 from django.db.models import F
 from users.models import CustomUser
 from django.utils import timezone
+from django.db.models import Count, Q
 import logging
 import razorpay
 from django.conf import settings
@@ -257,3 +258,37 @@ class RazorpayVerifyForLevelView(APIView):
             "message": "Payment verified and level marked as paid",
             "payment_data": LevelPaymentSerializer(level_payment).data
         })
+
+class LevelCompletionViewSet(viewsets.ViewSet):
+    @action(detail=False, methods=['get'], url_path='completion-stats')
+    def completion_stats(self, request):
+        logger.debug("Level completion stats endpoint hit for user %s", request.user.user_id)
+        if not request.user.is_authenticated:
+            return Response({"error": "Authentication required"}, status=400)
+
+        user = request.user
+        referred_users = CustomUser.objects.filter(sponsor_id=user.user_id)
+        all_users = [user] + list(referred_users)
+
+        total_users = CustomUser.objects.filter(userlevel__user__in=all_users).distinct().count()
+        if total_users == 0:
+            return Response({"error": "No users found in the network"}, status=400)
+
+        all_levels = Level.objects.all().order_by('order')
+        user_levels = UserLevel.objects.filter(user__in=all_users, status='paid')
+
+        # Aggregate completion stats for each level
+        completion_stats = []
+        for level in all_levels:
+            completed_count = user_levels.filter(level=level).count()
+            percentage = (completed_count / total_users) * 100 if total_users > 0 else 0
+            completion_stats.append({
+                'level_name': level.name,
+                'completed_count': completed_count,
+                'percentage': round(percentage, 2)  # Rounded to 2 decimal places
+            })
+
+        data = {
+            'completion_stats': completion_stats
+        }
+        return Response(data)
