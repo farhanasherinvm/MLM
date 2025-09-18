@@ -48,10 +48,11 @@ class UserLevelFinancialSerializer(serializers.ModelSerializer):
 class UserLevelWithLinkSerializer(serializers.ModelSerializer):
     level_name = serializers.CharField(source='level.name')
     linked_user = serializers.SerializerMethodField()
+    payment_status = serializers.SerializerMethodField()
 
     class Meta:
         model = UserLevel
-        fields = ['level_name', 'status', 'linked_user']
+        fields = ['level_name', 'status', 'linked_user','payment_status']
 
     def get_linked_user(self, obj):
         full_linked_user = get_referrer_details(obj.linked_user_id) or {}
@@ -61,6 +62,9 @@ class UserLevelWithLinkSerializer(serializers.ModelSerializer):
         }
         logger.debug(f"Serializing linked user for level {obj.level.name} (user {getattr(obj.user, 'user_id', 'unknown')}): {linked_user}")
         return linked_user
+    def get_payment_status(self, obj):
+        latest_payment = LevelPayment.objects.filter(user_level=obj).order_by('-created_at').first()
+        return latest_payment.status if latest_payment else 'Pending'
 
 class UserInfoSerializer(serializers.Serializer):
     username = serializers.SerializerMethodField()
@@ -68,6 +72,7 @@ class UserInfoSerializer(serializers.Serializer):
     levels_data = serializers.SerializerMethodField()
     refer_help_data = serializers.SerializerMethodField()
     user_status = serializers.SerializerMethodField()
+    # payment_status = serializers.SerializerMethodField()
 
     def get_username(self, obj):
         user = obj.get('user')
@@ -77,6 +82,8 @@ class UserInfoSerializer(serializers.Serializer):
         username = getattr(user, 'username', getattr(user, 'email', getattr(user, 'first_name', 'Unknown')))
         logger.debug(f"Resolved username for {getattr(user, 'user_id', 'unknown')}: {username}")
         return username
+
+
 
     def get_levels_data(self, obj):
         user = obj.get('user')

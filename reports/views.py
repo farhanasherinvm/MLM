@@ -34,9 +34,11 @@ class PaymentReportViewSet(viewsets.ReadOnlyModelViewSet):
         approved_qs = queryset.filter(status='paid')
         serializer_pending = self.get_serializer(pending_qs, many=True)
         serializer_approved = self.get_serializer(approved_qs, many=True)
+        data= self.get_serializer(queryset, many=True).data
         return Response({
             'pending': serializer_pending.data,
-            'approved': serializer_approved.data
+            'approved': serializer_approved.data,
+            'data': data
         })
 
     @action(detail=False, methods=['get'], url_path='export-csv')
@@ -327,24 +329,37 @@ class UserLatestReportView(APIView):
         latest_report = {
             'latest_refer_help': latest_refer_help.level.name if latest_refer_help else 'N/A',
             'latest_refer_user': {
-                'name': f"{latest_refer_help.user.first_name} {latest_refer_help.user.last_name}".strip() if latest_refer_help else 'N/A',
-                'email_id': latest_refer_help.user.email if latest_refer_help else 'N/A',
-                'first_name': latest_refer_help.user.first_name if latest_refer_help else 'N/A',
-                'last_name': latest_refer_help.user.last_name if latest_refer_help else 'N/A',
-                'amount': latest_refer_help.level.amount if latest_refer_help else 0,
-                'time': latest_refer_help.approved_at.strftime('%Y-%m-%d %H:%M:%S') if latest_refer_help and latest_refer_help.approved_at else 'N/A'
+                'name': f"{latest_refer_help.user.first_name} {latest_refer_help.user.last_name}".strip() if latest_refer_help else '',
+                'email_id': latest_refer_help.user.email if latest_refer_help else 'admin@gmail.com',
+                'first_name': latest_refer_help.user.first_name if latest_refer_help else '',
+                'last_name': latest_refer_help.user.last_name if latest_refer_help else '',
+                'amount': latest_refer_help.level.amount if latest_refer_help else 1000.0,
+                'time': latest_refer_help.approved_at.strftime('%Y-%m-%d %H:%M:%S') if latest_refer_help and latest_refer_help.approved_at else 'N/A',
+                'user_id': latest_refer_help.user.user_id if latest_refer_help else 'N/A'
             } if latest_refer_help else {
-                'name': 'N/A', 'email_id': 'N/A', 'first_name': 'N/A', 'last_name': 'N/A', 'amount': 0, 'time': 'N/A'
+                'name': '', 'email_id': 'admin@gmail.com', 'first_name': '', 'last_name': '', 'amount': 1000.0, 'time': 'N/A', 'user_id': 'N/A'
             },
-            'latest_level_help': latest_level_help.level.name if latest_level_help else 'N/A',
+            'latest_level_help': latest_level_help.level.name if latest_level_help else 'Level 2',
+            'latest_level_user': {
+                'name': f"{latest_level_help.user.first_name} {latest_level_help.user.last_name}".strip() if latest_level_help else '',
+                'email_id': latest_level_help.user.email if latest_level_help else 'admin@gmail.com',
+                'first_name': latest_level_help.user.first_name if latest_level_help else '',
+                'last_name': latest_level_help.user.last_name if latest_level_help else '',
+                'amount': latest_level_help.level.amount if latest_level_help else 200.0,
+                'time': latest_level_help.approved_at.strftime('%Y-%m-%d %H:%M:%S') if latest_level_help and latest_level_help.approved_at else 'N/A',
+                # 'done': latest_level_help.status == 'paid' if latest_level_help else False,
+                'user_id': latest_level_help.user.user_id if latest_level_help else 'N/A'
+            } if latest_level_help else {
+                'name': '', 'email_id': 'admin@gmail.com', 'first_name': '', 'last_name': '', 'amount': 200.0, 'time': 'N/A', 'done': False, 'user_id': 'N/A'
+            },
             'latest_level_payment': {
-                'amount': latest_level_payment.amount if latest_level_payment else 0,
-                'time': latest_level_payment.created_at.strftime('%Y-%m-%d %H:%M:%S') if latest_level_payment else 'N/A',
-                'done': latest_level_payment.status == 'Verified' if latest_level_payment else False
-            } if latest_level_payment else {'amount': 0, 'time': 'N/A', 'done': False}
+                'amount': latest_level_payment.amount if latest_level_payment else 200.0,
+                'time': latest_level_payment.created_at.strftime('%Y-%m-%d %H:%M:%S') if latest_level_payment else '2025-09-18 16:15:19',
+                # 'done': latest_level_payment.status == 'Verified' if latest_level_payment else False
+            } if latest_level_payment else {'amount': 200.0, 'time': '2025-09-18 16:15:19', 'done': False}
         }
 
         data = {
             'latest_report': latest_report
         }
-        return Response(data, status=status.HTTP_200_OK)    
+        return Response(data, status=status.HTTP_200_OK)  
