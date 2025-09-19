@@ -120,13 +120,15 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 #         'CONN_MAX_AGE': 600,
 #     }
 # }
+# 
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'neondb',
         'USER': 'neondb_owner',
-        'PASSWORD': 'npg_gusviL3OT6qr',
-        'HOST': 'ep-odd-cake-admzygcm-pooler.c-2.us-east-1.aws.neon.tech',
+        'PASSWORD': 'npg_OAZPrjz8Mp0w',
+        'HOST': 'ep-floral-resonance-adgcweml-pooler.c-2.us-east-1.aws.neon.tech',
         'PORT': '5432',
         'OPTIONS': {
             'sslmode': 'require',
@@ -134,6 +136,10 @@ DATABASES = {
         'CONN_MAX_AGE': 600,
     }
 }
+
+
+
+
 # 'postgresql://neondb_owner:npg_gusviL3OT6qr@ep-odd-cake-admzygcm-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require'
 # ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv())
 # MEDIA_URL = '/media/'

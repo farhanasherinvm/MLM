@@ -3,8 +3,6 @@ from rest_framework import serializers
 from .models import *
 from django.contrib.auth import get_user_model
 from .utils import validate_sponsor
-from profiles.models import Profile
-from profiles.serializers import ProfileSerializer
 
 User = get_user_model()
 class RegistrationSerializer(serializers.Serializer):

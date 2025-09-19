@@ -4,6 +4,7 @@ __pycache__/
 *.pyo
 *.pyd
 env/
+venv/
 *.sqlite3
 
 # Django

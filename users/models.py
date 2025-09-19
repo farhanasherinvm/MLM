@@ -37,6 +37,7 @@ class CustomUserManager(BaseUserManager):
 
 class CustomUser(AbstractBaseUser, PermissionsMixin):
     PAYMENT_CHOICES = [
+    ("Razorpay", "Razorpay"),
     ("GPay", "GPay"),
     ("PhonePe", "PhonePe"),
     ("PhonePay", "PhonePay"),

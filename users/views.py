@@ -23,6 +23,7 @@ from io import BytesIO
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
 from reportlab.lib import colors
 from rest_framework.permissions import IsAdminUser
+from profiles.models import Profile
 
 # import admin serializer from profiles
 from profiles.serializers import AdminUserListSerializer, AdminUserDetailSerializer, AdminNetworkUserSerializer
@@ -394,9 +395,10 @@ class UserAccountDetailsView(APIView):
         user = request.user
         data = request.data.copy()
 
-        # auto-fill UPI details from registration
-        data["upi_number"] = user.upi_number
-        data["upi_type"] = user.payment_type
+        if not data.get("upi_number"):
+            data["upi_number"] = user.upi_number
+        if not data.get("upi_type"):
+            data["upi_type"] = user.payment_type
 
         try:
             details = UserAccountDetails.objects.get(user=user)
@@ -414,12 +416,16 @@ class UserAccountDetailsView(APIView):
     def put(self, request):
         user = request.user
         data = request.data.copy()
-        # data["upi_number"] = user.upi_number
-        # data["upi_type"] = user.payment_type
+
         try:
-            details = user.useraccountdetails  # <-- correct accessor
+            details = user.useraccountdetails
         except UserAccountDetails.DoesNotExist:
             return Response({"error": "Account details not found"}, status=404)
+        
+        if not data.get("upi_number"):
+            data["upi_number"] = details.upi_number or user.upi_number
+        if not data.get("upi_type"):
+            data["upi_type"] = details.upi_type or user.payment_type
 
         serializer = UserAccountDetailsSerializer(details, data=data, partial=True)
         if serializer.is_valid():
@@ -800,3 +806,5 @@ class AdminNetworkView(APIView):
         response["Content-Disposition"] = 'attachment; filename="network_users.pdf"'
         response.write(pdf)
         return response
+
+

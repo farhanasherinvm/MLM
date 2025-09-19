@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import Profile,KYC
-from users.models import CustomUser
+from users.models import CustomUser, UserAccountDetails
+from users.serializers import UserAccountDetailsSerializer
 
 def get_all_referrals(user_obj, max_level=6):
     """
@@ -96,14 +97,21 @@ class ReferralListSerializer(serializers.ModelSerializer):
 
 
 
+
+
+
 class ProfileSerializer(serializers.ModelSerializer):
+    # User fields
     user_id = serializers.CharField(source='user.user_id', read_only=True)
     first_name = serializers.CharField(source='user.first_name')
     last_name = serializers.CharField(source='user.last_name')
-    email = serializers.EmailField(source='user.email')
+    email = serializers.EmailField(source='user.email', read_only=True)
     mobile = serializers.CharField(source='user.mobile')
-    date_of_join = serializers.DateTimeField(source="user.date_of_joining", format="%Y-%m-%d %H:%M:%S", read_only=True)
+    date_of_join = serializers.DateTimeField(
+        source="user.date_of_joining", format="%Y-%m-%d %H:%M:%S", read_only=True
+    )
 
+    # Referral info
     referrals = serializers.SerializerMethodField()
     referred_by_id = serializers.SerializerMethodField()
     referred_by_name = serializers.SerializerMethodField()
@@ -111,13 +119,14 @@ class ProfileSerializer(serializers.ModelSerializer):
     percentage = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
 
-    district = serializers.CharField(read_only=True)
-    state = serializers.CharField(read_only=True)
-    address = serializers.CharField(read_only=True)
-    place = serializers.CharField(read_only=True)
-    pincode = serializers.CharField(read_only=True)
-    whatsapp_number = serializers.CharField(read_only=True)
-    profile_image = serializers.SerializerMethodField()
+    # Profile fields (all writable)
+    district = serializers.CharField(required=False, allow_blank=True)
+    state = serializers.CharField(required=False, allow_blank=True)
+    address = serializers.CharField(required=False, allow_blank=True)
+    place = serializers.CharField(required=False, allow_blank=True)
+    pincode = serializers.CharField(required=False, allow_blank=True)
+    whatsapp_number = serializers.CharField(required=False, allow_blank=True)
+    profile_image = serializers.ImageField(required=False, allow_null=True)
 
     class Meta:
         model = Profile
@@ -130,15 +139,22 @@ class ProfileSerializer(serializers.ModelSerializer):
             "referrals",
         ]
 
+    # ---------- Update method ----------
     def update(self, instance, validated_data):
+        # Update user fields
         user_data = validated_data.pop('user', {})
-        instance = super().update(instance, validated_data)
         user = instance.user
         for attr, value in user_data.items():
             setattr(user, attr, value)
         user.save()
+
+        # Update profile fields
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
         return instance
 
+    # ---------- SerializerMethodField methods ----------
     def get_status(self, obj):
         return "Active" if obj.user.is_active else "Inactive"
 
@@ -151,8 +167,8 @@ class ProfileSerializer(serializers.ModelSerializer):
     def get_referred_by_name_for(self, user):
         if user.sponsor_id:
             try:
-                sponsor = CustomUser.objects.get(user_id=user.sponsor_id)
-                return f"{sponsor.first_name} {sponsor.last_name}"
+                sponsor = CustomUser.objects.get(user_id__iexact=user.sponsor_id)
+                return f"{(sponsor.first_name or '').strip()} {(sponsor.last_name or '').strip()}"
             except CustomUser.DoesNotExist:
                 return None
         return None
@@ -174,6 +190,7 @@ class ProfileSerializer(serializers.ModelSerializer):
     def get_referrals(self, obj):
         return self.build_levels(obj.user.user_id)
 
+    # ---------- Recursive referral tree ----------
     def build_levels(self, user_id, level=1, max_level=6):
         if level > max_level:
             return {}
@@ -210,7 +227,8 @@ class ProfileSerializer(serializers.ModelSerializer):
             }
 
         return {f"Level {level}": slots}
-        
+
+
 class KYCSerializer(serializers.ModelSerializer):
 
     id_number_nominee = serializers.CharField(source='id_number')
@@ -243,10 +261,11 @@ class AdminUserListSerializer(serializers.ModelSerializer):
     username = serializers.SerializerMethodField()
     profile_image = serializers.SerializerMethodField()
     level = serializers.SerializerMethodField()
+    status= serializers.SerializerMethodField()
 
     class Meta:
         model = CustomUser
-        fields = ["username", "user_id", "level", "profile_image"]
+        fields = ["username", "user_id", "level", "profile_image", "status"]
 
     def get_username(self, obj):
         first = getattr(obj, "first_name", "") or ""
@@ -278,31 +297,60 @@ class AdminUserListSerializer(serializers.ModelSerializer):
             return level
         except Exception:
             return 0
+        
+    def get_status(self, obj):
+        return "Active" if obj.is_active else "Blocked"
 
 
 class AdminUserDetailSerializer(serializers.ModelSerializer):
-    profile_image = serializers.SerializerMethodField()
-    blocked_status = serializers.SerializerMethodField()  # new field
+    profile = ProfileSerializer(required=False)
+    kyc = KYCSerializer(required=False)
+    useraccountdetails = UserAccountDetailsSerializer(required=False)
+    blocked_status = serializers.SerializerMethodField()
+
 
     class Meta:
         model = CustomUser
         fields = [
             "user_id", "first_name", "last_name", "email", "mobile",
-            "is_active", "blocked_status", "profile_image",
+            "whatsapp_number", "pincode", "payment_type", "upi_number",
+            "is_active", "blocked_status", "level",
+            "profile", "kyc", "useraccountdetails"
         ]
-        read_only_fields = ["user_id", "email"]
+        read_only_fields = ["user_id", "level", "email"]
 
     def update(self, instance, validated_data):
-        profile_data = validated_data.pop("profile", {})
-        # update user fields
+         # Pop nested data
+        profile_data = validated_data.pop("profile", None)
+        kyc_data = validated_data.pop("kyc", None)
+        account_data = validated_data.pop("useraccountdetails", None)
+
+        # Update user fields
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
-        # update profile fields
-        profile = getattr(instance, "profile", None)
-        if profile and "profile_image" in profile_data:
-            profile.profile_image = profile_data["profile_image"]
+
+        # Update profile
+        if profile_data is not None:
+            profile, _ = Profile.objects.get_or_create(user=instance)
+            for attr, value in profile_data.items():
+                setattr(profile, attr, value)
             profile.save()
+
+        # Update KYC
+        if kyc_data is not None:
+            kyc, _ = KYC.objects.get_or_create(user=instance)
+            for attr, value in kyc_data.items():
+                setattr(kyc, attr, value)
+            kyc.save()
+
+        # Update account details
+        if account_data is not None:
+            account, _ = UserAccountDetails.objects.get_or_create(user=instance)
+            for attr, value in account_data.items():
+                setattr(account, attr, value)
+            account.save()
+
         return instance
     
     def get_profile_image(self, obj):
