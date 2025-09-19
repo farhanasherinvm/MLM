@@ -10,7 +10,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from level.models import UserLevel, LevelPayment
 from level.serializers import PaymentReportSerializer
 from .filters import PaymentFilter
-from .serializers import DashboardReportSerializer, LevelPaymentReportSerializer, SendRequestReportSerializer, AUCRequestSerializer, LevelUsersSerializer
+from .serializers import DashboardReportSerializer, LevelPaymentReportSerializer
 from users.models import CustomUser
 from django.db.models import Count, Sum, Q
 from django.utils import timezone
@@ -34,9 +34,11 @@ class PaymentReportViewSet(viewsets.ReadOnlyModelViewSet):
         approved_qs = queryset.filter(status='paid')
         serializer_pending = self.get_serializer(pending_qs, many=True)
         serializer_approved = self.get_serializer(approved_qs, many=True)
+        data= self.get_serializer(queryset, many=True).data
         return Response({
             'pending': serializer_pending.data,
             'approved': serializer_approved.data,
+            'data': data
         })
 
     @action(detail=False, methods=['get'], url_path='export-csv')
@@ -361,57 +363,3 @@ class UserLatestReportView(APIView):
             'latest_report': latest_report
         }
         return Response(data, status=status.HTTP_200_OK)  
-
-
-class SendRequestReport(APIView):
-    def get(self, request):
-        queryset = UserLevel.objects.select_related('user', 'level').all().order_by('-approved_at')
-        
-        # Search filter
-        search = request.GET.get('search', '')
-        if search:
-            queryset = queryset.filter(
-                Q(user__first_name__icontains=search) |
-                Q(user__last_name__icontains=search) |
-                Q(user__user_id__icontains=search) |
-                Q(level__name__icontains=search) |
-                Q(status__icontains=search)
-            )
-        
-        serializer = SendRequestReportSerializer(queryset, many=True)
-        return Response(serializer.data)
-
-class AUCRequest(APIView):
-    def get(self, request):
-        queryset = UserLevel.objects.select_related('user', 'level').all().order_by('-approved_at')
-        
-        # Search functionality
-        search = request.GET.get('search', '')
-        if search:
-            queryset = queryset.filter(
-                Q(user__first_name__icontains=search) |
-                Q(user__last_name__icontains=search) |
-                Q(user__user_id__icontains=search) |
-                Q(status__icontains=search)
-            )
-        
-        serializer = AUCRequestSerializer(queryset, many=True)
-        return Response(serializer.data)
-
-class LevelUsers(APIView):
-    def get(self, request):
-        queryset = UserLevel.objects.select_related('user', 'level').all().order_by('-approved_at')
-        
-        # Search filter
-        search = request.GET.get('search', '')
-        if search:
-            queryset = queryset.filter(
-                Q(user__first_name__icontains=search) |
-                Q(user__last_name__icontains=search) |
-                Q(user__user_id__icontains=search) |
-                Q(level__name__icontains=search) |
-                Q(status__icontains=search)
-            )
-        
-        serializer = LevelUsersSerializer(queryset, many=True)
-        return Response(serializer.data)
