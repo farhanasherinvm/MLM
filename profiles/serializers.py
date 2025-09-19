@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import Profile,KYC
-from users.models import CustomUser
+from users.models import CustomUser, UserAccountDetails
+from users.serializers import UserAccountDetailsSerializer
 
 def get_all_referrals(user_obj, max_level=6):
     """
@@ -298,28 +299,54 @@ class AdminUserListSerializer(serializers.ModelSerializer):
 
 
 class AdminUserDetailSerializer(serializers.ModelSerializer):
-    profile_image = serializers.SerializerMethodField()
-    blocked_status = serializers.SerializerMethodField()  # new field
+    profile = ProfileSerializer(required=False)
+    kyc = KYCSerializer(required=False)
+    useraccountdetails = UserAccountDetailsSerializer(required=False)
+    blocked_status = serializers.SerializerMethodField()
+
 
     class Meta:
         model = CustomUser
         fields = [
             "user_id", "first_name", "last_name", "email", "mobile",
-            "is_active", "blocked_status", "profile_image",
+            "whatsapp_number", "pincode", "payment_type", "upi_number",
+            "is_active", "blocked_status", "level",
+            "profile", "kyc", "useraccountdetails"
         ]
-        read_only_fields = ["user_id", "email"]
+        read_only_fields = ["user_id", "level", "email"]
 
     def update(self, instance, validated_data):
-        profile_data = validated_data.pop("profile", {})
-        # update user fields
+         # Pop nested data
+        profile_data = validated_data.pop("profile", None)
+        kyc_data = validated_data.pop("kyc", None)
+        account_data = validated_data.pop("useraccountdetails", None)
+
+        # Update user fields
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
-        # update profile fields
-        profile = getattr(instance, "profile", None)
-        if profile and "profile_image" in profile_data:
-            profile.profile_image = profile_data["profile_image"]
+
+        # Update profile
+        if profile_data is not None:
+            profile, _ = Profile.objects.get_or_create(user=instance)
+            for attr, value in profile_data.items():
+                setattr(profile, attr, value)
             profile.save()
+
+        # Update KYC
+        if kyc_data is not None:
+            kyc, _ = KYC.objects.get_or_create(user=instance)
+            for attr, value in kyc_data.items():
+                setattr(kyc, attr, value)
+            kyc.save()
+
+        # Update account details
+        if account_data is not None:
+            account, _ = UserAccountDetails.objects.get_or_create(user=instance)
+            for attr, value in account_data.items():
+                setattr(account, attr, value)
+            account.save()
+
         return instance
     
     def get_profile_image(self, obj):
