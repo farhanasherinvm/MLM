@@ -46,6 +46,7 @@ class ProfileView(generics.RetrieveUpdateAPIView):
         return self.request.user.profile
 
 
+
 class KYCView(generics.RetrieveUpdateAPIView):
     serializer_class = KYCSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -77,45 +78,41 @@ class ReferralListView(APIView):
         user = request.user
         all_referrals = get_all_referrals(user, max_level=6)
 
-        
+        # Query params
         email = request.query_params.get("email")
         status = request.query_params.get("status")
         user_id = request.query_params.get("user_id")
+        first_name = request.query_params.get("first_name")
+        last_name = request.query_params.get("last_name")
         start_date = request.query_params.get("start_date")
         end_date = request.query_params.get("end_date")
         limit = request.query_params.get("limit")
         export = request.query_params.get("export")  # 'csv', 'pdf', 'xlsx'
 
-        
+        # Filters
         if email:
             all_referrals = [r for r in all_referrals if email.lower() in r.email.lower()]
-
+        if first_name:
+            all_referrals = [r for r in all_referrals if r.first_name and first_name.lower() in r.first_name.lower()]
+        if last_name:
+            all_referrals = [r for r in all_referrals if r.last_name and last_name.lower() in r.last_name.lower()]
         if status and status.lower() != "all":
             if status.lower() == "active":
                 all_referrals = [r for r in all_referrals if r.is_active]
             elif status.lower() == "inactive":
                 all_referrals = [r for r in all_referrals if not r.is_active]
-
         if user_id:
             all_referrals = [r for r in all_referrals if str(r.user_id) == str(user_id)]
-
         if start_date:
             start_date_parsed = parse_date(start_date)
             if start_date_parsed:
-                all_referrals = [
-                    r for r in all_referrals
-                    if r.date_of_joining and r.date_of_joining.date() >= start_date_parsed
-                ]
-
+                all_referrals = [r for r in all_referrals if r.date_of_joining and r.date_of_joining.date() >= start_date_parsed]
         if end_date:
             end_date_parsed = parse_date(end_date)
             if end_date_parsed:
-                all_referrals = [
-                    r for r in all_referrals
-                    if r.date_of_joining and r.date_of_joining.date() <= end_date_parsed
-                ]
+                all_referrals = [r for r in all_referrals if r.date_of_joining and r.date_of_joining.date() <= end_date_parsed]
 
-        #  Sort by joining date 
+        # Sort by joining date
         def get_joined_date(u):
             if u.date_of_joining:
                 dt = u.date_of_joining
@@ -133,33 +130,35 @@ class ReferralListView(APIView):
             except ValueError:
                 pass
 
-        # CSV Export 
+        # CSV Export
         if export == "csv":
             response = HttpResponse(content_type="text/csv")
             response["Content-Disposition"] = 'attachment; filename="referrals.csv"'
             writer = csv.writer(response)
-            writer.writerow(["User ID", "Email", "Status", "Date of Joining"])
+            writer.writerow(["User ID", "First Name", "Last Name", "Email", "Status", "Date of Joining"])
             for r in all_referrals:
                 writer.writerow([
                     r.user_id,
+                    r.first_name or "",
+                    r.last_name or "",
                     r.email,
                     "Active" if r.is_active else "Inactive",
                     r.date_of_joining.strftime("%Y-%m-%d") if r.date_of_joining else "",
                 ])
             return response
 
-        #  PDF Export 
+        # PDF Export
         elif export == "pdf":
             buffer = BytesIO()
             p = canvas.Canvas(buffer, pagesize=A4)
             width, height = A4
             y = height - 50
             p.setFont("Helvetica-Bold", 14)
-            p.drawString(200, y, "Referral List")
+            p.drawString(150, y, "Referral List")
             y -= 30
             p.setFont("Helvetica", 10)
             for r in all_referrals:
-                line = f"{r.user_id} | {r.email} | {'Active' if r.is_active else 'Inactive'} | {r.date_of_joining.strftime('%Y-%m-%d') if r.date_of_joining else ''}"
+                line = f"{r.user_id} | {r.first_name or ''} | {r.last_name or ''} | {r.email} | {'Active' if r.is_active else 'Inactive'} | {r.date_of_joining.strftime('%Y-%m-%d') if r.date_of_joining else ''}"
                 p.drawString(50, y, line)
                 y -= 20
                 if y < 50:
@@ -172,25 +171,24 @@ class ReferralListView(APIView):
             response["Content-Disposition"] = 'attachment; filename="referrals.pdf"'
             return response
 
-        #  XLSX Export 
+        # XLSX Export
         elif export == "xlsx":
             wb = Workbook()
             ws = wb.active
             ws.title = "Referrals"
-            ws.append(["User ID", "Email", "Status", "Date of Joining"])
-
+            ws.append(["User ID", "First Name", "Last Name", "Email", "Status", "Date of Joining"])
             for r in all_referrals:
                 ws.append([
                     r.user_id,
+                    r.first_name or "",
+                    r.last_name or "",
                     r.email,
                     "Active" if r.is_active else "Inactive",
                     r.date_of_joining.strftime("%Y-%m-%d") if r.date_of_joining else "",
                 ])
-
             output = BytesIO()
             wb.save(output)
             output.seek(0)
-
             response = HttpResponse(
                 output,
                 content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -198,10 +196,9 @@ class ReferralListView(APIView):
             response["Content-Disposition"] = 'attachment; filename="referrals.xlsx"'
             return response
 
-        # Default JSON 
+        # Default JSON
         serializer = ReferralListSerializer(all_referrals, many=True)
         return Response(serializer.data)
-
 
 
 
