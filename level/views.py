@@ -7,7 +7,7 @@ from .models import Level, UserLevel, LevelPayment, get_referrer_details
 from .serializers import (
     LevelSerializer, UserLevelStatusSerializer, UserLevelFinancialSerializer, 
     UserInfoSerializer, LevelRazorpayOrderSerializer, LevelRazorpayVerifySerializer,
-    LevelPaymentSerializer
+    LevelPaymentSerializer, AdminPendingPaymentsSerializer, ManualPaymentSerializer,InitiatePaymentSerializer
 )
 from .permissions import IsAdminOrReadOnly
 from profiles.models import Profile
@@ -68,6 +68,18 @@ class UserLevelViewSet(viewsets.ModelViewSet):
     def user_info(self, request):
         serializer = UserInfoSerializer({'user': request.user})
         return Response(serializer.data)
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
+    def enable_payment(self, request, pk=None):
+        user_level = self.get_object()
+        user_level.pay_enabled = True
+        user_level.save()
+        logger.info(f"Payment enabled for UserLevel {user_level.id} by admin")
+        return Response({
+            "message": f"Payment enabled for UserLevel {user_level.id}",
+            "user_level_id": user_level.id,
+            "pay_enabled": user_level.pay_enabled
+        }, status=status.HTTP_200_OK)
 
     def partial_update(self, request, pk=None):
             user_level = self.get_object()
@@ -180,7 +192,8 @@ class RazorpayOrderForLevelView(APIView):
             user_level = UserLevel.objects.get(
                 id=serializer.validated_data['user_level_id'],
                 user=request.user,
-                status='not_paid',
+                # status='not_paid' or 'rejected'
+                status__in=['not_paid', 'rejected'],
                 is_active=True,
                 pay_enabled=True
             )
@@ -276,6 +289,113 @@ class RazorpayVerifyForLevelView(APIView):
             "payment_data": LevelPaymentSerializer(level_payment).data
         })
 
+class ManualPaymentView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = ManualPaymentSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user_level = UserLevel.objects.get(
+                id=serializer.validated_data['user_level_id'],
+                user=request.user,
+                status__in=['not_paid', 'rejected'],
+                is_active=True,
+                pay_enabled=True
+            )
+        except UserLevel.DoesNotExist:
+            return Response({"error": "UserLevel not found, already paid, or payment not enabled"}, status=status.HTTP_404_NOT_FOUND)
+
+        payment_proof = serializer.validated_data['payment_proof']
+        level_payment = LevelPayment.objects.create(
+            user_level=user_level,
+            amount=user_level.level.amount,
+            status="Pending",
+            payment_method="Manual",
+            payment_proof=payment_proof
+        )
+
+        with transaction.atomic():
+            user_level.status = 'pending'
+            user_level.payment_mode = 'Manual'
+            user_level.save()
+
+        logger.info(f"Manual payment submitted for LevelPayment {level_payment.id} (user: {request.user.user_id}, level: {user_level.level.name})")
+
+        return Response({
+            "message": "Manual payment details uploaded successfully. Status changed to pending. Awaiting admin verification.",
+            "payment_token": str(level_payment.payment_token),
+            "payment_data": LevelPaymentSerializer(level_payment, context={'request': request}).data
+        }, status=status.HTTP_201_CREATED)
+
+class LevelPaymentViewSet(viewsets.ModelViewSet):
+    queryset = LevelPayment.objects.all()
+    serializer_class = LevelPaymentSerializer
+    permission_classes = [IsAdminUser]
+
+    def get_serializer_class(self):
+        if self.action == 'pending':
+            return AdminPendingPaymentsSerializer
+        return LevelPaymentSerializer
+
+    def get_queryset(self):
+        if self.action == 'pending':
+            return self.queryset.filter(status='Pending', payment_method='Manual').order_by('-created_at')
+        return self.queryset.all().order_by('-created_at')
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
+
+    @action(detail=False, methods=['get'], url_path='pending')
+    def pending(self, request):
+        """List all pending manual payments for admin review."""
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = self.get_serializer(queryset, many=True, context={'request': request})
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'])
+    def verify(self, request, pk=None):
+        level_payment = self.get_object()
+        if level_payment.payment_method != "Manual" or level_payment.status != "Pending":
+            return Response({"error": "Only pending manual payments can be verified."}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            level_payment.status = "Verified"
+            level_payment.save()
+
+        logger.info(f"Manual payment verified for LevelPayment {level_payment.id} by admin")
+
+        return Response({
+            "message": "Payment verified and level marked as paid",
+            "payment_data": self.get_serializer(level_payment).data
+        })
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        level_payment = self.get_object()
+        if level_payment.payment_method != "Manual" or level_payment.status != "Pending":
+            return Response({"error": "Only pending manual payments can be rejected."}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            level_payment.status = "Failed"
+            level_payment.save()
+            user_level = level_payment.user_level
+            user_level.status = 'rejected'
+            user_level.pay_enabled = False
+            user_level.save()
+
+        logger.info(f"Manual payment rejected for LevelPayment {level_payment.id} by admin")
+
+        return Response({
+            "message": "Payment rejected",
+            "payment_data": self.get_serializer(level_payment).data
+        })
+
+
 class LevelCompletionViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['get'], url_path='completion-stats')
     def completion_stats(self, request):
@@ -309,3 +429,65 @@ class LevelCompletionViewSet(viewsets.ViewSet):
             'completion_stats': completion_stats
         }
         return Response(data)
+
+class InitiatePaymentView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = InitiatePaymentSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user_level = UserLevel.objects.get(
+                id=serializer.validated_data['user_level_id'],
+                user=request.user,
+                status__in=['not_paid', 'rejected'],
+                is_active=True,
+                pay_enabled=True
+            )
+        except UserLevel.DoesNotExist:
+            return Response({"error": "UserLevel not found, already paid, or payment not enabled"}, status=status.HTTP_404_NOT_FOUND)
+
+        payment_method = serializer.validated_data['payment_method']
+
+        if payment_method == 'Razorpay':
+            level_payment = LevelPayment.objects.create(
+                user_level=user_level,
+                amount=user_level.level.amount,
+                status="Pending",
+                payment_method="Razorpay"
+            )
+            amount_paisa = int(user_level.level.amount * 100)
+            try:
+                order = razorpay_client.order.create({
+                    "amount": amount_paisa,
+                    "currency": "INR",
+                    "payment_capture": 1
+                })
+            except Exception as e:
+                logger.error(f"Razorpay order creation failed: {str(e)}")
+                level_payment.status = "Failed"
+                level_payment.save()
+                return Response({"error": "Failed to create payment order"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            level_payment.razorpay_order_id = order["id"]
+            level_payment.save()
+
+            logger.info(f"Razorpay order {order['id']} created for LevelPayment {level_payment.id} (user: {request.user.user_id}, level: {user_level.level.name})")
+
+            return Response({
+                "payment_method": "Razorpay",
+                "payment_token": str(level_payment.payment_token),
+                "order_id": order["id"],
+                "amount": user_level.level.amount,
+                "currency": "INR",
+                "razorpay_key": settings.RAZORPAY_KEY_ID,
+            }, status=status.HTTP_201_CREATED)
+
+        else:  # Manual
+            return Response({
+                "payment_method": "Manual",
+                "message": "Proceed to upload payment proof",
+                "user_level_id": user_level.id
+            }, status=status.HTTP_200_OK)

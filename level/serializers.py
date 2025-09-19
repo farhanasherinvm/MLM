@@ -79,8 +79,9 @@ class UserInfoSerializer(serializers.Serializer):
         if not user:
             logger.error("No user provided to UserInfoSerializer")
             return 'Unknown'
-        username = getattr(user, 'username', getattr(user, 'email', getattr(user, 'first_name', 'Unknown')))
-        logger.debug(f"Resolved username for {getattr(user, 'user_id', 'unknown')}: {username}")
+        full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+        username = full_name if full_name else getattr(user,'first_name','Unknown')
+        # logger.debug(f"Resolved username for {getattr(user, 'user_id', 'unknown')}: {username}")
         return username
 
 
@@ -147,14 +148,37 @@ class PaymentReportSerializer(serializers.ModelSerializer):
     def get_username(self, obj):
         return getattr(obj.user, 'email', getattr(obj.user, 'user_id', 'Unknown'))
 
+# class LevelPaymentSerializer(serializers.ModelSerializer):
+#     level_name = serializers.CharField(source='user_level.level.name')
+#     user_id = serializers.CharField(source='user_level.user.user_id')
+
+#     class Meta:
+#         model = LevelPayment
+#         fields = ['id', 'payment_token', 'level_name', 'user_id', 'amount', 'status', 
+#                   'razorpay_order_id', 'razorpay_payment_id', 'razorpay_signature', 'created_at']
+
+
+
 class LevelPaymentSerializer(serializers.ModelSerializer):
     level_name = serializers.CharField(source='user_level.level.name')
     user_id = serializers.CharField(source='user_level.user.user_id')
+    username = serializers.SerializerMethodField()
+    user_email = serializers.CharField(source='user_level.user.email', allow_null=True)
+    payment_proof_url = serializers.SerializerMethodField()
 
     class Meta:
         model = LevelPayment
-        fields = ['id', 'payment_token', 'level_name', 'user_id', 'amount', 'status', 
-                  'razorpay_order_id', 'razorpay_payment_id', 'razorpay_signature', 'created_at']
+        fields = ['id', 'payment_token', 'level_name', 'user_id', 'username', 'user_email', 'amount', 'status', 
+                  'razorpay_order_id', 'razorpay_payment_id', 'razorpay_signature', 'payment_proof_url', 'created_at']
+    def get_username(self, obj):
+        return f"{obj.user_level.user.first_name or ''} {obj.user_level.user.last_name or ''}".strip() or obj.user_level.user.user_id
+
+    def get_payment_proof_url(self, obj):
+        if obj.payment_proof:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.payment_proof.url)
+        return None
 
 class LevelRazorpayOrderSerializer(serializers.Serializer):
     user_level_id = serializers.IntegerField()
@@ -164,3 +188,35 @@ class LevelRazorpayVerifySerializer(serializers.Serializer):
     razorpay_order_id = serializers.CharField()
     razorpay_payment_id = serializers.CharField()
     razorpay_signature = serializers.CharField()
+
+
+class AdminPendingPaymentsSerializer(serializers.ModelSerializer):
+    level_name = serializers.CharField(source='user_level.level.name')
+    user_id = serializers.CharField(source='user_level.user.user_id')
+    username = serializers.SerializerMethodField()
+    user_email = serializers.CharField(source='user_level.user.email', allow_null=True)
+    payment_method = serializers.CharField()
+    payment_proof_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LevelPayment
+        fields = ['id', 'level_name', 'user_id', 'username', 'user_email', 'amount', 'status', 
+                  'payment_method', 'payment_proof_url', 'created_at']
+
+    def get_username(self, obj):
+        return f"{obj.user_level.user.first_name or ''} {obj.user_level.user.last_name or ''}".strip() or obj.user_level.user.user_id
+
+    def get_payment_proof_url(self, obj):
+        if obj.payment_proof:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.payment_proof.url)
+        return None
+
+class ManualPaymentSerializer(serializers.Serializer):
+    user_level_id = serializers.IntegerField()
+    payment_proof = serializers.FileField()
+
+class InitiatePaymentSerializer(serializers.Serializer):
+    user_level_id = serializers.IntegerField()
+    payment_method = serializers.ChoiceField(choices=['Razorpay', 'Manual'])

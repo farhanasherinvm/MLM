@@ -75,29 +75,39 @@ class LevelPayment(models.Model):
         ("Verified", "Verified"),
         ("Failed", "Failed"),
     ]
+    PAYMENT_METHOD_CHOICES = [
+        ("Razorpay", "Razorpay"),
+        ("Manual", "Manual"),
+    ]
 
     payment_token = models.UUIDField(default=uuid.uuid4, unique=True)
     user_level = models.ForeignKey(UserLevel, on_delete=models.CASCADE, related_name='payments')
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default="Pending")
-    
-    # Razorpay fields
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default="Razorpay")
     razorpay_order_id = models.CharField(max_length=255, blank=True, null=True)
     razorpay_payment_id = models.CharField(max_length=255, blank=True, null=True)
     razorpay_signature = models.CharField(max_length=255, blank=True, null=True)
-
-    # Payment data (optional, for manual uploads or additional metadata)
+    payment_proof = models.FileField(upload_to='payment_proofs/', null=True, blank=True)
     payment_data = models.TextField(blank=True, null=True)
-
     created_at = models.DateTimeField(auto_now_add=True)
 
-    def set_payment_data(self, data: dict):
-        self.payment_data = json.dumps(data)
-        self.save()
+    def set_payment_data(self, data):
+        """Set payment_data as JSON string without saving."""
+        if not isinstance(data, dict):
+            raise ValueError("Data must be a dictionary")
+        try:
+            self.payment_data = json.dumps(data)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"Invalid data format: {str(e)}")
 
     def get_payment_data(self):
+        """Retrieve payment_data as a dictionary."""
         if self.payment_data:
-            return json.loads(self.payment_data)
+            try:
+                return json.loads(self.payment_data)
+            except json.JSONDecodeError as e:
+                return {}
         return {}
 
     def __str__(self):

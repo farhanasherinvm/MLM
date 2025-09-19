@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from level.models import UserLevel, LevelPayment
 from users.models import CustomUser
-from django.db.models import Count, Sum, Q
+from django.db.models import Count, Sum, Q,F
 from datetime import datetime
 from django.utils import timezone
 
@@ -31,11 +31,11 @@ class PaymentReportSerializer(serializers.ModelSerializer):
     payment_mode = serializers.CharField()
     transaction_id = serializers.CharField(allow_null=True)
     status = serializers.CharField()
-    approved_at = serializers.DateTimeField(allow_null=True)
+    date = serializers.DateTimeField(allow_null=True)
 
     class Meta:
         model = UserLevel
-        fields = ['username', 'level_name', 'amount', 'payment_mode', 'transaction_id', 'status', 'approved_at']
+        fields = ['username', 'level_name', 'amount', 'payment_mode', 'transaction_id', 'status', 'date']
     
     def get_username(self, obj):
         return getattr(obj.user, 'email', getattr(obj.user, 'user_id', 'Unknown'))
@@ -77,3 +77,87 @@ class DashboardReportSerializer(serializers.Serializer):
                 'latest_level_payment': {'amount': 0, 'time': 'N/A', 'done': False}
             })
         }
+class SendRequestReportSerializer(serializers.ModelSerializer):
+    from_name = serializers.SerializerMethodField()
+    username = serializers.CharField(source='user.user_id')
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, source='level.amount')
+    status = serializers.CharField()
+    level = serializers.CharField(source='level.name')
+    date = serializers.DateTimeField(source='approved_at', format="%Y-%m-%d %H:%M:%S", allow_null=True)
+
+    class Meta:
+        model = UserLevel
+        fields = ['from_name', 'username', 'amount', 'status', 'level', 'date']
+
+    def get_from_name(self, obj):
+        return f"{obj.user.first_name} {obj.user.last_name}".strip()
+
+class AUCReportSerializer(serializers.ModelSerializer):
+    from_user = serializers.CharField(source='user.user_id')
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, source='level.amount')
+    status = serializers.CharField()
+    date = serializers.DateTimeField(source='approved_at', format="%Y-%m-%d %H:%M:%S", allow_null=True)
+
+    class Meta:
+        model = UserLevel
+        fields = ['from_user', 'amount', 'status', 'date']
+
+class PaymentReportSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source='user.user_id')
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, source='level.amount')
+    payout_amount = serializers.DecimalField(max_digits=12, decimal_places=2, default=0)  # Placeholder
+    transaction_fee = serializers.DecimalField(max_digits=12, decimal_places=2, default=0)  # Placeholder
+    status = serializers.CharField()
+    date = serializers.DateTimeField(source='approved_at', format="%Y-%m-%d %H:%M:%S", allow_null=True)
+    total = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UserLevel
+        fields = ['username', 'amount', 'payout_amount', 'transaction_fee', 'status', 'date', 'total']
+
+    def get_total(self, obj):
+        return obj.level.amount  # Fallback to amount since payout_amount and transaction_fee are placeholders
+
+# class BonusSummarySerializer(serializers.Serializer):
+#     username = serializers.CharField()
+#     from_name = serializers.CharField()
+#     total_amount = serializers.DecimalField(max_digits=15, decimal_places=2)
+#     completed_levels = serializers.IntegerField()
+#     latest_status = serializers.CharField()
+#     latest_date = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", allow_null=True)
+
+#     def to_representation(self, instance):
+#         user = instance['user']
+#         user_levels = instance['user_levels']
+#         total_amount = user_levels.filter(status='paid').aggregate(total=Sum('level.amount'))['total'] or 0
+#         completed_levels = user_levels.filter(status='paid').count()
+#         latest_level = user_levels.order_by('-approved_at').first()
+#         return {
+#             'username': user.user_id,
+#             'from_name': f"{user.first_name} {user.last_name}".strip(),
+#             'total_amount': total_amount,
+#             'completed_levels': completed_levels,
+#             'latest_status': latest_level.status if latest_level else 'N/A',
+#             'latest_date': latest_level.approved_at.strftime('%Y-%m-%d %H:%M:%S') if latest_level and latest_level.approved_at else None
+#         }
+
+class LevelUsersSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source='user.user_id')
+    from_name = serializers.SerializerMethodField()
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, source='level.amount')
+    status = serializers.CharField()
+    level = serializers.CharField(source='level.name')
+    date = serializers.DateTimeField(source='approved_at', format="%Y-%m-%d %H:%M:%S", allow_null=True)
+    total = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UserLevel
+        fields = ['username', 'from_name', 'amount', 'status', 'level', 'date', 'total']
+
+    def get_from_name(self, obj):
+        return f"{obj.user.first_name} {obj.user.last_name}".strip()
+
+    def get_total(self, obj):
+        return obj.level.amount  # Fallback to amount
+
+

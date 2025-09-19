@@ -6,21 +6,25 @@ from django.http import HttpResponse
 import csv
 import io
 from reportlab.pdfgen import canvas
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.pagesizes import A4
 from django_filters.rest_framework import DjangoFilterBackend
 from level.models import UserLevel, LevelPayment
 from level.serializers import PaymentReportSerializer
 from .filters import PaymentFilter
-from .serializers import DashboardReportSerializer, LevelPaymentReportSerializer
+from .serializers import DashboardReportSerializer, LevelPaymentReportSerializer, SendRequestReportSerializer, AUCReportSerializer, PaymentReportSerializer, LevelUsersSerializer
 from users.models import CustomUser
 from django.db.models import Count, Sum, Q
 from django.utils import timezone
 from datetime import timedelta
 from rest_framework.views import APIView
-from rest_framework import status
 import logging
 
 logger = logging.getLogger(__name__)
 
+# Existing PaymentReportViewSet (unchanged for now)
 class PaymentReportViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = UserLevel.objects.all().order_by('-approved_at')
     serializer_class = PaymentReportSerializer
@@ -34,11 +38,9 @@ class PaymentReportViewSet(viewsets.ReadOnlyModelViewSet):
         approved_qs = queryset.filter(status='paid')
         serializer_pending = self.get_serializer(pending_qs, many=True)
         serializer_approved = self.get_serializer(approved_qs, many=True)
-        data= self.get_serializer(queryset, many=True).data
         return Response({
             'pending': serializer_pending.data,
             'approved': serializer_approved.data,
-            'data': data
         })
 
     @action(detail=False, methods=['get'], url_path='export-csv')
@@ -194,6 +196,7 @@ class PaymentReportViewSet(viewsets.ReadOnlyModelViewSet):
 
         return Response(report_data)
 
+# Existing DashboardReportViewSet (unchanged)
 class DashboardReportViewSet(viewsets.ViewSet):
     permission_classes = [IsAdminUser]
 
@@ -287,8 +290,7 @@ class DashboardReportViewSet(viewsets.ViewSet):
         serializer = DashboardReportSerializer(data)
         return Response(serializer.data)
 
-
-# New User Permission Class
+# Existing UserReportViewSet (unchanged)
 class UserReportViewSet(viewsets.ViewSet):
     # No permission_classes specified, assumes IsAuthenticated by default or custom logic if needed
 
@@ -311,6 +313,7 @@ class UserReportViewSet(viewsets.ViewSet):
         }
         return Response(data)
 
+# Existing UserLatestReportView (unchanged)
 class UserLatestReportView(APIView):
     def get(self, request, *args, **kwargs):
         logger.debug("User latest report endpoint hit for user %s", request.user.user_id)
@@ -347,19 +350,402 @@ class UserLatestReportView(APIView):
                 'last_name': latest_level_help.user.last_name if latest_level_help else '',
                 'amount': latest_level_help.level.amount if latest_level_help else 200.0,
                 'time': latest_level_help.approved_at.strftime('%Y-%m-%d %H:%M:%S') if latest_level_help and latest_level_help.approved_at else 'N/A',
-                # 'done': latest_level_help.status == 'paid' if latest_level_help else False,
                 'user_id': latest_level_help.user.user_id if latest_level_help else 'N/A'
             } if latest_level_help else {
-                'name': '', 'email_id': 'admin@gmail.com', 'first_name': '', 'last_name': '', 'amount': 200.0, 'time': 'N/A', 'done': False, 'user_id': 'N/A'
+                'name': '', 'email_id': 'admin@gmail.com', 'first_name': '', 'last_name': '', 'amount': 200.0, 'time': 'N/A', 'user_id': 'N/A'
             },
             'latest_level_payment': {
                 'amount': latest_level_payment.amount if latest_level_payment else 200.0,
-                'time': latest_level_payment.created_at.strftime('%Y-%m-%d %H:%M:%S') if latest_level_payment else '2025-09-18 16:15:19',
-                # 'done': latest_level_payment.status == 'Verified' if latest_level_payment else False
-            } if latest_level_payment else {'amount': 200.0, 'time': '2025-09-18 16:15:19', 'done': False}
+                'time': latest_level_payment.created_at.strftime('%Y-%m-%d %H:%M:%S') if latest_level_payment else '2025-09-18 16:15:19'
+            } if latest_level_payment else {'amount': 200.0, 'time': '2025-09-18 16:15:19'}
         }
 
         data = {
             'latest_report': latest_report
         }
-        return Response(data, status=status.HTTP_200_OK)  
+        return Response(data, status=status.HTTP_200_OK)
+
+# New Report Views
+class SendRequestReport(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        queryset = UserLevel.objects.select_related('user', 'level').all().order_by('-approved_at')
+        
+        # Search filter
+        search = request.query_params.get('search', '')
+        if search:
+            queryset = queryset.filter(
+                Q(user__first_name__icontains=search) |
+                Q(user__last_name__icontains=search) |
+                Q(user__user_id__icontains=search) |
+                Q(level__name__icontains=search) |
+                Q(status__icontains=search)
+            )
+        
+        # Export options
+        export_format = request.query_params.get('export')
+        if export_format == 'csv':
+            return self.export_csv(queryset, 'send_request_report')
+        elif export_format == 'pdf':
+            return self.export_pdf(queryset, 'send_request_report')
+
+        serializer = SendRequestReportSerializer(queryset, many=True)
+        return Response(serializer.data)
+
+    def export_csv(self, queryset, filename_prefix):
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.csv"'
+        writer = csv.writer(response)
+        writer.writerow(['From Name', 'Username', 'Amount', 'Status', 'Level', 'Approved At'])
+        for obj in queryset:
+            writer.writerow([
+                f"{obj.user.first_name} {obj.user.last_name}".strip(),
+                obj.user.user_id,
+                obj.level.amount,
+                obj.status,
+                obj.level.name,
+                obj.approved_at.strftime('%Y-%m-%d %H:%M:%S') if obj.approved_at else ''
+            ])
+        return response
+
+    def export_pdf(self, queryset, filename_prefix):
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4)
+        elements = []
+        styles = getSampleStyleSheet()
+        elements.append(Paragraph(f"{filename_prefix.replace('_', ' ').title()} Report", styles["Title"]))
+
+        data = [['From Name', 'Username', 'Amount', 'Status', 'Level', 'Approved At']]
+        for obj in queryset:
+            data.append([
+                f"{obj.user.first_name} {obj.user.last_name}".strip(),
+                obj.user.user_id,
+                str(obj.level.amount),
+                obj.status,
+                obj.level.name,
+                obj.approved_at.strftime('%Y-%m-%d %H:%M:%S') if obj.approved_at else ''
+            ])
+
+        table = Table(data)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+        ]))
+        elements.append(table)
+        doc.build(elements)
+
+        response = HttpResponse(content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.pdf"'
+        response.write(buffer.getvalue())
+        buffer.close()
+        return response
+
+class AUCReport(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        queryset = UserLevel.objects.select_related('user', 'level').all().order_by('-approved_at')
+        
+        # Search filter
+        search = request.query_params.get('search', '')
+        if search:
+            queryset = queryset.filter(
+                Q(user__first_name__icontains=search) |
+                Q(user__last_name__icontains=search) |
+                Q(user__user_id__icontains=search) |
+                Q(status__icontains=search)
+            )
+        
+        # Export options
+        export_format = request.query_params.get('export')
+        if export_format == 'csv':
+            return self.export_csv(queryset, 'auc_report')
+        elif export_format == 'pdf':
+            return self.export_pdf(queryset, 'auc_report')
+
+        serializer = AUCReportSerializer(queryset, many=True)
+        return Response(serializer.data)
+
+    def export_csv(self, queryset, filename_prefix):
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.csv"'
+        writer = csv.writer(response)
+        writer.writerow(['From User', 'Amount', 'Status', 'Approved At'])
+        for obj in queryset:
+            writer.writerow([
+                obj.user.user_id,
+                obj.level.amount,
+                obj.status,
+                obj.approved_at.strftime('%Y-%m-%d %H:%M:%S') if obj.approved_at else ''
+            ])
+        return response
+
+    def export_pdf(self, queryset, filename_prefix):
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4)
+        elements = []
+        styles = getSampleStyleSheet()
+        elements.append(Paragraph(f"{filename_prefix.replace('_', ' ').title()} Report", styles["Title"]))
+
+        data = [['From User', 'Amount', 'Status', 'Approved At']]
+        for obj in queryset:
+            data.append([
+                obj.user.user_id,
+                str(obj.level.amount),
+                obj.status,
+                obj.approved_at.strftime('%Y-%m-%d %H:%M:%S') if obj.approved_at else ''
+            ])
+
+        table = Table(data)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+        ]))
+        elements.append(table)
+        doc.build(elements)
+
+        response = HttpResponse(content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.pdf"'
+        response.write(buffer.getvalue())
+        buffer.close()
+        return response
+
+class PaymentReport(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        queryset = UserLevel.objects.select_related('user', 'level').all().order_by('-approved_at')
+        
+        # Search filter
+        search = request.query_params.get('search', '')
+        if search:
+            queryset = queryset.filter(
+                Q(user__first_name__icontains=search) |
+                Q(user__last_name__icontains=search) |
+                Q(user__user_id__icontains=search) |
+                Q(status__icontains=search)
+            )
+        
+        # Export options
+        export_format = request.query_params.get('export')
+        if export_format == 'csv':
+            return self.export_csv(queryset, 'payment_report')
+        elif export_format == 'pdf':
+            return self.export_pdf(queryset, 'payment_report')
+
+        serializer = PaymentReportSerializer(queryset, many=True)
+        return Response(serializer.data)
+
+    def export_csv(self, queryset, filename_prefix):
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.csv"'
+        writer = csv.writer(response)
+        writer.writerow(['Username', 'Amount', 'Payout Amount', 'Transaction Fee', 'Status', 'Approved At', 'Total'])
+        for obj in queryset:
+            writer.writerow([
+                obj.user.user_id,
+                obj.level.amount,
+                0,  # Placeholder for payout_amount
+                0,  # Placeholder for transaction_fee
+                obj.status,
+                obj.approved_at.strftime('%Y-%m-%d %H:%M:%S') if obj.approved_at else '',
+                obj.level.amount  # Total as amount
+            ])
+        return response
+
+    def export_pdf(self, queryset, filename_prefix):
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4)
+        elements = []
+        styles = getSampleStyleSheet()
+        elements.append(Paragraph(f"{filename_prefix.replace('_', ' ').title()} Report", styles["Title"]))
+
+        data = [['Username', 'Amount', 'Payout Amount', 'Transaction Fee', 'Status', 'Approved At', 'Total']]
+        for obj in queryset:
+            data.append([
+                obj.user.user_id,
+                str(obj.level.amount),
+                str(0),  # Placeholder for payout_amount
+                str(0),  # Placeholder for transaction_fee
+                obj.status,
+                obj.approved_at.strftime('%Y-%m-%d %H:%M:%S') if obj.approved_at else '',
+                str(obj.level.amount)  # Total as amount
+            ])
+
+        table = Table(data)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+        ]))
+        elements.append(table)
+        doc.build(elements)
+
+        response = HttpResponse(content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.pdf"'
+        response.write(buffer.getvalue())
+        buffer.close()
+        return response
+
+# class BonusSummary(APIView):
+#     permission_classes = [IsAdminUser]
+
+#     def get(self, request):
+#         users = CustomUser.objects.filter(is_active=True).prefetch_related('userlevel_set')
+        
+#         # Search filter
+#         search = request.query_params.get('search', '')
+#         if search:
+#             users = users.filter(
+#                 Q(first_name__icontains=search) |
+#                 Q(last_name__icontains=search) |
+#                 Q(user_id__icontains=search) |
+#                 Q(email__icontains=search)
+#             )
+        
+#         report_data = []
+#         for user in users:
+#             user_levels = UserLevel.objects.filter(user=user)
+#             if user_levels.exists():  # Only include users with levels
+#                 report_data.append({
+#                     'user': user,
+#                     'user_levels': user_levels
+#                 })
+
+#         # Export options
+#         export_format = request.query_params.get('export')
+#         if export_format == 'pdf':
+#             return self.export_pdf(report_data, 'bonus_summary')
+
+#         serializer = BonusSummarySerializer(report_data, many=True)
+#         return Response(serializer.data)
+
+#     def export_pdf(self, report_data, filename_prefix):
+#         buffer = io.BytesIO()
+#         doc = SimpleDocTemplate(buffer, pagesize=A4)
+#         elements = []
+#         styles = getSampleStyleSheet()
+#         elements.append(Paragraph(f"{filename_prefix.replace('_', ' ').title()} Report", styles["Title"]))
+
+#         data = [['Username', 'From Name', 'Total Amount', 'Completed Levels', 'Latest Status', 'Latest Date']]
+#         for item in report_data:
+#             user = item['user']
+#             user_levels = item['user_levels']
+#             total_amount = user_levels.filter(status='paid').aggregate(total=Sum('level.amount'))['total'] or 0
+#             completed_levels = user_levels.filter(status='paid').count()
+#             latest_level = user_levels.order_by('-approved_at').first()
+#             data.append([
+#                 user.user_id,
+#                 f"{user.first_name} {user.last_name}".strip(),
+#                 str(total_amount),
+#                 str(completed_levels),
+#                 latest_level.status if latest_level else 'N/A',
+#                 latest_level.approved_at.strftime('%Y-%m-%d %H:%M:%S') if latest_level and latest_level.approved_at else ''
+#             ])
+
+#         table = Table(data)
+#         table.setStyle(TableStyle([
+#             ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
+#             ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+#             ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+#             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+#             ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+#         ]))
+#         elements.append(table)
+#         doc.build(elements)
+
+#         response = HttpResponse(content_type="application/pdf")
+#         response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.pdf"'
+#         response.write(buffer.getvalue())
+#         buffer.close()
+#         return response
+
+class LevelUsersReport(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        queryset = UserLevel.objects.select_related('user', 'level').all().order_by('-approved_at')
+        
+        # Search filter
+        search = request.query_params.get('search', '')
+        if search:
+            queryset = queryset.filter(
+                Q(user__first_name__icontains=search) |
+                Q(user__last_name__icontains=search) |
+                Q(user__user_id__icontains=search) |
+                Q(level__name__icontains=search) |
+                Q(status__icontains=search)
+            )
+        
+        # Export options
+        export_format = request.query_params.get('export')
+        if export_format == 'csv':
+            return self.export_csv(queryset, 'level_users_report')
+        elif export_format == 'pdf':
+            return self.export_pdf(queryset, 'level_users_report')
+
+        serializer = LevelUsersSerializer(queryset, many=True)
+        return Response(serializer.data)
+
+    def export_csv(self, queryset, filename_prefix):
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.csv"'
+        writer = csv.writer(response)
+        writer.writerow(['Username', 'From Name', 'Amount', 'Status', 'Level', 'Approved At', 'Total'])
+        for obj in queryset:
+            writer.writerow([
+                obj.user.user_id,
+                f"{obj.user.first_name} {obj.user.last_name}".strip(),
+                obj.level.amount,
+                obj.status,
+                obj.level.name,
+                obj.approved_at.strftime('%Y-%m-%d %H:%M:%S') if obj.approved_at else '',
+                obj.level.amount  # Total as amount
+            ])
+        return response
+
+    def export_pdf(self, queryset, filename_prefix):
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4)
+        elements = []
+        styles = getSampleStyleSheet()
+        elements.append(Paragraph(f"{filename_prefix.replace('_', ' ').title()} Report", styles["Title"]))
+
+        data = [['Username', 'From Name', 'Amount', 'Status', 'Level', 'Approved At', 'Total']]
+        for obj in queryset:
+            data.append([
+                obj.user.user_id,
+                f"{obj.user.first_name} {obj.user.last_name}".strip(),
+                str(obj.level.amount),
+                obj.status,
+                obj.level.name,
+                obj.approved_at.strftime('%Y-%m-%d %H:%M:%S') if obj.approved_at else '',
+                str(obj.level.amount)  # Total as amount
+            ])
+
+        table = Table(data)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+        ]))
+        elements.append(table)
+        doc.build(elements)
+
+        response = HttpResponse(content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.pdf"'
+        response.write(buffer.getvalue())
+        buffer.close()
+        return response
+
