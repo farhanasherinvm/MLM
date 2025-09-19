@@ -18,6 +18,18 @@ from django.utils.dateparse import parse_date
 
 from django.utils.timezone import make_aware, is_naive
 from datetime import datetime
+from django.http import HttpResponse
+import csv
+from io import BytesIO
+from datetime import datetime
+from django.utils.timezone import is_naive, make_aware
+
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
+
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+
 
 CustomUser = get_user_model()
 
@@ -58,39 +70,35 @@ class ReferralView(APIView):
         return Response(serializer.data)
 
 
-
-
 class ReferralListView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get(self, request):
+    def get(self, request, *args, **kwargs):
         user = request.user
         all_referrals = get_all_referrals(user, max_level=6)
 
-        # --- Filters from query params ---
+        
         email = request.query_params.get("email")
-        status = request.query_params.get("status")  # all / active / inactive
+        status = request.query_params.get("status")
         user_id = request.query_params.get("user_id")
         start_date = request.query_params.get("start_date")
         end_date = request.query_params.get("end_date")
-        limit = request.query_params.get("limit")  # 10, 20, 60, etc.
+        limit = request.query_params.get("limit")
+        export = request.query_params.get("export")  # 'csv', 'pdf', 'xlsx'
 
-        # Filter by email
+        
         if email:
             all_referrals = [r for r in all_referrals if email.lower() in r.email.lower()]
 
-        # Filter by status
         if status and status.lower() != "all":
             if status.lower() == "active":
                 all_referrals = [r for r in all_referrals if r.is_active]
             elif status.lower() == "inactive":
                 all_referrals = [r for r in all_referrals if not r.is_active]
 
-        # Filter by user_id
         if user_id:
-            all_referrals = [r for r in all_referrals if r.user_id == user_id]
+            all_referrals = [r for r in all_referrals if str(r.user_id) == str(user_id)]
 
-        # Filter by joining date
         if start_date:
             start_date_parsed = parse_date(start_date)
             if start_date_parsed:
@@ -107,28 +115,96 @@ class ReferralListView(APIView):
                     if r.date_of_joining and r.date_of_joining.date() <= end_date_parsed
                 ]
 
-        # --- Sort by recent joiners safely ---
+        #  Sort by joining date 
         def get_joined_date(u):
             if u.date_of_joining:
                 dt = u.date_of_joining
                 if is_naive(dt):
                     dt = make_aware(dt)
                 return dt
-            return datetime.min.replace(tzinfo=None)  # users without date go last
+            return datetime.min.replace(tzinfo=None)
 
         all_referrals.sort(key=get_joined_date, reverse=True)
 
-        # Apply limit
         if limit:
             try:
                 limit = int(limit)
                 all_referrals = all_referrals[:limit]
             except ValueError:
-                pass  # ignore invalid limit
+                pass
 
-        # Serialize and return
+        # CSV Export 
+        if export == "csv":
+            response = HttpResponse(content_type="text/csv")
+            response["Content-Disposition"] = 'attachment; filename="referrals.csv"'
+            writer = csv.writer(response)
+            writer.writerow(["User ID", "Email", "Status", "Date of Joining"])
+            for r in all_referrals:
+                writer.writerow([
+                    r.user_id,
+                    r.email,
+                    "Active" if r.is_active else "Inactive",
+                    r.date_of_joining.strftime("%Y-%m-%d") if r.date_of_joining else "",
+                ])
+            return response
+
+        #  PDF Export 
+        elif export == "pdf":
+            buffer = BytesIO()
+            p = canvas.Canvas(buffer, pagesize=A4)
+            width, height = A4
+            y = height - 50
+            p.setFont("Helvetica-Bold", 14)
+            p.drawString(200, y, "Referral List")
+            y -= 30
+            p.setFont("Helvetica", 10)
+            for r in all_referrals:
+                line = f"{r.user_id} | {r.email} | {'Active' if r.is_active else 'Inactive'} | {r.date_of_joining.strftime('%Y-%m-%d') if r.date_of_joining else ''}"
+                p.drawString(50, y, line)
+                y -= 20
+                if y < 50:
+                    p.showPage()
+                    y = height - 50
+            p.save()
+            pdf = buffer.getvalue()
+            buffer.close()
+            response = HttpResponse(pdf, content_type="application/pdf")
+            response["Content-Disposition"] = 'attachment; filename="referrals.pdf"'
+            return response
+
+        #  XLSX Export 
+        elif export == "xlsx":
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Referrals"
+            ws.append(["User ID", "Email", "Status", "Date of Joining"])
+
+            for r in all_referrals:
+                ws.append([
+                    r.user_id,
+                    r.email,
+                    "Active" if r.is_active else "Inactive",
+                    r.date_of_joining.strftime("%Y-%m-%d") if r.date_of_joining else "",
+                ])
+
+            output = BytesIO()
+            wb.save(output)
+            output.seek(0)
+
+            response = HttpResponse(
+                output,
+                content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            response["Content-Disposition"] = 'attachment; filename="referrals.xlsx"'
+            return response
+
+        # Default JSON 
         serializer = ReferralListSerializer(all_referrals, many=True)
         return Response(serializer.data)
+
+
+
+
 class AdminHomeView(APIView):
     permission_classes = [IsAdminUser]  
     def get(self, request):
