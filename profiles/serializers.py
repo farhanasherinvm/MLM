@@ -98,12 +98,13 @@ class ReferralListSerializer(serializers.ModelSerializer):
 
 
 
+
 class ProfileSerializer(serializers.ModelSerializer):
     # User fields
     user_id = serializers.CharField(source='user.user_id', read_only=True)
     first_name = serializers.CharField(source='user.first_name')
     last_name = serializers.CharField(source='user.last_name')
-    email = serializers.EmailField(source='user.email')
+    email = serializers.EmailField(source='user.email', read_only=True)
     mobile = serializers.CharField(source='user.mobile')
     date_of_join = serializers.DateTimeField(
         source="user.date_of_joining", format="%Y-%m-%d %H:%M:%S", read_only=True
@@ -117,7 +118,7 @@ class ProfileSerializer(serializers.ModelSerializer):
     percentage = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
 
-    # Profile fields (all writable now)
+    # Profile fields (all writable)
     district = serializers.CharField(required=False, allow_blank=True)
     state = serializers.CharField(required=False, allow_blank=True)
     address = serializers.CharField(required=False, allow_blank=True)
@@ -137,6 +138,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             "referrals",
         ]
 
+    # ---------- Update method ----------
     def update(self, instance, validated_data):
         # Update user fields
         user_data = validated_data.pop('user', {})
@@ -164,8 +166,8 @@ class ProfileSerializer(serializers.ModelSerializer):
     def get_referred_by_name_for(self, user):
         if user.sponsor_id:
             try:
-                sponsor = CustomUser.objects.get(user_id=user.sponsor_id)
-                return f"{sponsor.first_name} {sponsor.last_name}"
+                sponsor = CustomUser.objects.get(user_id__iexact=user.sponsor_id)
+                return f"{(sponsor.first_name or '').strip()} {(sponsor.last_name or '').strip()}"
             except CustomUser.DoesNotExist:
                 return None
         return None
@@ -187,6 +189,7 @@ class ProfileSerializer(serializers.ModelSerializer):
     def get_referrals(self, obj):
         return self.build_levels(obj.user.user_id)
 
+    # ---------- Recursive referral tree ----------
     def build_levels(self, user_id, level=1, max_level=6):
         if level > max_level:
             return {}
@@ -223,6 +226,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             }
 
         return {f"Level {level}": slots}
+
 
 class KYCSerializer(serializers.ModelSerializer):
 
