@@ -23,6 +23,7 @@ from io import BytesIO
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
 from reportlab.lib import colors
 from rest_framework.permissions import IsAdminUser
+from profiles.models import Profile
 
 # import admin serializer from profiles
 from profiles.serializers import AdminUserListSerializer, AdminUserDetailSerializer, AdminNetworkUserSerializer

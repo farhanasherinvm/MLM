@@ -261,10 +261,11 @@ class AdminUserListSerializer(serializers.ModelSerializer):
     username = serializers.SerializerMethodField()
     profile_image = serializers.SerializerMethodField()
     level = serializers.SerializerMethodField()
+    status= serializers.SerializerMethodField()
 
     class Meta:
         model = CustomUser
-        fields = ["username", "user_id", "level", "profile_image"]
+        fields = ["username", "user_id", "level", "profile_image", "status"]
 
     def get_username(self, obj):
         first = getattr(obj, "first_name", "") or ""
@@ -296,6 +297,9 @@ class AdminUserListSerializer(serializers.ModelSerializer):
             return level
         except Exception:
             return 0
+        
+    def get_status(self, obj):
+        return "Active" if obj.is_active else "Blocked"
 
 
 class AdminUserDetailSerializer(serializers.ModelSerializer):
