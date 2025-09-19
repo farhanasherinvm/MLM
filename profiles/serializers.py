@@ -96,14 +96,20 @@ class ReferralListSerializer(serializers.ModelSerializer):
 
 
 
+
+
 class ProfileSerializer(serializers.ModelSerializer):
+    # User fields
     user_id = serializers.CharField(source='user.user_id', read_only=True)
     first_name = serializers.CharField(source='user.first_name')
     last_name = serializers.CharField(source='user.last_name')
     email = serializers.EmailField(source='user.email')
     mobile = serializers.CharField(source='user.mobile')
-    date_of_join = serializers.DateTimeField(source="user.date_of_joining", format="%Y-%m-%d %H:%M:%S", read_only=True)
+    date_of_join = serializers.DateTimeField(
+        source="user.date_of_joining", format="%Y-%m-%d %H:%M:%S", read_only=True
+    )
 
+    # Referral info
     referrals = serializers.SerializerMethodField()
     referred_by_id = serializers.SerializerMethodField()
     referred_by_name = serializers.SerializerMethodField()
@@ -111,13 +117,14 @@ class ProfileSerializer(serializers.ModelSerializer):
     percentage = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
 
-    district = serializers.CharField(read_only=True)
-    state = serializers.CharField(read_only=True)
-    address = serializers.CharField(read_only=True)
-    place = serializers.CharField(read_only=True)
-    pincode = serializers.CharField(read_only=True)
-    whatsapp_number = serializers.CharField(read_only=True)
-    profile_image = serializers.SerializerMethodField()
+    # Profile fields (all writable now)
+    district = serializers.CharField(required=False, allow_blank=True)
+    state = serializers.CharField(required=False, allow_blank=True)
+    address = serializers.CharField(required=False, allow_blank=True)
+    place = serializers.CharField(required=False, allow_blank=True)
+    pincode = serializers.CharField(required=False, allow_blank=True)
+    whatsapp_number = serializers.CharField(required=False, allow_blank=True)
+    profile_image = serializers.ImageField(required=False, allow_null=True)
 
     class Meta:
         model = Profile
@@ -131,14 +138,20 @@ class ProfileSerializer(serializers.ModelSerializer):
         ]
 
     def update(self, instance, validated_data):
+        # Update user fields
         user_data = validated_data.pop('user', {})
-        instance = super().update(instance, validated_data)
         user = instance.user
         for attr, value in user_data.items():
             setattr(user, attr, value)
         user.save()
+
+        # Update profile fields
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
         return instance
 
+    # ---------- SerializerMethodField methods ----------
     def get_status(self, obj):
         return "Active" if obj.user.is_active else "Inactive"
 
@@ -210,7 +223,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             }
 
         return {f"Level {level}": slots}
-        
+
 class KYCSerializer(serializers.ModelSerializer):
 
     id_number_nominee = serializers.CharField(source='id_number')
