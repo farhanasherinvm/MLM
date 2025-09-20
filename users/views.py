@@ -3,25 +3,24 @@ from django.conf import settings
 from django.core.mail import send_mail
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status, permissions, generics, filters
-from rest_framework.permissions import IsAuthenticated, BasePermission
+from rest_framework import status, permissions
+from rest_framework.permissions import IsAuthenticated, BasePermission, AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
-from rest_framework.permissions import AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import *
-from .serializers import *
-from .permissions import IsProjectAdmin
-from django.utils.crypto import get_random_string
-from .utils import validate_sponsor
 from django.db.models import Q
 from io import BytesIO
 from reportlab.pdfgen import canvas
-from django.http import HttpResponse, FileResponse
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
-from io import BytesIO
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
 from reportlab.lib import colors
+from django.http import HttpResponse, FileResponse
+
+from .models import *
+from .serializers import *
+from .permissions import IsProjectAdmin
+from .utils import validate_sponsor
+from django.utils.crypto import get_random_string
 from rest_framework.permissions import IsAdminUser
 from profiles.models import Profile
 
@@ -34,8 +33,6 @@ def generate_next_userid():
         user_id = f"WS{random_part}"
         if not CustomUser.objects.filter(user_id=user_id).exists():
             return user_id
-
-
 
 class RegistrationView(APIView):
     permission_classes = [AllowAny]
@@ -58,6 +55,7 @@ razorpay_client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZOR
 
 class RazorpayOrderView(APIView):
     permission_classes = [permissions.AllowAny]
+    
     def post(self, request):
         serializer = RazorpayOrderSerializer(data=request.data)
         if not serializer.is_valid():
@@ -443,43 +441,121 @@ class AdminListUsersView(APIView):
     permission_classes = [IsProjectAdmin]
 
     def get(self, request):
-        search_query = request.query_params.get("search", "")
-        if search_query:
-            users = CustomUser.objects.filter(
-                Q(username__icontains=search_query) |
-                Q(user_id__icontains=search_query)
-            )
-        else:
-            users = CustomUser.objects.all()
+        search_query = request.query_params.get("search", "").strip()
+        users = CustomUser.objects.all()
 
-        serializer = CustomUserSerializer(users, many=True)
+        if search_query:
+            parts = search_query.split()
+            if len(parts) >= 2:
+                users = users.filter(
+                    Q(user_id__icontains=search_query) |
+                    (Q(first_name__icontains=parts[0]) & Q(last_name__icontains=' '.join(parts[1:])))
+                )
+            else:
+                users = users.filter(
+                    Q(user_id__icontains=search_query) |
+                    Q(first_name__icontains=search_query) |
+                    Q(last_name__icontains=search_query)
+                )
+
+        serializer = AdminUserListSerializer(users, many=True, context={"request": request})
         return Response(serializer.data)
 
 
 class AdminUserListView(APIView):
-    """
-    Returns a compact list for admins:
-      - username
-      - user_id
-      - level
-      - profile_image
-    """
     permission_classes = [IsProjectAdmin]
 
-    def get(self, request):
-        search_query = request.query_params.get("search", "")
-        if search_query:
-            users = CustomUser.objects.filter(
-                Q(username__icontains=search_query) |
-                Q(user_id__icontains=search_query)
-            ).select_related("profile")
-        else:
-            users = CustomUser.objects.all().select_related("profile")
+    def get_search_query(self, request):
+        return (request.query_params.get("search") or request.data.get("search") or "").strip()
 
+    def get_export_format(self, request):
+        return request.query_params.get("export", "").lower()  # "csv" or "pdf"
+
+    def get(self, request):
+        search_query = self.get_search_query(request)
+        export_format = self.get_export_format(request)
+        return self.search_and_respond(search_query, export_format, request)
+
+    def post(self, request):
+        search_query = self.get_search_query(request)
+        export_format = self.get_export_format(request)
+        return self.search_and_respond(search_query, export_format, request)
+
+    def search_and_respond(self, search_query, export_format, request):
+        users = CustomUser.objects.select_related("profile").all()
+
+        if search_query:
+            parts = search_query.split()
+            if len(parts) >= 2:
+                users = users.filter(
+                    Q(user_id__icontains=search_query) |
+                    (Q(first_name__icontains=parts[0]) & Q(last_name__icontains=' '.join(parts[1:])))
+                )
+            else:
+                users = users.filter(
+                    Q(user_id__icontains=search_query) |
+                    Q(first_name__icontains=search_query) |
+                    Q(last_name__icontains=search_query)
+                )
+
+        if export_format == "csv":
+            return self.export_csv(users)
+        elif export_format == "pdf":
+            return self.export_pdf(users)
+
+        # Default → JSON
         serializer = AdminUserListSerializer(users, many=True, context={"request": request})
         return Response(serializer.data, status=200)
 
+    def export_csv(self, queryset):
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="users.csv"'
+        writer = csv.writer(response)
 
+        # Header
+        writer.writerow(["Name", "User ID", "Level", "Profile Image", "Status"])
+
+        for user in queryset:
+            profile_img = getattr(user.profile, 'profile_image', None)
+            profile_url = profile_img.url if profile_img else ""
+            full_name = f"{user.first_name} {user.last_name}".strip() or user.user_id
+            writer.writerow([full_name, user.user_id, user.level, profile_url, "Active" if user.is_active else "Blocked"])
+        return response
+
+    def export_pdf(self, queryset):
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4)
+        elements = []
+        styles = getSampleStyleSheet()
+        elements.append(Paragraph("Users Report", styles["Title"]))
+
+        data = [["Name", "User ID", "Level", "Profile Image", "Status"]]
+        for user in queryset:
+            profile_img = getattr(user.profile, 'profile_image', None)
+            profile_url = profile_img.url if profile_img else ""
+            full_name = f"{user.first_name} {user.last_name}".strip() or user.user_id
+            status = "Active" if user.is_active else "Blocked"
+            data.append([full_name, user.user_id, user.level, profile_url, status])
+
+        table = Table(data, colWidths=[150, 70, 50, 150, 60])
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), colors.grey),
+            ("TEXTCOLOR", (0,0), (-1,0), colors.whitesmoke),
+            ("ALIGN", (0,0), (-1,-1), "CENTER"),
+            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+            ("BOTTOMPADDING", (0,0), (-1,0), 10),
+            ("GRID", (0,0), (-1,-1), 0.5, colors.black),
+        ]))
+        elements.append(table)
+        doc.build(elements)
+
+        pdf = buffer.getvalue()
+        buffer.close()
+        response = HttpResponse(content_type="application/pdf")
+        response["Content-Disposition"] = 'attachment; filename="users.pdf"'
+        response.write(pdf)
+        return response
+    
 class AdminUserDetailView(APIView):
     """
     Allows project admin to view & edit full user + profile details
@@ -668,7 +744,7 @@ class AdminViewProfileImageView(APIView):
     
 
 class AdminNetworkView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsProjectAdmin]
 
     def get_queryset(self, request):
         """Apply search and filtering logic while preserving QuerySet methods."""
@@ -677,11 +753,19 @@ class AdminNetworkView(APIView):
         # 🔎 Search by first_name, last_name, or user_id
         search = request.query_params.get("search")
         if search:
-            queryset = queryset.filter(
-                Q(first_name__icontains=search) |
-                Q(last_name__icontains=search) |
-                Q(user_id__icontains=search)
-            )
+            parts = search.split()
+            if len(parts) >= 2:
+                queryset = queryset.filter(
+                    Q(user_id__icontains=search) |
+                    (Q(first_name__icontains=parts[0]) & Q(last_name__icontains=' '.join(parts[1:])))
+                )
+            else:
+                queryset = queryset.filter(
+                    Q(user_id__icontains=search) |
+                    Q(first_name__icontains=search) |
+                    Q(last_name__icontains=search)
+                )
+
 
         # 🔎 Filter by active status
         status_filter = request.query_params.get("status")
