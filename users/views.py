@@ -320,7 +320,7 @@ class ForgotPasswordView(APIView):
         user = serializer.validated_data['user']
         token = get_random_string(48)
         PasswordResetToken.objects.create(user=user, token=token)
-        reset_link = f"http://127.0.0.1:8000/api/reset-password/?token={token}"
+        reset_link = f"https://winnersclubx.netlify.app/api/reset-password/?token={token}"
 
         send_mail(
             subject="Reset Your Password",
@@ -671,10 +671,10 @@ class AdminNetworkView(APIView):
     permission_classes = [IsAdminUser]
 
     def get_queryset(self, request):
-        """Apply search and filtering logic."""
+        """Apply search and filtering logic while preserving QuerySet methods."""
         queryset = CustomUser.objects.all()
 
-        # 🔎 Search by username or user_id
+        # 🔎 Search by first_name, last_name, or user_id
         search = request.query_params.get("search")
         if search:
             queryset = queryset.filter(
@@ -690,16 +690,20 @@ class AdminNetworkView(APIView):
         elif status_filter == "blocked":
             queryset = queryset.filter(is_active=False)
 
-        # 🔎 Filter by level
-        level_filter = request.query_params.get("level")
-        if level_filter:
-            try:
-                level_filter = int(level_filter)
-                queryset = [u for u in queryset if u.level == level_filter]
-            except ValueError:
-                pass
-
+        # Keep queryset as Django QuerySet for counts
         return queryset
+
+    def filter_by_level(self, queryset, level_filter):
+        """Filter a QuerySet by computed user.level without breaking QuerySet methods."""
+        if not level_filter:
+            return queryset
+        try:
+            level_filter = int(level_filter)
+        except ValueError:
+            return queryset
+
+        # Evaluate level property after queryset evaluation
+        return [user for user in queryset if user.level == level_filter]
 
     def get(self, request, *args, **kwargs):
         export_format = request.query_params.get("export")
@@ -710,16 +714,20 @@ class AdminNetworkView(APIView):
         active_count = queryset.filter(is_active=True).count()
         blocked_count = queryset.filter(is_active=False).count()
 
+        # Filter by level after counts
+        level_filter = request.query_params.get("level")
+        filtered_users = self.filter_by_level(queryset, level_filter)
+
         # CSV Export
         if export_format == "csv":
-            return self.export_csv(queryset)
+            return self.export_csv(filtered_users)
 
         # PDF Export
         if export_format == "pdf":
-            return self.export_pdf(queryset)
+            return self.export_pdf(filtered_users)
 
         # Default → JSON
-        serializer = AdminNetworkUserSerializer(queryset, many=True, context={"request": request})
+        serializer = AdminNetworkUserSerializer(filtered_users, many=True, context={"request": request})
         return Response({
             "counts": {
                 "total_downline": total_downline,
@@ -728,7 +736,6 @@ class AdminNetworkView(APIView):
             },
             "users": serializer.data
         })
-
 
     def export_csv(self, queryset):
         """Export users as CSV."""
@@ -806,5 +813,3 @@ class AdminNetworkView(APIView):
         response["Content-Disposition"] = 'attachment; filename="network_users.pdf"'
         response.write(pdf)
         return response
-
-

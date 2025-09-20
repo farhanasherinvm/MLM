@@ -33,17 +33,22 @@ class CustomUserManager(BaseUserManager):
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
         extra_fields.setdefault("is_admin_user", True)
+
+        # Auto-fill required fields to satisfy unique constraints
+        if "mobile" not in extra_fields or not extra_fields["mobile"]:
+            # Use 10-digit numeric placeholder only
+            extra_fields["mobile"] = f"999{random.randint(1000000, 9999999)}"
+        if "pincode" not in extra_fields or not extra_fields["pincode"]:
+            extra_fields["pincode"] = "000000"
+        if "first_name" not in extra_fields:
+            extra_fields["first_name"] = "Admin"
+        if "last_name" not in extra_fields:
+            extra_fields["last_name"] = "User"
+
         return self.create_user(user_id, email, password, **extra_fields)
 
 class CustomUser(AbstractBaseUser, PermissionsMixin):
-    PAYMENT_CHOICES = [
-    ("Razorpay", "Razorpay"),
-    ("GPay", "GPay"),
-    ("PhonePe", "PhonePe"),
-    ("PhonePay", "PhonePay"),
-    ("Paytm", "Paytm"),
-    ("Other", "Other"),
-    ]
+    PAYMENT_CHOICES = PAYMENT_CHOICES
     sponsor_id = models.CharField(max_length=255)
     placement_id = models.CharField(max_length=255, blank=True, null=True)
     first_name = models.CharField(max_length=255)
