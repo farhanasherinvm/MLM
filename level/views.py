@@ -430,6 +430,8 @@ class LevelCompletionViewSet(viewsets.ViewSet):
         }
         return Response(data)
 
+
+
 class InitiatePaymentView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -476,6 +478,31 @@ class InitiatePaymentView(APIView):
 
             logger.info(f"Razorpay order {order['id']} created for LevelPayment {level_payment.id} (user: {request.user.user_id}, level: {user_level.level.name})")
 
+            # Fetch referrer details using linked_user_id
+            referrer = None
+            if user_level.linked_user_id:
+                try:
+                    referrer = CustomUser.objects.get(user_id=user_level.linked_user_id)
+                except CustomUser.DoesNotExist:
+                    logger.warning(f"Referrer not found for linked_user_id: {user_level.linked_user_id}")
+
+            # Fetch upi_number from CustomUser or Profile
+            upi_number = 'N/A'
+            if referrer:
+                upi_number = getattr(referrer, 'upi_number', 'N/A')
+                if upi_number == 'N/A':
+                    try:
+                        profile = Profile.objects.get(user=referrer)
+                        upi_number = getattr(profile, 'upi_number', 'N/A')
+                    except Profile.DoesNotExist:
+                        pass
+
+            referrer_details = {
+                'upi_number': upi_number,
+                'user_id': getattr(referrer, 'user_id', 'N/A') if referrer else 'N/A',
+                'full_name': f"{getattr(referrer, 'first_name', '')} {getattr(referrer, 'last_name', '')}".strip() if referrer else 'N/A'
+            }
+
             return Response({
                 "payment_method": "Razorpay",
                 "payment_token": str(level_payment.payment_token),
@@ -483,11 +510,42 @@ class InitiatePaymentView(APIView):
                 "amount": user_level.level.amount,
                 "currency": "INR",
                 "razorpay_key": settings.RAZORPAY_KEY_ID,
+                "referrer_details": referrer_details,
+                "level_name": user_level.level.name,
+                "payment_amount": user_level.level.amount
             }, status=status.HTTP_201_CREATED)
 
         else:  # Manual
+            # Fetch referrer details using linked_user_id
+            referrer = None
+            if user_level.linked_user_id:
+                try:
+                    referrer = CustomUser.objects.get(user_id=user_level.linked_user_id)
+                except CustomUser.DoesNotExist:
+                    logger.warning(f"Referrer not found for linked_user_id: {user_level.linked_user_id}")
+
+            # Fetch upi_number from CustomUser or Profile
+            upi_number = 'N/A'
+            if referrer:
+                upi_number = getattr(referrer, 'upi_number', 'N/A')
+                if upi_number == 'N/A':
+                    try:
+                        profile = Profile.objects.get(user=referrer)
+                        upi_number = getattr(profile, 'upi_number', 'N/A')
+                    except Profile.DoesNotExist:
+                        pass
+
+            referrer_details = {
+                'upi_number': upi_number,
+                'user_id': getattr(referrer, 'user_id', 'N/A') if referrer else 'N/A',
+                'full_name': f"{getattr(referrer, 'first_name', '')} {getattr(referrer, 'last_name', '')}".strip() if referrer else 'N/A'
+            }
+
             return Response({
                 "payment_method": "Manual",
                 "message": "Proceed to upload payment proof",
-                "user_level_id": user_level.id
+                "user_level_id": user_level.id,
+                "referrer_details": referrer_details,
+                "level_name": user_level.level.name,
+                "payment_amount": user_level.level.amount
             }, status=status.HTTP_200_OK)
