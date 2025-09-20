@@ -439,21 +439,25 @@ class AdminNetworkUserSerializer(serializers.ModelSerializer):
         return None
 
     def get_level(self, obj):
-        """Recalculate level by walking up the referral chain"""
+        """Recalculate level by walking up the referral chain using sponsor_id"""
         try:
-            level = 0
+            level = 1
             visited = set()
             current = obj
-            while getattr(current, "referred_by", None):
-                rid = getattr(current.referred_by, "user_id", None)
-                if not rid or rid in visited:
+            while current.sponsor_id:
+                if current.sponsor_id in visited:
                     break
-                visited.add(rid)
-                level += 1
-                current = current.referred_by
+                visited.add(current.sponsor_id)
+                try:
+                    sponsor = CustomUser.objects.get(user_id=current.sponsor_id)
+                    level += 1
+                    current = sponsor
+                except CustomUser.DoesNotExist:
+                    break
             return level
         except Exception:
-            return 0
+            return 1
+
 
 class CurrentUserProfileSerializer(serializers.ModelSerializer):
     # User fields
