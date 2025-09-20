@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 class PaymentReportViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = UserLevel.objects.all().order_by('-approved_at')
     serializer_class = PaymentReportSerializer
-    # permission_classes = [IsAdminUser]  # Uncomment if admin access is required
+    permission_classes = [IsAdminUser]  # Uncomment if admin access is required
     filter_backends = [DjangoFilterBackend]
     filterset_class = PaymentFilter
 
@@ -302,8 +302,9 @@ class UserReportViewSet(viewsets.ViewSet):
         completed_levels = user_levels.filter(status='paid', level__order__lte=6).count()
         total_received = user_levels.aggregate(total=Sum('received'))['total'] or 0
         pending_send_count = user_levels.filter(status='pending').count()
+        # Corrected aggregation for total_amount_generated using level__amount
         total_amount_generated = user_levels.filter(status='paid').aggregate(total=Sum('level__amount'))['total'] or 0
-        send_help = user_levels.filter(level__name__contains='Refer Help').aggregate(total=Sum('level.amount'))['total'] or 0
+        send_help = user_levels.filter(level__name__contains='Refer Help').aggregate(total=Sum('level__amount'))['total'] or 0
         receive_help = total_received  # Using total_received as a proxy since no "Receive Help" level exists
         referral_count = CustomUser.objects.filter(sponsor_id=user.user_id).count()
         total_income = total_received  # Total income is the total amount received by the user
@@ -375,10 +376,10 @@ class UserLatestReportView(APIView):
 
 # New Report Views
 class SendRequestReport(APIView):
-    permission_classes = [IsAdminUser]
+    # permission_classes = [IsAdminUser]
 
     def get(self, request):
-        queryset = UserLevel.objects.select_related('user', 'level').all().order_by('-approved_at')
+        queryset = UserLevel.objects.select_related('user', 'level').filter(user=request.user).order_by('-approved_at').order_by('-approved_at')
         
         # Search filter
         search = request.query_params.get('search', '')
@@ -453,10 +454,10 @@ class SendRequestReport(APIView):
         return response
 
 class AUCReport(APIView):
-    permission_classes = [IsAdminUser]
+    # permission_classes = [IsAdminUser]
 
     def get(self, request):
-        queryset = UserLevel.objects.select_related('user', 'level').all().order_by('-approved_at')
+        queryset = UserLevel.objects.select_related('user', 'level').filter(user=request.user).order_by('-approved_at').order_by('-approved_at')
         
         # Search filter
         search = request.query_params.get('search', '')
@@ -526,10 +527,10 @@ class AUCReport(APIView):
         return response
 
 class PaymentReport(APIView):
-    permission_classes = [IsAdminUser]
+    # permission_classes = [IsAdminUser]
 
     def get(self, request):
-        queryset = UserLevel.objects.select_related('user', 'level').all().order_by('-approved_at')
+        queryset = UserLevel.objects.select_related('user', 'level').filter(user=request.user).order_by('-approved_at')
         
         # Search filter
         search = request.query_params.get('search', '')
@@ -678,10 +679,10 @@ class PaymentReport(APIView):
 #         return response
 
 class LevelUsersReport(APIView):
-    permission_classes = [IsAdminUser]
+    # permission_classes = [IsAdminUser]
 
     def get(self, request):
-        queryset = UserLevel.objects.select_related('user', 'level').all().order_by('-approved_at')
+        queryset = UserLevel.objects.select_related('user', 'level').filter(user=request.user).order_by('-approved_at').order_by('-approved_at')
         
         # Search filter
         search = request.query_params.get('search', '')
