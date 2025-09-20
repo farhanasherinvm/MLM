@@ -307,9 +307,10 @@ class UserReportViewSet(viewsets.ViewSet):
         # Corrected aggregation for total_amount_generated using level__amount
         total_amount_generated = user_levels.filter(status='paid').aggregate(total=Sum('level__amount'))['total'] or 0
         send_help = user_levels.filter(level__name__contains='Refer Help').aggregate(total=Sum('level__amount'))['total'] or 0
-        receive_help = total_received  # Using total_received as a proxy since no "Receive Help" level exists
+        receive_help = user_levels.filter(status='paid').count()
         referral_count = CustomUser.objects.filter(sponsor_id=user.user_id).count()
         total_income = total_received  # Total income is the total amount received by the user
+        pending_recevie_count = user_levels.filter(status='pending').count()
 
         data = {
             'username': f"{user.first_name} {user.last_name}".strip() or user.email,
@@ -317,10 +318,25 @@ class UserReportViewSet(viewsets.ViewSet):
             'total_received': total_received,
             'pending_send_count': pending_send_count,
             'total_amount_generated': total_amount_generated,
+            'pending_receive_count': pending_recevie_count,
             'total_income': total_income,
             'send_help': send_help,
             'receive_help': receive_help,
             'referral_count': referral_count
+        }
+        return Response(data)
+
+    @action(detail=False, methods=['get'], url_path='total-payment-info')
+    def total_payment_info(self, request):
+        user = request.user
+        user_levels = UserLevel.objects.filter(user=user)
+        total_amount_received = user_levels.aggregate(total=Sum('received'))['total'] or 0
+        total_amount_generated = user_levels.filter(status='paid').aggregate(total=Sum('level__amount'))['total'] or 0
+        balance_left = total_amount_received - total_amount_generated  # Preliminary calculation
+
+        data = {
+            'total_amount_received': total_amount_received,
+            'balance_left': max(balance_left, 0)  
         }
         return Response(data)
 
