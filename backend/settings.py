@@ -238,6 +238,7 @@ RAZORPAY_KEY_SECRET ='Gh7CpAcNtrKTQsE35rLEAm19'
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",  # For local development with your Vite/React/Vue app
-    "http://127.0.0.1:5173",  # A common alternative for local host
+    "http://127.0.0.1:5173",
+    "https://winnersclubx.netlify.app/",  # A common alternative for local host
     # Add your deployed frontend URL here when you have one (e.g., "https://your-frontend-domain.com")
 ]
