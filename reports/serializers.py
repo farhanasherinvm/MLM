@@ -70,10 +70,11 @@ class SendRequestReportSerializer(serializers.ModelSerializer):
     amount = serializers.DecimalField(max_digits=12, decimal_places=2, source='level.amount')
     status = serializers.SerializerMethodField()
     approved_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", allow_null=True)
+    payment_method = serializers.SerializerMethodField()
 
     class Meta:
         model = UserLevel
-        fields = ['from_user', 'username','from_name', 'amount', 'status', 'approved_at']
+        fields = ['from_user', 'username','from_name', 'amount', 'status', 'approved_at','payment_method']
 
     def get_from_user(self, obj):
         user = getattr(obj, 'user', None)
@@ -100,6 +101,20 @@ class SendRequestReportSerializer(serializers.ModelSerializer):
 
     def get_status(self, obj):
         return "Completed" if obj.status == 'paid' else "Pending"
+    
+    def get_payment_method(self, obj):
+        latest_payment = obj.payments.order_by('-created_at').first()
+        if latest_payment:
+            if latest_payment.payment_method == 'Razorpay':
+                return 'Razorpay'
+            elif latest_payment.payment_method == 'Manual':
+                if latest_payment.payment_proof:
+                    # Construct the URL for the uploaded file (assuming media is served)
+                    request = self.context.get('request')
+                    if request:
+                        return request.build_absolute_uri(latest_payment.payment_proof.url)
+                return 'Manual'
+        return 'N/A'
 
 class AUCReportSerializer(serializers.ModelSerializer):
     from_user = serializers.SerializerMethodField()  # Current user's first_name + last_name
@@ -109,10 +124,11 @@ class AUCReportSerializer(serializers.ModelSerializer):
     amount = serializers.DecimalField(max_digits=12, decimal_places=2, source='level.amount')
     status = serializers.SerializerMethodField()
     date = serializers.DateTimeField(source='approved_at', format="%Y-%m-%d %H:%M:%S", allow_null=True)
+    payment_method = serializers.SerializerMethodField()  # Payment method or proof link
 
     class Meta:
         model = UserLevel
-        fields = ['from_user', 'username', 'from_name', 'linked_username', 'amount', 'status', 'date']
+        fields = ['from_user', 'username', 'from_name', 'linked_username', 'amount', 'status', 'date', 'payment_method']
 
     def get_from_user(self, obj):
         user = getattr(obj, 'user', None)
@@ -144,6 +160,19 @@ class AUCReportSerializer(serializers.ModelSerializer):
 
     def get_status(self, obj):
         return "Completed" if obj.status == 'paid' else "Pending"
+
+    def get_payment_method(self, obj):
+        latest_payment = obj.payments.order_by('-created_at').first()
+        if latest_payment:
+            if latest_payment.payment_method == 'Razorpay':
+                return 'Razorpay'
+            elif latest_payment.payment_method == 'Manual':
+                if latest_payment.payment_proof:
+                    request = self.context.get('request')
+                    if request:
+                        return request.build_absolute_uri(latest_payment.payment_proof.url)
+                return 'Manual'
+        return 'N/A'
 
 class PaymentReportSerializer(serializers.ModelSerializer):
     from_user = serializers.SerializerMethodField()  # Current user's first_name + last_name
@@ -192,7 +221,7 @@ class PaymentReportSerializer(serializers.ModelSerializer):
     def get_status(self, obj):
         return "Completed" if obj.status == 'paid' else "Pending"
 
-        
+
 class BonusSummarySerializer(serializers.ModelSerializer):
     from_user = serializers.SerializerMethodField()  # Current user's first_name + last_name
     from_name = serializers.SerializerMethodField()  # Linked user's first_name + last_name
@@ -244,10 +273,11 @@ class LevelUsersSerializer(serializers.ModelSerializer):
     level = serializers.CharField(source='level.name')
     approved_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", allow_null=True)
     total = serializers.DecimalField(max_digits=12, decimal_places=2, source='level.amount')
+    payment_method = serializers.SerializerMethodField()
 
     class Meta:
         model = UserLevel
-        fields = ['from_user', 'username', 'from_name', 'linked_username', 'amount', 'status', 'level', 'approved_at', 'total']
+        fields = ['from_user', 'username', 'from_name', 'linked_username', 'amount', 'status', 'level', 'approved_at', 'total', 'payment_method']
 
     def get_from_user(self, obj):
         user = getattr(obj, 'user', None)
@@ -275,5 +305,19 @@ class LevelUsersSerializer(serializers.ModelSerializer):
 
     def get_status(self, obj):
         return "Completed" if obj.status == 'paid' else "Pending"
+
+    def get_payment_method(self, obj):
+        latest_payment = obj.payments.order_by('-created_at').first()
+        if latest_payment:
+            if latest_payment.payment_method == 'Razorpay':
+                return 'Razorpay'
+            elif latest_payment.payment_method == 'Manual':
+                if latest_payment.payment_proof:
+                    # Construct the URL for the uploaded file (assuming media is served)
+                    request = self.context.get('request')
+                    if request:
+                        return request.build_absolute_uri(latest_payment.payment_proof.url)
+                return 'Manual'
+        return 'N/A'
 
 
