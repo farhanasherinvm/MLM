@@ -14,12 +14,14 @@ from django_filters.rest_framework import DjangoFilterBackend
 from level.models import UserLevel, LevelPayment
 from level.serializers import PaymentReportSerializer
 from .filters import PaymentFilter
-from .serializers import DashboardReportSerializer, LevelPaymentReportSerializer, SendRequestReportSerializer, AUCReportSerializer, PaymentReportSerializer, LevelUsersSerializer
+from .serializers import DashboardReportSerializer, LevelPaymentReportSerializer, SendRequestReportSerializer, AUCReportSerializer, PaymentReportSerializer, LevelUsersSerializer,BonusSummarySerializer
 from users.models import CustomUser
 from django.db.models import Count, Sum, Q
 from django.utils import timezone
 from datetime import timedelta
 from rest_framework.views import APIView
+from openpyxl import Workbook
+
 import logging
 
 logger = logging.getLogger(__name__)
@@ -379,8 +381,38 @@ class SendRequestReport(APIView):
     # permission_classes = [IsAdminUser]
 
     def get(self, request):
-        queryset = UserLevel.objects.select_related('user', 'level').filter(user=request.user).order_by('-approved_at').order_by('-approved_at')
+        queryset = UserLevel.objects.select_related('user', 'level').filter(user=request.user).order_by('-approved_at')
         
+        # Query params
+        email = request.query_params.get("email")
+        status = request.query_params.get("status")
+        user_id = request.query_params.get("user_id")
+        first_name = request.query_params.get("first_name")
+        last_name = request.query_params.get("last_name")
+        start_date = request.query_params.get("start_date")
+        end_date = request.query_params.get("end_date")
+        limit = request.query_params.get("limit")
+        export = request.query_params.get("export")  # 'csv', 'pdf', 'xlsx'
+
+        # Filters
+        if email:
+            queryset = queryset.filter(user__email__icontains=email.lower())
+        if first_name:
+            queryset = queryset.filter(user__first_name__icontains=first_name.lower())
+        if last_name:
+            queryset = queryset.filter(user__last_name__icontains=last_name.lower())
+        if status and status.lower() != "all":
+            if status.lower() == "completed":
+                queryset = queryset.filter(status='paid')  
+            elif status.lower() == "pending":
+                queryset = queryset.exclude(status='paid')
+        if user_id:
+            queryset = queryset.filter(user__user_id__iexact=user_id)
+        if start_date:
+            queryset = queryset.filter(approved_at__date__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(approved_at__date__lte=end_date)
+
         # Search filter
         search = request.query_params.get('search', '')
         if search:
@@ -391,13 +423,22 @@ class SendRequestReport(APIView):
                 Q(level__name__icontains=search) |
                 Q(status__icontains=search)
             )
-        
+
+        # Limit
+        if limit:
+            try:
+                limit = int(limit)
+                queryset = queryset[:limit]
+            except ValueError:
+                pass
+
         # Export options
-        export_format = request.query_params.get('export')
-        if export_format == 'csv':
+        if export == "csv":
             return self.export_csv(queryset, 'send_request_report')
-        elif export_format == 'pdf':
+        elif export == "pdf":
             return self.export_pdf(queryset, 'send_request_report')
+        elif export == "xlsx":
+            return self.export_xlsx(queryset, 'send_request_report')
 
         serializer = SendRequestReportSerializer(queryset, many=True)
         return Response(serializer.data)
@@ -406,15 +447,16 @@ class SendRequestReport(APIView):
         response = HttpResponse(content_type="text/csv")
         response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.csv"'
         writer = csv.writer(response)
-        writer.writerow(['From Name', 'Username', 'Amount', 'Status', 'Level', 'Approved At'])
-        for obj in queryset:
+        writer.writerow(['From User', 'Username', 'From Name', 'Amount', 'Status', 'Approved At'])
+        serializer = SendRequestReportSerializer(queryset, many=True)
+        for data in serializer.data:
             writer.writerow([
-                f"{obj.user.first_name} {obj.user.last_name}".strip(),
-                obj.user.user_id,
-                obj.level.amount,
-                obj.status,
-                obj.level.name,
-                obj.approved_at.strftime('%Y-%m-%d %H:%M:%S') if obj.approved_at else ''
+                data['from_user'],
+                data['username'],
+                data['from_name'],
+                str(data['amount']),
+                data['status'],
+                data['approved_at'] if data['approved_at'] else ''
             ])
         return response
 
@@ -425,15 +467,16 @@ class SendRequestReport(APIView):
         styles = getSampleStyleSheet()
         elements.append(Paragraph(f"{filename_prefix.replace('_', ' ').title()} Report", styles["Title"]))
 
-        data = [['From Name', 'Username', 'Amount', 'Status', 'Level', 'Approved At']]
-        for obj in queryset:
+        data = [['From User', 'Username', 'From Name', 'Amount', 'Status', 'Approved At']]
+        serializer = SendRequestReportSerializer(queryset, many=True)
+        for data_item in serializer.data:
             data.append([
-                f"{obj.user.first_name} {obj.user.last_name}".strip(),
-                obj.user.user_id,
-                str(obj.level.amount),
-                obj.status,
-                obj.level.name,
-                obj.approved_at.strftime('%Y-%m-%d %H:%M:%S') if obj.approved_at else ''
+                data_item['from_user'],
+                data_item['username'],
+                data_item['from_name'],
+                str(data_item['amount']),
+                data_item['status'],
+                data_item['approved_at'] if data_item['approved_at'] else ''
             ])
 
         table = Table(data)
@@ -453,12 +496,71 @@ class SendRequestReport(APIView):
         buffer.close()
         return response
 
+    def export_xlsx(self, queryset, filename_prefix):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "SendRequestReport"
+        ws.append(['From User', 'Username', 'From Name', 'Amount', 'Status', 'Approved At'])
+        serializer = SendRequestReportSerializer(queryset, many=True)
+        for data in serializer.data:
+            ws.append([
+                data['from_user'],
+                data['username'],
+                data['from_name'],
+                data['amount'],
+                data['status'],
+                data['approved_at'] if data['approved_at'] else ''
+            ])
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+        response = HttpResponse(
+            output,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.xlsx"'
+        return response
+
+
+
+
+
 class AUCReport(APIView):
     # permission_classes = [IsAdminUser]
 
     def get(self, request):
-        queryset = UserLevel.objects.select_related('user', 'level').filter(user=request.user).order_by('-approved_at').order_by('-approved_at')
+        queryset = UserLevel.objects.select_related('user', 'level').filter(user=request.user).order_by('-approved_at')
         
+        # Query params
+        email = request.query_params.get("email")
+        status = request.query_params.get("status")
+        user_id = request.query_params.get("user_id")
+        first_name = request.query_params.get("first_name")
+        last_name = request.query_params.get("last_name")
+        start_date = request.query_params.get("start_date")
+        end_date = request.query_params.get("end_date")
+        limit = request.query_params.get("limit")
+        export = request.query_params.get("export")  # 'csv', 'pdf', 'xlsx'
+
+        # Filters
+        if email:
+            queryset = queryset.filter(user__email__icontains=email.lower())
+        if first_name:
+            queryset = queryset.filter(user__first_name__icontains=first_name.lower())
+        if last_name:
+            queryset = queryset.filter(user__last_name__icontains=last_name.lower())
+        if status and status.lower() != "all":
+            if status.lower() == "completed":
+                queryset = queryset.filter(status='paid')
+            elif status.lower() == "pending":
+                queryset = queryset.exclude(status='paid')
+        if user_id:
+            queryset = queryset.filter(user__user_id__iexact=user_id)
+        if start_date:
+            queryset = queryset.filter(approved_at__date__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(approved_at__date__lte=end_date)
+
         # Search filter
         search = request.query_params.get('search', '')
         if search:
@@ -468,13 +570,22 @@ class AUCReport(APIView):
                 Q(user__user_id__icontains=search) |
                 Q(status__icontains=search)
             )
-        
+
+        # Limit
+        if limit:
+            try:
+                limit = int(limit)
+                queryset = queryset[:limit]
+            except ValueError:
+                pass
+
         # Export options
-        export_format = request.query_params.get('export')
-        if export_format == 'csv':
+        if export == "csv":
             return self.export_csv(queryset, 'auc_report')
-        elif export_format == 'pdf':
+        elif export == "pdf":
             return self.export_pdf(queryset, 'auc_report')
+        elif export == "xlsx":
+            return self.export_xlsx(queryset, 'auc_report')
 
         serializer = AUCReportSerializer(queryset, many=True)
         return Response(serializer.data)
@@ -483,48 +594,92 @@ class AUCReport(APIView):
         response = HttpResponse(content_type="text/csv")
         response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.csv"'
         writer = csv.writer(response)
-        writer.writerow(['From User', 'Amount', 'Status', 'Approved At'])
-        for obj in queryset:
+        writer.writerow(['From User', 'Username', 'From Name', 'Linked Username', 'Amount', 'Status', 'Date'])
+        serializer = AUCReportSerializer(queryset, many=True)
+        for data in serializer.data:
             writer.writerow([
-                obj.user.user_id,
-                obj.level.amount,
-                obj.status,
-                obj.approved_at.strftime('%Y-%m-%d %H:%M:%S') if obj.approved_at else ''
+                data['from_user'],
+                data['username'],
+                data['from_name'],
+                data['linked_username'],
+                str(data['amount']),
+                data['status'],
+                data['date'] if data['date'] else ''
             ])
         return response
 
     def export_pdf(self, queryset, filename_prefix):
         buffer = io.BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=A4)
-        elements = []
-        styles = getSampleStyleSheet()
-        elements.append(Paragraph(f"{filename_prefix.replace('_', ' ').title()} Report", styles["Title"]))
+        try:
+            p = canvas.Canvas(buffer, pagesize=A4)
+            width, height = A4
+            y = height - 50
+            p.setFont("Helvetica-Bold", 14)
+            p.drawString(150, y, f"{filename_prefix.replace('_', ' ').title()} Report")
+            y -= 30
+            p.setFont("Helvetica", 10)
 
-        data = [['From User', 'Amount', 'Status', 'Approved At']]
-        for obj in queryset:
-            data.append([
-                obj.user.user_id,
-                str(obj.level.amount),
-                obj.status,
-                obj.approved_at.strftime('%Y-%m-%d %H:%M:%S') if obj.approved_at else ''
-            ])
+            # Header
+            header = "From User | Username | From Name | Linked Username | Amount | Status | Date"
+            p.drawString(50, y, header)
+            y -= 20
 
-        table = Table(data)
-        table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
-        ]))
-        elements.append(table)
-        doc.build(elements)
+            # Data
+            serializer = AUCReportSerializer(queryset, many=True)
+            for data in serializer.data:
+                line = f"{data['from_user']} | {data['username']} | {data['from_name']} | {data['linked_username']} | {data['amount']} | {data['status']} | {data['date'] if data['date'] else ''}"
+                p.drawString(50, y, line)
+                y -= 20
+                if y < 50:
+                    p.showPage()
+                    y = height - 50
 
-        response = HttpResponse(content_type="application/pdf")
-        response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.pdf"'
-        response.write(buffer.getvalue())
-        buffer.close()
+            p.save()
+            pdf = buffer.getvalue()
+            buffer.close()
+
+            response = HttpResponse(pdf, content_type="application/pdf")
+            timestamp = timezone.now().strftime("%Y%m%d_%H%M%S")  # e.g., 20250920_0114
+            response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timestamp}.pdf"'
+            response['Content-Length'] = len(pdf)
+            logger.info(f"PDF exported successfully: {len(queryset)} records processed")
+        except Exception as e:
+            logger.error(f"Error generating PDF: {e}", exc_info=True)
+            return HttpResponse(f"Error generating PDF: {str(e)}", status=500)
+        finally:
+            if 'buffer' in locals() and buffer:
+                buffer.close()
+                logger.debug("Buffer closed")
+
         return response
+
+    def export_xlsx(self, queryset, filename_prefix):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "AUCReport"
+        ws.append(['From User', 'Username', 'From Name', 'Linked Username', 'Amount', 'Status', 'Date'])
+        serializer = AUCReportSerializer(queryset, many=True)
+        for data in serializer.data:
+            ws.append([
+                data['from_user'],
+                data['username'],
+                data['from_name'],
+                data['linked_username'],
+                data['amount'],
+                data['status'],
+                data['date'] if data['date'] else ''
+            ])
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+        response = HttpResponse(
+            output,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timestamp}.xlsx"'
+        return response
+
+
 
 class PaymentReport(APIView):
     # permission_classes = [IsAdminUser]
@@ -532,6 +687,36 @@ class PaymentReport(APIView):
     def get(self, request):
         queryset = UserLevel.objects.select_related('user', 'level').filter(user=request.user).order_by('-approved_at')
         
+        # Query params
+        email = request.query_params.get("email")
+        status = request.query_params.get("status")
+        user_id = request.query_params.get("user_id")
+        first_name = request.query_params.get("first_name")
+        last_name = request.query_params.get("last_name")
+        start_date = request.query_params.get("start_date")
+        end_date = request.query_params.get("end_date")
+        limit = request.query_params.get("limit")
+        export = request.query_params.get("export")  # 'csv', 'pdf', 'xlsx'
+
+        # Filters
+        if email:
+            queryset = queryset.filter(user__email__icontains=email.lower())
+        if first_name:
+            queryset = queryset.filter(user__first_name__icontains=first_name.lower())
+        if last_name:
+            queryset = queryset.filter(user__last_name__icontains=last_name.lower())
+        if status and status.lower() != "all":
+            if status.lower() == "completed":
+                queryset = queryset.filter(status='paid')  
+            elif status.lower() == "pending":
+                queryset = queryset.exclude(status='paid')
+        if user_id:
+            queryset = queryset.filter(user__user_id__iexact=user_id)
+        if start_date:
+            queryset = queryset.filter(approved_at__date__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(approved_at__date__lte=end_date)
+
         # Search filter
         search = request.query_params.get('search', '')
         if search:
@@ -541,13 +726,22 @@ class PaymentReport(APIView):
                 Q(user__user_id__icontains=search) |
                 Q(status__icontains=search)
             )
-        
+
+        # Limit
+        if limit:
+            try:
+                limit = int(limit)
+                queryset = queryset[:limit]
+            except ValueError:
+                pass
+
         # Export options
-        export_format = request.query_params.get('export')
-        if export_format == 'csv':
+        if export == "csv":
             return self.export_csv(queryset, 'payment_report')
-        elif export_format == 'pdf':
+        elif export == "pdf":
             return self.export_pdf(queryset, 'payment_report')
+        elif export == "xlsx":
+            return self.export_xlsx(queryset, 'payment_report')
 
         serializer = PaymentReportSerializer(queryset, many=True)
         return Response(serializer.data)
@@ -556,16 +750,20 @@ class PaymentReport(APIView):
         response = HttpResponse(content_type="text/csv")
         response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.csv"'
         writer = csv.writer(response)
-        writer.writerow(['Username', 'Amount', 'Payout Amount', 'Transaction Fee', 'Status', 'Approved At', 'Total'])
-        for obj in queryset:
+        writer.writerow(['From User', 'Username', 'From Name', 'Linked Username', 'Amount', 'Payout Amount', 'Transaction Fee', 'Status', 'Approved At', 'Total'])
+        serializer = PaymentReportSerializer(queryset, many=True)
+        for data in serializer.data:
             writer.writerow([
-                obj.user.user_id,
-                obj.level.amount,
-                0,  # Placeholder for payout_amount
-                0,  # Placeholder for transaction_fee
-                obj.status,
-                obj.approved_at.strftime('%Y-%m-%d %H:%M:%S') if obj.approved_at else '',
-                obj.level.amount  # Total as amount
+                data['from_user'],
+                data['username'],
+                data['from_name'],
+                data['linked_username'],
+                str(data['amount']),
+                str(data['payout_amount']),
+                str(data['transaction_fee']),
+                data['status'],
+                data['approved_at'] if data['approved_at'] else '',
+                str(data['total'])
             ])
         return response
 
@@ -576,16 +774,20 @@ class PaymentReport(APIView):
         styles = getSampleStyleSheet()
         elements.append(Paragraph(f"{filename_prefix.replace('_', ' ').title()} Report", styles["Title"]))
 
-        data = [['Username', 'Amount', 'Payout Amount', 'Transaction Fee', 'Status', 'Approved At', 'Total']]
-        for obj in queryset:
+        data = [['From User', 'Username', 'From Name', 'Linked Username', 'Amount', 'Payout Amount', 'Transaction Fee', 'Status', 'Approved At', 'Total']]
+        serializer = PaymentReportSerializer(queryset, many=True)
+        for data_item in serializer.data:
             data.append([
-                obj.user.user_id,
-                str(obj.level.amount),
-                str(0),  # Placeholder for payout_amount
-                str(0),  # Placeholder for transaction_fee
-                obj.status,
-                obj.approved_at.strftime('%Y-%m-%d %H:%M:%S') if obj.approved_at else '',
-                str(obj.level.amount)  # Total as amount
+                data_item['from_user'],
+                data_item['username'],
+                data_item['from_name'],
+                data_item['linked_username'],
+                str(data_item['amount']),
+                str(data_item['payout_amount']),
+                str(data_item['transaction_fee']),
+                data_item['status'],
+                data_item['approved_at'] if data_item['approved_at'] else '',
+                str(data_item['total'])
             ])
 
         table = Table(data)
@@ -605,85 +807,241 @@ class PaymentReport(APIView):
         buffer.close()
         return response
 
-# class BonusSummary(APIView):
-#     permission_classes = [IsAdminUser]
+    def export_xlsx(self, queryset, filename_prefix):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "PaymentReport"
+        ws.append(['From User', 'Username', 'From Name', 'Linked Username', 'Amount', 'Payout Amount', 'Transaction Fee', 'Status', 'Approved At', 'Total'])
+        serializer = PaymentReportSerializer(queryset, many=True)
+        for data in serializer.data:
+            ws.append([
+                data['from_user'],
+                data['username'],
+                data['from_name'],
+                data['linked_username'],
+                data['amount'],
+                data['payout_amount'],
+                data['transaction_fee'],
+                data['status'],
+                data['approved_at'] if data['approved_at'] else '',
+                data['total']
+            ])
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+        response = HttpResponse(
+            output,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.xlsx"'
+        return response
 
-#     def get(self, request):
-#         users = CustomUser.objects.filter(is_active=True).prefetch_related('userlevel_set')
+class BonusSummary(APIView):
+    # permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        queryset = CustomUser.objects.filter(is_active=True).prefetch_related('userlevel_set')
         
-#         # Search filter
-#         search = request.query_params.get('search', '')
-#         if search:
-#             users = users.filter(
-#                 Q(first_name__icontains=search) |
-#                 Q(last_name__icontains=search) |
-#                 Q(user_id__icontains=search) |
-#                 Q(email__icontains=search)
-#             )
-        
-#         report_data = []
-#         for user in users:
-#             user_levels = UserLevel.objects.filter(user=user)
-#             if user_levels.exists():  # Only include users with levels
-#                 report_data.append({
-#                     'user': user,
-#                     'user_levels': user_levels
-#                 })
+        # Query params
+        email = request.query_params.get("email")
+        status = request.query_params.get("status")
+        user_id = request.query_params.get("user_id")
+        first_name = request.query_params.get("first_name")
+        last_name = request.query_params.get("last_name")
+        start_date = request.query_params.get("start_date")
+        end_date = request.query_params.get("end_date")
+        limit = request.query_params.get("limit")
+        export = request.query_params.get("export")  # 'csv', 'pdf', 'xlsx'
 
-#         # Export options
-#         export_format = request.query_params.get('export')
-#         if export_format == 'pdf':
-#             return self.export_pdf(report_data, 'bonus_summary')
+        # Filters
+        if email:
+            queryset = queryset.filter(email__icontains=email.lower())
+        if first_name:
+            queryset = queryset.filter(first_name__icontains=first_name.lower())
+        if last_name:
+            queryset = queryset.filter(last_name__icontains=last_name.lower())
+        if status and status.lower() != "all":
+            if status.lower() == "completed":
+                queryset = queryset.filter(status='paid')  
+            elif status.lower() == "pending":
+                queryset = queryset.exclude(status='paid')
+        if user_id:
+            queryset = queryset.filter(user_id__iexact=user_id)
+        if start_date:
+            queryset = queryset.filter(date_of_joining__date__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(date_of_joining__date__lte=end_date)
 
-#         serializer = BonusSummarySerializer(report_data, many=True)
-#         return Response(serializer.data)
+        # Search filter
+        search = request.query_params.get('search', '')
+        if search:
+            queryset = queryset.filter(
+                Q(first_name__icontains=search) |
+                Q(last_name__icontains=search) |
+                Q(user_id__icontains=search) |
+                Q(email__icontains=search)
+            )
 
-#     def export_pdf(self, report_data, filename_prefix):
-#         buffer = io.BytesIO()
-#         doc = SimpleDocTemplate(buffer, pagesize=A4)
-#         elements = []
-#         styles = getSampleStyleSheet()
-#         elements.append(Paragraph(f"{filename_prefix.replace('_', ' ').title()} Report", styles["Title"]))
+        # Limit
+        if limit:
+            try:
+                limit = int(limit)
+                queryset = queryset[:limit]
+            except ValueError:
+                pass
 
-#         data = [['Username', 'From Name', 'Total Amount', 'Completed Levels', 'Latest Status', 'Latest Date']]
-#         for item in report_data:
-#             user = item['user']
-#             user_levels = item['user_levels']
-#             total_amount = user_levels.filter(status='paid').aggregate(total=Sum('level.amount'))['total'] or 0
-#             completed_levels = user_levels.filter(status='paid').count()
-#             latest_level = user_levels.order_by('-approved_at').first()
-#             data.append([
-#                 user.user_id,
-#                 f"{user.first_name} {user.last_name}".strip(),
-#                 str(total_amount),
-#                 str(completed_levels),
-#                 latest_level.status if latest_level else 'N/A',
-#                 latest_level.approved_at.strftime('%Y-%m-%d %H:%M:%S') if latest_level and latest_level.approved_at else ''
-#             ])
+        report_data = []
+        for user in queryset:
+            user_levels = UserLevel.objects.filter(user=user)
+            if user_levels.exists():  # Only include users with levels
+                report_data.append({
+                    'user': user,
+                    'user_levels': user_levels
+                })
 
-#         table = Table(data)
-#         table.setStyle(TableStyle([
-#             ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
-#             ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-#             ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-#             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-#             ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
-#         ]))
-#         elements.append(table)
-#         doc.build(elements)
+        # Export options
+        if export == "csv":
+            return self.export_csv(report_data, 'bonus_summary')
+        elif export == "pdf":
+            return self.export_pdf(report_data, 'bonus_summary')
+        elif export == "xlsx":
+            return self.export_xlsx(report_data, 'bonus_summary')
 
-#         response = HttpResponse(content_type="application/pdf")
-#         response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.pdf"'
-#         response.write(buffer.getvalue())
-#         buffer.close()
-#         return response
+        serializer = BonusSummarySerializer(report_data, many=True)
+        return Response(serializer.data)
+
+    def export_csv(self, report_data, filename_prefix):
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.csv"'
+        writer = csv.writer(response)
+        writer.writerow(['From User', 'Username', 'From Name', 'Linked Username', 'Bonus Amount', 'Status', 'Approved At', 'Total Bonus'])
+        for item in report_data:
+            user = item['user']
+            user_levels = item['user_levels']
+            latest_level = user_levels.order_by('-approved_at').first()
+            serializer = BonusSummarySerializer(user_levels, many=True)
+            for data in serializer.data:
+                writer.writerow([
+                    data['from_user'],
+                    data['username'],
+                    data['from_name'],
+                    data['linked_username'],
+                    str(data['bonus_amount']),
+                    data['status'],
+                    data['approved_at'] if data['approved_at'] else '',
+                    str(data['total_bonus'])
+                ])
+        return response
+
+    def export_pdf(self, report_data, filename_prefix):
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4)
+        elements = []
+        styles = getSampleStyleSheet()
+        elements.append(Paragraph(f"{filename_prefix.replace('_', ' ').title()} Report", styles["Title"]))
+
+        data = [['From User', 'Username', 'From Name', 'Linked Username', 'Bonus Amount', 'Status', 'Approved At', 'Total Bonus']]
+        for item in report_data:
+            user = item['user']
+            user_levels = item['user_levels']
+            latest_level = user_levels.order_by('-approved_at').first()
+            serializer = BonusSummarySerializer(user_levels, many=True)
+            for data_item in serializer.data:
+                data.append([
+                    data_item['from_user'],
+                    data_item['username'],
+                    data_item['from_name'],
+                    data_item['linked_username'],
+                    str(data_item['bonus_amount']),
+                    data_item['status'],
+                    data_item['approved_at'] if data_item['approved_at'] else '',
+                    str(data_item['total_bonus'])
+                ])
+
+        table = Table(data)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+        ]))
+        elements.append(table)
+        doc.build(elements)
+
+        response = HttpResponse(content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.pdf"'
+        response.write(buffer.getvalue())
+        buffer.close()
+        return response
+
+    def export_xlsx(self, report_data, filename_prefix):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "BonusSummary"
+        ws.append(['From User', 'Username', 'From Name', 'Linked Username', 'Bonus Amount', 'Status', 'Approved At', 'Total Bonus'])
+        for item in report_data:
+            user = item['user']
+            user_levels = item['user_levels']
+            latest_level = user_levels.order_by('-approved_at').first()
+            serializer = BonusSummarySerializer(user_levels, many=True)
+            for data in serializer.data:
+                ws.append([
+                    data['from_user'],
+                    data['username'],
+                    data['from_name'],
+                    data['linked_username'],
+                    data['bonus_amount'],
+                    data['status'],
+                    data['approved_at'] if data['approved_at'] else '',
+                    data['total_bonus']
+                ])
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+        response = HttpResponse(
+            output,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.xlsx"'
+        return response
 
 class LevelUsersReport(APIView):
     # permission_classes = [IsAdminUser]
 
     def get(self, request):
-        queryset = UserLevel.objects.select_related('user', 'level').filter(user=request.user).order_by('-approved_at').order_by('-approved_at')
+        queryset = UserLevel.objects.select_related('user', 'level').filter(user=request.user).order_by('-approved_at')
         
+        # Query params
+        email = request.query_params.get("email")
+        status = request.query_params.get("status")
+        user_id = request.query_params.get("user_id")
+        first_name = request.query_params.get("first_name")
+        last_name = request.query_params.get("last_name")
+        start_date = request.query_params.get("start_date")
+        end_date = request.query_params.get("end_date")
+        limit = request.query_params.get("limit")
+        export = request.query_params.get("export")  # 'csv', 'pdf', 'xlsx'
+
+        # Filters
+        if email:
+            queryset = queryset.filter(user__email__icontains=email.lower())
+        if first_name:
+            queryset = queryset.filter(user__first_name__icontains=first_name.lower())
+        if last_name:
+            queryset = queryset.filter(user__last_name__icontains=last_name.lower())
+        if status and status.lower() != "all":
+            if status.lower() == "completed":
+                queryset = queryset.filter(status='paid')  
+            elif status.lower() == "pending":
+                queryset = queryset.exclude(status='paid')
+        if user_id:
+            queryset = queryset.filter(user__user_id__iexact=user_id)
+        if start_date:
+            queryset = queryset.filter(approved_at__date__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(approved_at__date__lte=end_date)
+
         # Search filter
         search = request.query_params.get('search', '')
         if search:
@@ -694,13 +1052,22 @@ class LevelUsersReport(APIView):
                 Q(level__name__icontains=search) |
                 Q(status__icontains=search)
             )
-        
+
+        # Limit
+        if limit:
+            try:
+                limit = int(limit)
+                queryset = queryset[:limit]
+            except ValueError:
+                pass
+
         # Export options
-        export_format = request.query_params.get('export')
-        if export_format == 'csv':
+        if export == "csv":
             return self.export_csv(queryset, 'level_users_report')
-        elif export_format == 'pdf':
+        elif export == "pdf":
             return self.export_pdf(queryset, 'level_users_report')
+        elif export == "xlsx":
+            return self.export_xlsx(queryset, 'level_users_report')
 
         serializer = LevelUsersSerializer(queryset, many=True)
         return Response(serializer.data)
@@ -709,16 +1076,19 @@ class LevelUsersReport(APIView):
         response = HttpResponse(content_type="text/csv")
         response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.csv"'
         writer = csv.writer(response)
-        writer.writerow(['Username', 'From Name', 'Amount', 'Status', 'Level', 'Approved At', 'Total'])
-        for obj in queryset:
+        writer.writerow(['From User', 'Username', 'From Name', 'Linked Username', 'Amount', 'Status', 'Level', 'Approved At', 'Total'])
+        serializer = LevelUsersSerializer(queryset, many=True)
+        for data in serializer.data:
             writer.writerow([
-                obj.user.user_id,
-                f"{obj.user.first_name} {obj.user.last_name}".strip(),
-                obj.level.amount,
-                obj.status,
-                obj.level.name,
-                obj.approved_at.strftime('%Y-%m-%d %H:%M:%S') if obj.approved_at else '',
-                obj.level.amount  # Total as amount
+                data['from_user'],
+                data['username'],
+                data['from_name'],
+                data['linked_username'],
+                str(data['amount']),
+                data['status'],
+                data['level'],
+                data['approved_at'] if data['approved_at'] else '',
+                str(data['total'])
             ])
         return response
 
@@ -729,16 +1099,19 @@ class LevelUsersReport(APIView):
         styles = getSampleStyleSheet()
         elements.append(Paragraph(f"{filename_prefix.replace('_', ' ').title()} Report", styles["Title"]))
 
-        data = [['Username', 'From Name', 'Amount', 'Status', 'Level', 'Approved At', 'Total']]
-        for obj in queryset:
+        data = [['From User', 'Username', 'From Name', 'Linked Username', 'Amount', 'Status', 'Level', 'Approved At', 'Total']]
+        serializer = LevelUsersSerializer(queryset, many=True)
+        for data_item in serializer.data:
             data.append([
-                obj.user.user_id,
-                f"{obj.user.first_name} {obj.user.last_name}".strip(),
-                str(obj.level.amount),
-                obj.status,
-                obj.level.name,
-                obj.approved_at.strftime('%Y-%m-%d %H:%M:%S') if obj.approved_at else '',
-                str(obj.level.amount)  # Total as amount
+                data_item['from_user'],
+                data_item['username'],
+                data_item['from_name'],
+                data_item['linked_username'],
+                str(data_item['amount']),
+                data_item['status'],
+                data_item['level'],
+                data_item['approved_at'] if data_item['approved_at'] else '',
+                str(data_item['total'])
             ])
 
         table = Table(data)
@@ -758,3 +1131,30 @@ class LevelUsersReport(APIView):
         buffer.close()
         return response
 
+    def export_xlsx(self, queryset, filename_prefix):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "LevelUsersReport"
+        ws.append(['From User', 'Username', 'From Name', 'Linked Username', 'Amount', 'Status', 'Level', 'Approved At', 'Total'])
+        serializer = LevelUsersSerializer(queryset, many=True)
+        for data in serializer.data:
+            ws.append([
+                data['from_user'],
+                data['username'],
+                data['from_name'],
+                data['linked_username'],
+                data['amount'],
+                data['status'],
+                data['level'],
+                data['approved_at'] if data['approved_at'] else '',
+                data['total']
+            ])
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+        response = HttpResponse(
+            output,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.xlsx"'
+        return response

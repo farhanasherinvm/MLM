@@ -24,21 +24,7 @@ class LatestReportSerializer(serializers.Serializer):
     latest_level_help = serializers.CharField()
     latest_level_payment = LatestLevelPaymentSerializer()
 
-class PaymentReportSerializer(serializers.ModelSerializer):
-    username = serializers.SerializerMethodField()
-    level_name = serializers.CharField(source='level.name')
-    amount = serializers.DecimalField(source='level.amount', max_digits=10, decimal_places=2)
-    payment_mode = serializers.CharField()
-    transaction_id = serializers.CharField(allow_null=True)
-    status = serializers.CharField()
-    date = serializers.DateTimeField(allow_null=True)
 
-    class Meta:
-        model = UserLevel
-        fields = ['username', 'level_name', 'amount', 'payment_mode', 'transaction_id', 'status', 'date']
-    
-    def get_username(self, obj):
-        return getattr(obj.user, 'email', getattr(obj.user, 'user_id', 'Unknown'))
 
 class LevelPaymentReportSerializer(serializers.ModelSerializer):
     level_name = serializers.CharField(source='user_level.level.name')
@@ -78,86 +64,216 @@ class DashboardReportSerializer(serializers.Serializer):
             })
         }
 class SendRequestReportSerializer(serializers.ModelSerializer):
-    from_name = serializers.SerializerMethodField()
-    username = serializers.CharField(source='user.user_id')
+    from_user = serializers.SerializerMethodField()  # Current user's first_name + last_name
+    from_name = serializers.SerializerMethodField()  # Linked user's first_name + last_name
+    username = serializers.SerializerMethodField()
     amount = serializers.DecimalField(max_digits=12, decimal_places=2, source='level.amount')
-    status = serializers.CharField()
-    level = serializers.CharField(source='level.name')
-    date = serializers.DateTimeField(source='approved_at', format="%Y-%m-%d %H:%M:%S", allow_null=True)
+    status = serializers.SerializerMethodField()
+    approved_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", allow_null=True)
 
     class Meta:
         model = UserLevel
-        fields = ['from_name', 'username', 'amount', 'status', 'level', 'date']
+        fields = ['from_user', 'username','from_name', 'amount', 'status', 'approved_at']
+
+    def get_from_user(self, obj):
+        user = getattr(obj, 'user', None)
+        return f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip() if user else 'Unknown'
 
     def get_from_name(self, obj):
-        return f"{obj.user.first_name} {obj.user.last_name}".strip()
+        linked_user_id = getattr(obj, 'linked_user_id', None)
+        if linked_user_id:
+            try:
+                linked_user = CustomUser.objects.get(user_id=linked_user_id)
+                return f"{getattr(linked_user, 'first_name', '')} {getattr(linked_user, 'last_name', '')}".strip()
+            except CustomUser.DoesNotExist:
+                return 'Unknown'
+        return 'N/A'
+    def get_username(self, obj):
+        linked_user_id = getattr(obj, 'linked_user_id', None)
+        if linked_user_id:
+            try:
+                linked_user = CustomUser.objects.get(user_id=linked_user_id)
+                return getattr(linked_user, 'user_id', 'Unknown')
+            except CustomUser.DoesNotExist:
+                return 'Unknown'
+        return 'N/A'
+
+    def get_status(self, obj):
+        return "Completed" if obj.status == 'paid' else "Pending"
 
 class AUCReportSerializer(serializers.ModelSerializer):
-    from_user = serializers.CharField(source='user.user_id')
+    from_user = serializers.SerializerMethodField()  # Current user's first_name + last_name
+    from_name = serializers.SerializerMethodField()  # Linked user's first_name + last_name
+    username = serializers.SerializerMethodField()  # Current user's user_id
+    linked_username = serializers.SerializerMethodField()  # Linked user's user_id
     amount = serializers.DecimalField(max_digits=12, decimal_places=2, source='level.amount')
-    status = serializers.CharField()
+    status = serializers.SerializerMethodField()
     date = serializers.DateTimeField(source='approved_at', format="%Y-%m-%d %H:%M:%S", allow_null=True)
 
     class Meta:
         model = UserLevel
-        fields = ['from_user', 'amount', 'status', 'date']
+        fields = ['from_user', 'username', 'from_name', 'linked_username', 'amount', 'status', 'date']
 
-class PaymentReportSerializer(serializers.ModelSerializer):
-    username = serializers.CharField(source='user.user_id')
-    amount = serializers.DecimalField(max_digits=12, decimal_places=2, source='level.amount')
-    payout_amount = serializers.DecimalField(max_digits=12, decimal_places=2, default=0)  # Placeholder
-    transaction_fee = serializers.DecimalField(max_digits=12, decimal_places=2, default=0)  # Placeholder
-    status = serializers.CharField()
-    date = serializers.DateTimeField(source='approved_at', format="%Y-%m-%d %H:%M:%S", allow_null=True)
-    total = serializers.SerializerMethodField()
-
-    class Meta:
-        model = UserLevel
-        fields = ['username', 'amount', 'payout_amount', 'transaction_fee', 'status', 'date', 'total']
-
-    def get_total(self, obj):
-        return obj.level.amount  # Fallback to amount since payout_amount and transaction_fee are placeholders
-
-# class BonusSummarySerializer(serializers.Serializer):
-#     username = serializers.CharField()
-#     from_name = serializers.CharField()
-#     total_amount = serializers.DecimalField(max_digits=15, decimal_places=2)
-#     completed_levels = serializers.IntegerField()
-#     latest_status = serializers.CharField()
-#     latest_date = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", allow_null=True)
-
-#     def to_representation(self, instance):
-#         user = instance['user']
-#         user_levels = instance['user_levels']
-#         total_amount = user_levels.filter(status='paid').aggregate(total=Sum('level.amount'))['total'] or 0
-#         completed_levels = user_levels.filter(status='paid').count()
-#         latest_level = user_levels.order_by('-approved_at').first()
-#         return {
-#             'username': user.user_id,
-#             'from_name': f"{user.first_name} {user.last_name}".strip(),
-#             'total_amount': total_amount,
-#             'completed_levels': completed_levels,
-#             'latest_status': latest_level.status if latest_level else 'N/A',
-#             'latest_date': latest_level.approved_at.strftime('%Y-%m-%d %H:%M:%S') if latest_level and latest_level.approved_at else None
-#         }
-
-class LevelUsersSerializer(serializers.ModelSerializer):
-    username = serializers.CharField(source='user.user_id')
-    from_name = serializers.SerializerMethodField()
-    amount = serializers.DecimalField(max_digits=12, decimal_places=2, source='level.amount')
-    status = serializers.CharField()
-    level = serializers.CharField(source='level.name')
-    date = serializers.DateTimeField(source='approved_at', format="%Y-%m-%d %H:%M:%S", allow_null=True)
-    total = serializers.SerializerMethodField()
-
-    class Meta:
-        model = UserLevel
-        fields = ['username', 'from_name', 'amount', 'status', 'level', 'date', 'total']
+    def get_from_user(self, obj):
+        user = getattr(obj, 'user', None)
+        return f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip() if user else 'Unknown'
 
     def get_from_name(self, obj):
-        return f"{obj.user.first_name} {obj.user.last_name}".strip()
+        linked_user_id = getattr(obj, 'linked_user_id', None)
+        if linked_user_id:
+            try:
+                linked_user = CustomUser.objects.get(user_id=linked_user_id)
+                return f"{getattr(linked_user, 'first_name', '')} {getattr(linked_user, 'last_name', '')}".strip()
+            except CustomUser.DoesNotExist:
+                return 'Unknown'
+        return 'N/A'
 
-    def get_total(self, obj):
-        return obj.level.amount  # Fallback to amount
+    def get_username(self, obj):
+        user = getattr(obj, 'user', None)
+        return getattr(user, 'user_id', 'N/A') if user else 'N/A'
+
+    def get_linked_username(self, obj):
+        linked_user_id = getattr(obj, 'linked_user_id', None)
+        if linked_user_id:
+            try:
+                linked_user = CustomUser.objects.get(user_id=linked_user_id)
+                return getattr(linked_user, 'user_id', 'Unknown')
+            except CustomUser.DoesNotExist:
+                return 'Unknown'
+        return 'N/A'
+
+    def get_status(self, obj):
+        return "Completed" if obj.status == 'paid' else "Pending"
+
+class PaymentReportSerializer(serializers.ModelSerializer):
+    from_user = serializers.SerializerMethodField()  # Current user's first_name + last_name
+    from_name = serializers.SerializerMethodField()  # Linked user's first_name + last_name
+    username = serializers.SerializerMethodField()  # Current user's user_id
+    linked_username = serializers.SerializerMethodField()  # Linked user's user_id
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, source='level.amount')
+    payout_amount = serializers.DecimalField(max_digits=12, decimal_places=2, default=0)
+    transaction_fee = serializers.DecimalField(max_digits=12, decimal_places=2, default=0)
+    status = serializers.SerializerMethodField()
+    approved_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", allow_null=True)
+    total = serializers.DecimalField(max_digits=12, decimal_places=2, source='level.amount')
+
+    class Meta:
+        model = UserLevel
+        fields = ['from_user', 'username', 'from_name', 'linked_username', 'amount', 'payout_amount', 'transaction_fee', 'status', 'approved_at', 'total']
+
+    def get_from_user(self, obj):
+        user = getattr(obj, 'user', None)
+        return f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip() if user else 'Unknown'
+
+    def get_from_name(self, obj):
+        linked_user_id = getattr(obj, 'linked_user_id', None)
+        if linked_user_id:
+            try:
+                linked_user = CustomUser.objects.get(user_id=linked_user_id)
+                return f"{getattr(linked_user, 'first_name', '')} {getattr(linked_user, 'last_name', '')}".strip()
+            except CustomUser.DoesNotExist:
+                return 'Unknown'
+        return 'N/A'
+
+    def get_username(self, obj):
+        user = getattr(obj, 'user', None)
+        return getattr(user, 'user_id', 'N/A') if user else 'N/A'
+
+    def get_linked_username(self, obj):
+        linked_user_id = getattr(obj, 'linked_user_id', None)
+        if linked_user_id:
+            try:
+                linked_user = CustomUser.objects.get(user_id=linked_user_id)
+                return getattr(linked_user, 'user_id', 'Unknown')
+            except CustomUser.DoesNotExist:
+                return 'Unknown'
+        return 'N/A'
+
+    def get_status(self, obj):
+        return "Completed" if obj.status == 'paid' else "Pending"
+
+        
+class BonusSummarySerializer(serializers.ModelSerializer):
+    from_user = serializers.SerializerMethodField()  # Current user's first_name + last_name
+    from_name = serializers.SerializerMethodField()  # Linked user's first_name + last_name
+    username = serializers.CharField(source='user.user_id')  # Current user's user_id
+    linked_username = serializers.SerializerMethodField()  # Linked user's user_id
+    bonus_amount = serializers.DecimalField(max_digits=12, decimal_places=2, source='received')  # Bonus received
+    status = serializers.SerializerMethodField()
+    approved_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", allow_null=True)
+    total_bonus = serializers.DecimalField(max_digits=12, decimal_places=2, source='received')  # Total bonus
+
+    class Meta:
+        model = UserLevel
+        fields = ['from_user', 'username', 'from_name', 'linked_username', 'bonus_amount', 'status', 'approved_at', 'total_bonus']
+
+    def get_from_user(self, obj):
+        user = getattr(obj, 'user', None)
+        return f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip() if user else 'Unknown'
+
+    def get_from_name(self, obj):
+        linked_user_id = getattr(obj, 'linked_user_id', None)
+        if linked_user_id:
+            try:
+                linked_user = CustomUser.objects.get(user_id=linked_user_id)
+                return f"{getattr(linked_user, 'first_name', '')} {getattr(linked_user, 'last_name', '')}".strip()
+            except CustomUser.DoesNotExist:
+                return 'Unknown'
+        return 'N/A'
+
+    def get_linked_username(self, obj):
+        linked_user_id = getattr(obj, 'linked_user_id', None)
+        if linked_user_id:
+            try:
+                linked_user = CustomUser.objects.get(user_id=linked_user_id)
+                return getattr(linked_user, 'user_id', 'Unknown')
+            except CustomUser.DoesNotExist:
+                return 'Unknown'
+        return 'N/A'
+
+    def get_status(self, obj):
+        return "Completed" if obj.status == 'paid' else "Pending"
+
+class LevelUsersSerializer(serializers.ModelSerializer):
+    from_user = serializers.SerializerMethodField()  # Current user's first_name + last_name
+    from_name = serializers.SerializerMethodField()  # Linked user's first_name + last_name
+    username = serializers.CharField(source='user.user_id')  # Current user's user_id
+    linked_username = serializers.SerializerMethodField()  # Linked user's user_id
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, source='level.amount')
+    status = serializers.SerializerMethodField()
+    level = serializers.CharField(source='level.name')
+    approved_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", allow_null=True)
+    total = serializers.DecimalField(max_digits=12, decimal_places=2, source='level.amount')
+
+    class Meta:
+        model = UserLevel
+        fields = ['from_user', 'username', 'from_name', 'linked_username', 'amount', 'status', 'level', 'approved_at', 'total']
+
+    def get_from_user(self, obj):
+        user = getattr(obj, 'user', None)
+        return f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip() if user else 'Unknown'
+
+    def get_from_name(self, obj):
+        linked_user_id = getattr(obj, 'linked_user_id', None)
+        if linked_user_id:
+            try:
+                linked_user = CustomUser.objects.get(user_id=linked_user_id)
+                return f"{getattr(linked_user, 'first_name', '')} {getattr(linked_user, 'last_name', '')}".strip()
+            except CustomUser.DoesNotExist:
+                return 'Unknown'
+        return 'N/A'
+
+    def get_linked_username(self, obj):
+        linked_user_id = getattr(obj, 'linked_user_id', None)
+        if linked_user_id:
+            try:
+                linked_user = CustomUser.objects.get(user_id=linked_user_id)
+                return getattr(linked_user, 'user_id', 'Unknown')
+            except CustomUser.DoesNotExist:
+                return 'Unknown'
+        return 'N/A'
+
+    def get_status(self, obj):
+        return "Completed" if obj.status == 'paid' else "Pending"
 
 

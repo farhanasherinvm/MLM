@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import PaymentReportViewSet, DashboardReportViewSet, UserReportViewSet, UserLatestReportView
+from .views import PaymentReportViewSet, DashboardReportViewSet, UserReportViewSet, UserLatestReportView,BonusSummary
 from .views import SendRequestReport, AUCReport, PaymentReport, LevelUsersReport
 
 router = DefaultRouter()
@@ -15,7 +15,7 @@ urlpatterns = [
     path('send-request-report/', SendRequestReport.as_view(), name='send-request-report'),
     path('auc-report/', AUCReport.as_view(), name='auc-report'),
     path('payment-report/', PaymentReport.as_view(), name='payment-report'),
-    # path('bonus-summary/', BonusSummary.as_view(), name='bonus-summary'),
+    path('bonus-summary/', BonusSummary.as_view(), name='bonus-summary'),
     path('level-users-report/', LevelUsersReport.as_view(), name='level-users-report'),
     
 ]
