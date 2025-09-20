@@ -56,20 +56,17 @@ class KYCView(generics.RetrieveUpdateAPIView):
         obj, created = KYC.objects.get_or_create(user=self.request.user)
         return obj
 
-
 class ReferralView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
         user = request.user
-
         referral_id = user.user_id  
 
         serializer = ReferralSerializer(data={"referral_id": referral_id})
         serializer.is_valid(raise_exception=True)
 
         return Response(serializer.data)
-
 
 class ReferralListView(APIView):
     permission_classes = [IsAuthenticated]
@@ -79,38 +76,16 @@ class ReferralListView(APIView):
         all_referrals = get_all_referrals(user, max_level=6)
 
         # Query params
-        email = request.query_params.get("email")
         status = request.query_params.get("status")
-        user_id = request.query_params.get("user_id")
-        first_name = request.query_params.get("first_name")
-        last_name = request.query_params.get("last_name")
-        start_date = request.query_params.get("start_date")
-        end_date = request.query_params.get("end_date")
         limit = request.query_params.get("limit")
         export = request.query_params.get("export")  # 'csv', 'pdf', 'xlsx'
 
-        # Filters
-        if email:
-            all_referrals = [r for r in all_referrals if email.lower() in r.email.lower()]
-        if first_name:
-            all_referrals = [r for r in all_referrals if r.first_name and first_name.lower() in r.first_name.lower()]
-        if last_name:
-            all_referrals = [r for r in all_referrals if r.last_name and last_name.lower() in r.last_name.lower()]
+        # Status filter
         if status and status.lower() != "all":
             if status.lower() == "active":
                 all_referrals = [r for r in all_referrals if r.is_active]
             elif status.lower() == "inactive":
                 all_referrals = [r for r in all_referrals if not r.is_active]
-        if user_id:
-            all_referrals = [r for r in all_referrals if str(r.user_id) == str(user_id)]
-        if start_date:
-            start_date_parsed = parse_date(start_date)
-            if start_date_parsed:
-                all_referrals = [r for r in all_referrals if r.date_of_joining and r.date_of_joining.date() >= start_date_parsed]
-        if end_date:
-            end_date_parsed = parse_date(end_date)
-            if end_date_parsed:
-                all_referrals = [r for r in all_referrals if r.date_of_joining and r.date_of_joining.date() <= end_date_parsed]
 
         # Sort by joining date
         def get_joined_date(u):
@@ -130,21 +105,34 @@ class ReferralListView(APIView):
             except ValueError:
                 pass
 
+        # Serializer for computed fields
+        serializer = ReferralListSerializer(all_referrals, many=True)
+
+        # Prepare data rows with only required fields
+        data_rows = []
+        for r in serializer.data:
+            full_name = r.get('fullname', f"{r.get('first_name','')} {r.get('last_name','')}".strip())
+            data_rows.append([
+                r.get('user_id', ''),
+                full_name,
+                r.get('email', ''),
+                r.get('mobile', ''),
+                r.get('joined_date', ''),
+                r.get('total_count', 0),   # referral count
+                r.get('level', ''),        # rank/level
+                r.get('status', ''),
+            ])
+
+        # Column headings
+        headings = ["User ID", "Full Name", "Email", "Mobile", "Date of Joining", "Referral Count", "Rank", "Status"]
+
         # CSV Export
         if export == "csv":
             response = HttpResponse(content_type="text/csv")
-            response["Content-Disposition"] = 'attachment; filename="referrals.csv"'
+            response["Content-Disposition"] = 'attachment; filename="referrals_export.csv"'
             writer = csv.writer(response)
-            writer.writerow(["User ID", "First Name", "Last Name", "Email", "Status", "Date of Joining"])
-            for r in all_referrals:
-                writer.writerow([
-                    r.user_id,
-                    r.first_name or "",
-                    r.last_name or "",
-                    r.email,
-                    "Active" if r.is_active else "Inactive",
-                    r.date_of_joining.strftime("%Y-%m-%d") if r.date_of_joining else "",
-                ])
+            writer.writerow(headings)
+            writer.writerows(data_rows)
             return response
 
         # PDF Export
@@ -154,38 +142,41 @@ class ReferralListView(APIView):
             width, height = A4
             y = height - 50
             p.setFont("Helvetica-Bold", 14)
-            p.drawString(150, y, "Referral List")
+            p.drawString(150, y, "Referral Export")
             y -= 30
+
+            p.setFont("Helvetica-Bold", 10)
+            p.drawString(50, y, " | ".join(headings))
+            y -= 20
             p.setFont("Helvetica", 10)
-            for r in all_referrals:
-                line = f"{r.user_id} | {r.first_name or ''} | {r.last_name or ''} | {r.email} | {'Active' if r.is_active else 'Inactive'} | {r.date_of_joining.strftime('%Y-%m-%d') if r.date_of_joining else ''}"
+
+            for row in data_rows:
+                line = " | ".join(str(item) for item in row)
                 p.drawString(50, y, line)
                 y -= 20
                 if y < 50:
                     p.showPage()
                     y = height - 50
+                    p.setFont("Helvetica-Bold", 10)
+                    p.drawString(50, y, " | ".join(headings))
+                    y -= 20
+                    p.setFont("Helvetica", 10)
+
             p.save()
             pdf = buffer.getvalue()
             buffer.close()
             response = HttpResponse(pdf, content_type="application/pdf")
-            response["Content-Disposition"] = 'attachment; filename="referrals.pdf"'
+            response["Content-Disposition"] = 'attachment; filename="referrals_export.pdf"'
             return response
 
         # XLSX Export
         elif export == "xlsx":
             wb = Workbook()
             ws = wb.active
-            ws.title = "Referrals"
-            ws.append(["User ID", "First Name", "Last Name", "Email", "Status", "Date of Joining"])
-            for r in all_referrals:
-                ws.append([
-                    r.user_id,
-                    r.first_name or "",
-                    r.last_name or "",
-                    r.email,
-                    "Active" if r.is_active else "Inactive",
-                    r.date_of_joining.strftime("%Y-%m-%d") if r.date_of_joining else "",
-                ])
+            ws.title = "Referrals Export"
+            ws.append(headings)
+            for row in data_rows:
+                ws.append(row)
             output = BytesIO()
             wb.save(output)
             output.seek(0)
@@ -193,11 +184,10 @@ class ReferralListView(APIView):
                 output,
                 content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-            response["Content-Disposition"] = 'attachment; filename="referrals.xlsx"'
+            response["Content-Disposition"] = 'attachment; filename="referrals_export.xlsx"'
             return response
 
         # Default JSON
-        serializer = ReferralListSerializer(all_referrals, many=True)
         return Response(serializer.data)
 
 
@@ -214,3 +204,123 @@ class AdminHomeView(APIView):
 
 
 
+
+class ReferralExportView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        user = request.user
+        all_referrals = get_all_referrals(user, max_level=6)
+
+        # Query params
+        status = request.query_params.get("status")
+        limit = request.query_params.get("limit")
+        export = request.query_params.get("export")  # 'csv', 'pdf', 'xlsx'
+
+        # Status filter
+        if status and status.lower() != "all":
+            if status.lower() == "active":
+                all_referrals = [r for r in all_referrals if r.is_active]
+            elif status.lower() == "inactive":
+                all_referrals = [r for r in all_referrals if not r.is_active]
+
+        # Sort by joining date
+        def get_joined_date(u):
+            if u.date_of_joining:
+                dt = u.date_of_joining
+                if is_naive(dt):
+                    dt = make_aware(dt)
+                return dt
+            return datetime.min.replace(tzinfo=None)
+
+        all_referrals.sort(key=get_joined_date, reverse=True)
+
+        if limit:
+            try:
+                limit = int(limit)
+                all_referrals = all_referrals[:limit]
+            except ValueError:
+                pass
+
+        # Serializer to get computed fields
+        serializer = ReferralListSerializer(all_referrals, many=True)
+        data_rows = []
+        for r in serializer.data:
+            full_name = r.get('fullname', f"{r.get('first_name','')} {r.get('last_name','')}".strip())
+            data_rows.append([
+                full_name,
+                r.get('email', ''),
+                r.get('mobile', ''),
+                r.get('user_id', ''),
+                r.get('position', ''),
+                r.get('referred_by_name', ''),
+                r.get('joined_date', ''),
+                r.get('status', ''),
+            ])
+
+        # CSV Export
+        if export == "csv":
+            response = HttpResponse(content_type="text/csv")
+            response["Content-Disposition"] = 'attachment; filename="referrals_export.csv"'
+            writer = csv.writer(response)
+            writer.writerow(["Full Name", "Email", "Mobile", "User ID", "Position", "Referred By", "Joining Date", "Status"])
+            writer.writerows(data_rows)
+            return response
+
+        # PDF Export with headings
+        elif export == "pdf":
+            buffer = BytesIO()
+            p = canvas.Canvas(buffer, pagesize=A4)
+            width, height = A4
+            y = height - 50
+            p.setFont("Helvetica-Bold", 14)
+            p.drawString(150, y, "Referral Export")
+            y -= 30
+
+            # Column headings
+            p.setFont("Helvetica-Bold", 10)
+            headings = ["Full Name", "Email", "Mobile", "User ID", "Placement ID", "Sponsor Name", "Joining Date", "Status"]
+            p.drawString(50, y, " | ".join(headings))
+            y -= 20
+            p.setFont("Helvetica", 10)
+
+            for row in data_rows:
+                line = " | ".join(str(item) for item in row)
+                p.drawString(50, y, line)
+                y -= 20
+                if y < 50:
+                    p.showPage()
+                    y = height - 50
+                    # Repeat headings on new page
+                    p.setFont("Helvetica-Bold", 10)
+                    p.drawString(50, y, " | ".join(headings))
+                    y -= 20
+                    p.setFont("Helvetica", 10)
+
+            p.save()
+            pdf = buffer.getvalue()
+            buffer.close()
+            response = HttpResponse(pdf, content_type="application/pdf")
+            response["Content-Disposition"] = 'attachment; filename="referrals_export.pdf"'
+            return response
+
+        # XLSX Export
+        elif export == "xlsx":
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Referrals Export"
+            ws.append(["Full Name", "Email", "Mobile", "User ID", "Placement ID", "Sponsor Name", "Joining Date", "Status"])
+            for row in data_rows:
+                ws.append(row)
+            output = BytesIO()
+            wb.save(output)
+            output.seek(0)
+            response = HttpResponse(
+                output,
+                content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            response["Content-Disposition"] = 'attachment; filename="referrals_export.xlsx"'
+            return response
+
+        # Default JSON
+        return Response(serializer.data)
