@@ -21,14 +21,20 @@ def get_all_referrals(user_obj, max_level=6):
         current_level += 1
 
     return referrals
-
 class ReferralListSerializer(serializers.ModelSerializer):
-    level = serializers.IntegerField() 
+    level = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
-    joined_date = serializers.DateTimeField(source="date_of_joining", format="%Y-%m-%d %H:%M:%S", read_only=True)
+    joined_date = serializers.DateTimeField(
+        source="date_of_joining", format="%Y-%m-%d %H:%M:%S", read_only=True
+    )
     direct_count = serializers.SerializerMethodField()
     total_count = serializers.SerializerMethodField()
     percentage = serializers.SerializerMethodField()
+
+    # Extra fields
+    position = serializers.SerializerMethodField()
+    referred_by_id = serializers.SerializerMethodField()
+    referred_by_name = serializers.SerializerMethodField()
 
     # Profile-related fields
     district = serializers.SerializerMethodField()
@@ -45,10 +51,12 @@ class ReferralListSerializer(serializers.ModelSerializer):
             "user_id", "first_name", "last_name", "email", "mobile",
             "level", "status", "joined_date",
             "direct_count", "total_count", "percentage",
+            "position", "referred_by_id", "referred_by_name",
             "district", "state", "address", "place", "pincode",
             "whatsapp_number", "profile_image",
         ]
 
+    # ----------------- Custom Getters -----------------
     def get_status(self, obj):
         return "Active" if obj.is_active else "Inactive"
 
@@ -64,7 +72,36 @@ class ReferralListSerializer(serializers.ModelSerializer):
         percentage = (direct / 2) * 100  # goal = 2 direct referrals
         return f"{percentage:.0f}%"
 
-    # Profile fields
+    def get_position(self, obj):
+        """Return Left or Right position under sponsor"""
+        if obj.sponsor_id:
+            siblings = list(CustomUser.objects.filter(sponsor_id=obj.sponsor_id).order_by("id")[:2])
+            try:
+                index = siblings.index(obj)
+                return "Left" if index == 0 else "Right"
+            except ValueError:
+                return None
+        return None
+
+    def get_level(self, obj):
+        """Return only level number (e.g., Level 1, Level 2)"""
+        level_map = self.context.get("level_map", {})
+        current_level = level_map.get(obj.user_id, 1)
+        return f"Level {current_level}"
+
+    def get_referred_by_id(self, obj):
+        return obj.sponsor_id
+
+    def get_referred_by_name(self, obj):
+        if obj.sponsor_id:
+            try:
+                sponsor = CustomUser.objects.get(user_id=obj.sponsor_id)
+                return f"{(sponsor.first_name or '').strip()} {(sponsor.last_name or '').strip()}"
+            except CustomUser.DoesNotExist:
+                return None
+        return None
+
+    # ----------------- Profile Fields -----------------
     def get_district(self, obj):
         profile = getattr(obj, "profile", None)
         return profile.district if profile else None
@@ -94,9 +131,6 @@ class ReferralListSerializer(serializers.ModelSerializer):
         if profile and profile.profile_image:
             return profile.profile_image.url
         return None
-
-
-
 
 
 
