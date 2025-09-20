@@ -11,7 +11,7 @@ from django.contrib.auth import get_user_model
 
 from rest_framework.permissions import IsAuthenticated
 
-from .serializers import ReferralListSerializer
+from .serializers import ReferralListSerializer,CurrentUserProfileSerializer
 from .utils import get_all_referrals
 from rest_framework.permissions import IsAdminUser
 from django.utils.dateparse import parse_date
@@ -92,7 +92,7 @@ class ReferralListView(APIView):
         user = request.user
         all_referrals = get_all_referrals(user, max_level=6)
 
-        # -------------------- Query params --------------------
+        #  Query params 
         status = request.query_params.get("status")
         limit = request.query_params.get("limit")
         export = request.query_params.get("export")  # 'csv', 'pdf', 'xlsx'
@@ -103,7 +103,7 @@ class ReferralListView(APIView):
         fromdate = request.query_params.get("fromdate") or request.query_params.get("from_date")
         enddate = request.query_params.get("enddate") or request.query_params.get("end_date")
 
-        # -------------------- Filters --------------------
+        #  Filters 
         if status and status.lower() != "all":
             if status.lower() == "active":
                 all_referrals = [r for r in all_referrals if r.is_active]
@@ -127,7 +127,7 @@ class ReferralListView(APIView):
         if mobile:
             all_referrals = [r for r in all_referrals if r.mobile and mobile in r.mobile]
 
-        # -------------------- Date range filter --------------------
+        # Date range filter 
         if fromdate or enddate:
             try:
                 from_dt = datetime.strptime(fromdate, "%Y-%m-%d") if fromdate else datetime.min
@@ -145,7 +145,7 @@ class ReferralListView(APIView):
             except ValueError:
                 pass
 
-        # -------------------- Sorting by joining date --------------------
+        #  Sorting by joining date 
         def get_joined_date(u):
             if u.date_of_joining:
                 dt = u.date_of_joining
@@ -156,7 +156,7 @@ class ReferralListView(APIView):
 
         all_referrals.sort(key=get_joined_date, reverse=True)
 
-        # -------------------- Limit --------------------
+        # Limit 
         if limit:
             try:
                 limit = int(limit)
@@ -164,10 +164,10 @@ class ReferralListView(APIView):
             except ValueError:
                 pass
 
-        # -------------------- Serializer --------------------
+        # Serializer 
         serializer = ReferralListSerializer(all_referrals, many=True)
 
-        # -------------------- Prepare data rows --------------------
+        # Prepare data rows 
         data_rows = []
         for r in serializer.data:
             full_name = r.get('fullname', f"{r.get('first_name','')} {r.get('last_name','')}".strip())
@@ -184,7 +184,7 @@ class ReferralListView(APIView):
 
         headings = ["User ID", "Full Name", "Email", "Mobile", "Date of Joining", "Referral Count", "Rank", "Status"]
 
-        # -------------------- Export --------------------
+        # Export 
         if export == "csv":
             response = HttpResponse(content_type="text/csv")
             response["Content-Disposition"] = 'attachment; filename="referrals_export.csv"'
@@ -240,7 +240,7 @@ class ReferralListView(APIView):
             response["Content-Disposition"] = 'attachment; filename="referrals_export.xlsx"'
             return response
 
-        # -------------------- Default JSON --------------------
+        
         return Response(serializer.data)
 
 
@@ -269,7 +269,7 @@ class ReferralExportView(APIView):
         email = request.query_params.get("email")
         fullname = request.query_params.get("fullname")
         mobile = request.query_params.get("mobile")
-        user_id = request.query_params.get("user_id")   # ✅ added here
+        user_id = request.query_params.get("user_id")   #  added here
         from_date = request.query_params.get("from_date")  # format: YYYY-MM-DD
         end_date = request.query_params.get("end_date")    # format: YYYY-MM-DD
         limit = request.query_params.get("limit")
@@ -297,7 +297,7 @@ class ReferralExportView(APIView):
         if mobile:
             all_referrals = [r for r in all_referrals if mobile in r.mobile]
 
-        # ✅ User ID filter
+        # User ID filter
         if user_id:
             all_referrals = [r for r in all_referrals if user_id.lower() in r.user_id.lower()]
 
@@ -417,4 +417,17 @@ class ReferralExportView(APIView):
             return response
 
         # Default JSON
+        return Response(serializer.data)
+
+
+class CurrentUserProfileView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            profile = Profile.objects.get(user=request.user)
+        except Profile.DoesNotExist:
+            return Response({"detail": "Profile not found."}, status=404)
+
+        serializer = CurrentUserProfileSerializer(profile)
         return Response(serializer.data)

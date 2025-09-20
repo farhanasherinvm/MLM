@@ -454,3 +454,23 @@ class AdminNetworkUserSerializer(serializers.ModelSerializer):
             return level
         except Exception:
             return 0
+
+class CurrentUserProfileSerializer(serializers.ModelSerializer):
+    # User fields
+    user_id = serializers.CharField(source='user.user_id', read_only=True)
+    first_name = serializers.CharField(source='user.first_name')
+    last_name = serializers.CharField(source='user.last_name')
+    email = serializers.EmailField(source='user.email', read_only=True)
+    mobile = serializers.CharField(source='user.mobile')
+    date_of_join = serializers.DateTimeField(
+        source='user.date_of_joining', format='%Y-%m-%d %H:%M:%S', read_only=True
+    )
+
+    class Meta:
+        model = Profile
+        fields = [
+            'user_id', 'first_name', 'last_name', 'email', 'mobile',
+            'date_of_join',
+            'district', 'state', 'address', 'place', 'pincode',
+            'whatsapp_number', 'profile_image',
+        ]
