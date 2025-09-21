@@ -102,6 +102,8 @@ class ReferralListView(APIView):
         mobile = request.query_params.get("mobile")
         fromdate = request.query_params.get("fromdate") or request.query_params.get("from_date")
         enddate = request.query_params.get("enddate") or request.query_params.get("end_date")
+        referred_by_id = request.query_params.get("referred_by_id")
+        referred_by_name = request.query_params.get("referred_by_name")
 
         #  Filters 
         if status and status.lower() != "all":
@@ -127,6 +129,35 @@ class ReferralListView(APIView):
         if mobile:
             all_referrals = [r for r in all_referrals if r.mobile and mobile in r.mobile]
 
+        if referred_by_id:
+            all_referrals = [
+                r for r in all_referrals
+                if r.sponsor_id and str(
+                    # 🔹 CASE 1: sponsor_id is ForeignKey to CustomUser
+                    getattr(r.sponsor_id, "user_id", r.sponsor_id)
+                ) == str(referred_by_id)
+            ]
+
+        
+        if referred_by_name:
+            referred_by_name_lower = referred_by_name.lower()
+            all_referrals = [
+                r for r in all_referrals
+        if r.sponsor_id and (
+                    
+            hasattr(r.sponsor_id, "first_name") and
+                f"{r.sponsor_id.first_name} {r.sponsor_id.last_name}".strip().lower().find(referred_by_name_lower) != -1
+                   
+                or CustomUser.objects.filter(
+                    user_id=r.sponsor_id,
+                    first_name__icontains=referred_by_name_lower
+                    ).exists()
+                    or CustomUser.objects.filter(
+                        user_id=r.sponsor_id,
+                        last_name__icontains=referred_by_name_lower
+                    ).exists()
+                )
+            ]
         # Date range filter 
         if fromdate or enddate:
             try:
