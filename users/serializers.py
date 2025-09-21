@@ -206,7 +206,7 @@ class AdminUserUpdateSerializer(serializers.ModelSerializer):
     address = serializers.CharField(source="profile.address", required=False, allow_blank=True)
     place = serializers.CharField(source="profile.place", required=False, allow_blank=True)
     pincode = serializers.CharField(source="profile.pincode", required=False)
-    
+
     class Meta:
         model = CustomUser
         fields = [
@@ -216,17 +216,21 @@ class AdminUserUpdateSerializer(serializers.ModelSerializer):
         ]
 
     def update(self, instance, validated_data):
+        # ✅ Extract nested profile data
         profile_data = validated_data.pop("profile", {})
+
+        # ✅ Update CustomUser fields
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
 
-        # Update Profile fields
+        # ✅ Update Profile fields if they exist
         profile = getattr(instance, "profile", None)
-        if profile:
+        if profile and profile_data:
             for attr, value in profile_data.items():
                 setattr(profile, attr, value)
             profile.save()
+
         return instance
 
 class AdminEditUserSerializer(serializers.ModelSerializer):

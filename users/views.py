@@ -17,7 +17,7 @@ from reportlab.lib import colors
 from django.http import HttpResponse, FileResponse
 
 from .models import *
-from .serializers import *
+from .serializers import RegistrationSerializer,RazorpayVerifySerializer,RazorpayOrderSerializer,ResetPasswordSerializer, ForgotPasswordSerializer, AdminAccountSerializer, UserAccountDetailsSerializer, UploadReceiptSerializer, LoginSerializer
 from .permissions import IsProjectAdmin
 from .utils import validate_sponsor
 from django.utils.crypto import get_random_string

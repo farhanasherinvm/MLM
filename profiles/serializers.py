@@ -335,13 +335,11 @@ class AdminUserListSerializer(serializers.ModelSerializer):
     def get_status(self, obj):
         return "Active" if obj.is_active else "Blocked"
 
-
 class AdminUserDetailSerializer(serializers.ModelSerializer):
     profile = ProfileSerializer(required=False)
     kyc = KYCSerializer(required=False)
     useraccountdetails = UserAccountDetailsSerializer(required=False)
     blocked_status = serializers.SerializerMethodField()
-
 
     class Meta:
         model = CustomUser
@@ -354,47 +352,82 @@ class AdminUserDetailSerializer(serializers.ModelSerializer):
         read_only_fields = ["user_id", "level", "email"]
 
     def update(self, instance, validated_data):
-         # Pop nested data
-        profile_data = validated_data.pop("profile", None)
+        # --- Pop nested data ---
+        profile_data = validated_data.pop("profile", {})
         kyc_data = validated_data.pop("kyc", None)
         account_data = validated_data.pop("useraccountdetails", None)
 
-        # Update user fields
+        # --- Update CustomUser fields ---
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
 
-        # Update profile
-        if profile_data is not None:
-            profile, _ = Profile.objects.get_or_create(user=instance)
-            for attr, value in profile_data.items():
-                setattr(profile, attr, value)
-            profile.save()
+        # --- Update Profile (nested + flat form-data) ---
+        profile = instance.profile
+        request_data = self.context.get("request").data  # raw incoming data
 
-        # Update KYC
-        if kyc_data is not None:
+        for attr in [
+            "district", "state", "address", "place",
+            "pincode", "whatsapp_number", "profile_image"
+        ]:
+            if attr in request_data:
+                setattr(profile, attr, request_data.get(attr))
+            elif attr in profile_data:
+                setattr(profile, attr, profile_data.get(attr))
+        profile.save()
+
+        # --- Update KYC (nested + flat form-data) ---
+        if kyc_data is not None or any(
+            f in request_data for f in
+            ["account_number", "pan_number", "pan_image",
+             "id_number", "id_card_image",
+             "nominee_name", "nominee_relation", "verified"]
+        ):
             kyc, _ = KYC.objects.get_or_create(user=instance)
-            for attr, value in kyc_data.items():
-                setattr(kyc, attr, value)
+            # Handle nested JSON
+            if kyc_data:
+                for attr, value in kyc_data.items():
+                    setattr(kyc, attr, value)
+            # Handle flat form-data
+            for attr in [
+                "account_number", "pan_number", "pan_image",
+                "id_number", "id_card_image",
+                "nominee_name", "nominee_relation", "verified"
+            ]:
+                if attr in request_data:
+                    setattr(kyc, attr, request_data.get(attr))
             kyc.save()
 
-        # Update account details
-        if account_data is not None:
+        # --- Update UserAccountDetails (nested + flat form-data) ---
+        if account_data is not None or any(
+            f in request_data for f in
+            ["bank_name", "branch_name", "ifsc_code", "account_number"]
+        ):
             account, _ = UserAccountDetails.objects.get_or_create(user=instance)
-            for attr, value in account_data.items():
-                setattr(account, attr, value)
+            # Handle nested JSON
+            if account_data:
+                for attr, value in account_data.items():
+                    setattr(account, attr, value)
+            # Handle flat form-data
+            for attr in ["bank_name", "branch_name", "ifsc_code", "account_number"]:
+                if attr in request_data:
+                    setattr(account, attr, request_data.get(attr))
             account.save()
 
         return instance
-    
+
     def get_profile_image(self, obj):
         if hasattr(obj, "profile") and obj.profile.profile_image:
             request = self.context.get("request")
-            return request.build_absolute_uri(obj.profile.profile_image.url) if request else obj.profile.profile_image.url
+            return (
+                request.build_absolute_uri(obj.profile.profile_image.url)
+                if request else obj.profile.profile_image.url
+            )
         return None
 
     def get_blocked_status(self, obj):
         return "Unblocked" if obj.is_active else "Blocked"
+
     
 
 class AdminNetworkUserSerializer(serializers.ModelSerializer):
