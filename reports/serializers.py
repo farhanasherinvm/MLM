@@ -69,9 +69,9 @@ class DashboardReportSerializer(serializers.Serializer):
 
 
 class SendRequestReportSerializer(serializers.ModelSerializer):
-    from_user = serializers.SerializerMethodField()  # Current user's first_name + last_name
-    from_name = serializers.SerializerMethodField()  # Linked user's first_name + last_name
-    username = serializers.SerializerMethodField()  # Linked user's user_id
+    from_user = serializers.SerializerMethodField()  # Current user's user_id
+    from_name = serializers.SerializerMethodField()  # Referred user's first_name + last_name
+    username = serializers.SerializerMethodField()  # Referred user's user_id
     amount = serializers.SerializerMethodField()    # Amount from level
     status = serializers.SerializerMethodField()    # Converted status
     requested_date = serializers.SerializerMethodField()  # DateTime from UserLevel
@@ -95,15 +95,12 @@ class SendRequestReportSerializer(serializers.ModelSerializer):
         return data
 
     def get_from_user(self, obj):
-        """Get the current user's full name."""
+        """Get the current user's user_id."""
         user = getattr(obj, 'user', None)
-        if not user:
-            return 'Unknown'
-        full_name = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip()
-        return full_name if full_name else 'Unknown'
+        return getattr(user, 'user_id', 'N/A') if user else 'N/A'
 
     def get_from_name(self, obj):
-        """Get the linked user's full name."""
+        """Get the referred user's full name (assuming linked_user_id is the referred user)."""
         linked_user_id = getattr(obj, 'linked_user_id', None)
         if linked_user_id:
             try:
@@ -115,7 +112,7 @@ class SendRequestReportSerializer(serializers.ModelSerializer):
         return 'N/A'
 
     def get_username(self, obj):
-        """Get the linked user's user_id."""
+        """Get the referred user's user_id (assuming linked_user_id is the referred user)."""
         linked_user_id = getattr(obj, 'linked_user_id', None)
         if linked_user_id:
             try:
@@ -167,10 +164,10 @@ class SendRequestReportSerializer(serializers.ModelSerializer):
 
 
 class AUCReportSerializer(serializers.ModelSerializer):
-    from_user = serializers.SerializerMethodField()  # Current user's first_name + last_name
-    username = serializers.SerializerMethodField()  # Current user's user_id
-    from_name = serializers.SerializerMethodField()  # Linked user's first_name + last_name
-    linked_username = serializers.SerializerMethodField()  # Linked user's user_id
+    from_user = serializers.SerializerMethodField()  # Current user's user_id
+    username = serializers.SerializerMethodField()  # Referred user's user_id
+    from_name = serializers.SerializerMethodField()  # Referred user's first_name + last_name
+    linked_username = serializers.SerializerMethodField()  # Referred user's user_id
     amount = serializers.SerializerMethodField()    # Amount from level
     status = serializers.SerializerMethodField()    # Converted status
     date = serializers.SerializerMethodField()      # Requested date
@@ -191,20 +188,23 @@ class AUCReportSerializer(serializers.ModelSerializer):
         return data
 
     def get_from_user(self, obj):
-        """Get the current user's full name."""
-        user = getattr(obj, 'user', None)
-        if not user:
-            return 'Unknown'
-        full_name = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip()
-        return full_name if full_name else 'Unknown'
-
-    def get_username(self, obj):
         """Get the current user's user_id."""
         user = getattr(obj, 'user', None)
         return getattr(user, 'user_id', 'N/A') if user else 'N/A'
 
+    def get_username(self, obj):
+        """Get the referred user's user_id (assuming linked_user_id is the referred user)."""
+        linked_user_id = getattr(obj, 'linked_user_id', None)
+        if linked_user_id:
+            try:
+                linked_user = CustomUser.objects.get(user_id=linked_user_id)
+                return getattr(linked_user, 'user_id', 'Unknown')
+            except ObjectDoesNotExist:
+                return 'Unknown'
+        return 'N/A'
+
     def get_from_name(self, obj):
-        """Get the linked user's full name."""
+        """Get the referred user's full name (assuming linked_user_id is the referred user)."""
         linked_user_id = getattr(obj, 'linked_user_id', None)
         if linked_user_id:
             try:
@@ -216,7 +216,7 @@ class AUCReportSerializer(serializers.ModelSerializer):
         return 'N/A'
 
     def get_linked_username(self, obj):
-        """Get the linked user's user_id."""
+        """Get the referred user's user_id (assuming linked_user_id is the referred user)."""
         linked_user_id = getattr(obj, 'linked_user_id', None)
         if linked_user_id:
             try:
@@ -264,10 +264,10 @@ class AUCReportSerializer(serializers.ModelSerializer):
 
 
 class PaymentReportSerializer(serializers.ModelSerializer):
-    from_user = serializers.SerializerMethodField()  # Current user's first_name + last_name
-    username = serializers.SerializerMethodField()  # Current user's user_id
-    from_name = serializers.SerializerMethodField()  # Linked user's first_name + last_name
-    linked_username = serializers.SerializerMethodField()  # Linked user's user_id
+    from_user = serializers.SerializerMethodField()  # Current user's user_id
+    username = serializers.SerializerMethodField()  # Referred user's user_id
+    from_name = serializers.SerializerMethodField()  # Referred user's first_name + last_name
+    linked_username = serializers.SerializerMethodField()  # Referred user's user_id
     amount = serializers.SerializerMethodField()    # Amount from level
     payout_amount = serializers.SerializerMethodField()  # Payout amount
     transaction_fee = serializers.SerializerMethodField()  # Transaction fee
@@ -290,20 +290,23 @@ class PaymentReportSerializer(serializers.ModelSerializer):
         return data
 
     def get_from_user(self, obj):
-        """Get the current user's full name."""
-        user = getattr(obj, 'user', None)
-        if not user:
-            return 'Unknown'
-        full_name = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip()
-        return full_name if full_name else 'Unknown'
-
-    def get_username(self, obj):
         """Get the current user's user_id."""
         user = getattr(obj, 'user', None)
         return getattr(user, 'user_id', 'N/A') if user else 'N/A'
 
+    def get_username(self, obj):
+        """Get the referred user's user_id (assuming linked_user_id is the referred user)."""
+        linked_user_id = getattr(obj, 'linked_user_id', None)
+        if linked_user_id:
+            try:
+                linked_user = CustomUser.objects.get(user_id=linked_user_id)
+                return getattr(linked_user, 'user_id', 'Unknown')
+            except ObjectDoesNotExist:
+                return 'Unknown'
+        return 'N/A'
+
     def get_from_name(self, obj):
-        """Get the linked user's full name."""
+        """Get the referred user's full name (assuming linked_user_id is the referred user)."""
         linked_user_id = getattr(obj, 'linked_user_id', None)
         if linked_user_id:
             try:
@@ -315,7 +318,7 @@ class PaymentReportSerializer(serializers.ModelSerializer):
         return 'N/A'
 
     def get_linked_username(self, obj):
-        """Get the linked user's user_id."""
+        """Get the referred user's user_id (assuming linked_user_id is the referred user)."""
         linked_user_id = getattr(obj, 'linked_user_id', None)
         if linked_user_id:
             try:
@@ -335,7 +338,6 @@ class PaymentReportSerializer(serializers.ModelSerializer):
 
     def get_transaction_fee(self, obj):
         """Get the transaction fee (assuming it's a custom field or calculated)."""
-        # Placeholder: Replace with actual logic if transaction_fee is stored or calculable
         return getattr(obj, 'transaction_fee', 0) if hasattr(obj, 'transaction_fee') else 0
 
     def get_status(self, obj):
@@ -361,10 +363,10 @@ class PaymentReportSerializer(serializers.ModelSerializer):
 
 
 class BonusSummarySerializer(serializers.ModelSerializer):
-    from_user = serializers.SerializerMethodField()  # Current user's first_name + last_name
-    from_name = serializers.SerializerMethodField()  # Linked user's first_name + last_name
-    username = serializers.SerializerMethodField()  # Current user's user_id
-    linked_username = serializers.SerializerMethodField()  # Linked user's user_id
+    from_user = serializers.SerializerMethodField()  # Current user's user_id
+    from_name = serializers.SerializerMethodField()  # Referred user's first_name + last_name
+    username = serializers.SerializerMethodField()  # Referred user's user_id
+    linked_username = serializers.SerializerMethodField()  # Referred user's user_id
     bonus_amount = serializers.SerializerMethodField()  # Bonus received
     status = serializers.SerializerMethodField()
     requested_date = serializers.SerializerMethodField()  # Requested date
@@ -385,15 +387,12 @@ class BonusSummarySerializer(serializers.ModelSerializer):
         return data
 
     def get_from_user(self, obj):
-        """Get the current user's full name."""
+        """Get the current user's user_id."""
         user = getattr(obj, 'user', None)
-        if not user:
-            return 'Unknown'
-        full_name = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip()
-        return full_name if full_name else 'Unknown'
+        return getattr(user, 'user_id', 'N/A') if user else 'N/A'
 
     def get_from_name(self, obj):
-        """Get the linked user's full name."""
+        """Get the referred user's full name (assuming linked_user_id is the referred user)."""
         linked_user_id = getattr(obj, 'linked_user_id', None)
         if linked_user_id:
             try:
@@ -405,12 +404,18 @@ class BonusSummarySerializer(serializers.ModelSerializer):
         return 'N/A'
 
     def get_username(self, obj):
-        """Get the current user's user_id."""
-        user = getattr(obj, 'user', None)
-        return getattr(user, 'user_id', 'N/A') if user else 'N/A'
+        """Get the referred user's user_id (assuming linked_user_id is the referred user)."""
+        linked_user_id = getattr(obj, 'linked_user_id', None)
+        if linked_user_id:
+            try:
+                linked_user = CustomUser.objects.get(user_id=linked_user_id)
+                return getattr(linked_user, 'user_id', 'Unknown')
+            except ObjectDoesNotExist:
+                return 'Unknown'
+        return 'N/A'
 
     def get_linked_username(self, obj):
-        """Get the linked user's user_id."""
+        """Get the referred user's user_id (assuming linked_user_id is the referred user)."""
         linked_user_id = getattr(obj, 'linked_user_id', None)
         if linked_user_id:
             try:
@@ -447,10 +452,10 @@ class BonusSummarySerializer(serializers.ModelSerializer):
 
 
 class LevelUsersSerializer(serializers.ModelSerializer):
-    from_user = serializers.SerializerMethodField()  # Current user's first_name + last_name
-    from_name = serializers.SerializerMethodField()  # Linked user's first_name + last_name
-    username = serializers.SerializerMethodField()  # Current user's user_id
-    linked_username = serializers.SerializerMethodField()  # Linked user's user_id
+    from_user = serializers.SerializerMethodField()  # Current user's user_id
+    from_name = serializers.SerializerMethodField()  # Referred user's first_name + last_name
+    username = serializers.SerializerMethodField()  # Referred user's user_id
+    linked_username = serializers.SerializerMethodField()  # Referred user's user_id
     amount = serializers.SerializerMethodField()    # Amount from level
     status = serializers.SerializerMethodField()    # Converted status
     level = serializers.SerializerMethodField()    # Level name
@@ -473,15 +478,12 @@ class LevelUsersSerializer(serializers.ModelSerializer):
         return data
 
     def get_from_user(self, obj):
-        """Get the current user's full name."""
+        """Get the current user's user_id."""
         user = getattr(obj, 'user', None)
-        if not user:
-            return 'Unknown'
-        full_name = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip()
-        return full_name if full_name else 'Unknown'
+        return getattr(user, 'user_id', 'N/A') if user else 'N/A'
 
     def get_from_name(self, obj):
-        """Get the linked user's full name."""
+        """Get the referred user's full name (assuming linked_user_id is the referred user)."""
         linked_user_id = getattr(obj, 'linked_user_id', None)
         if linked_user_id:
             try:
@@ -493,12 +495,18 @@ class LevelUsersSerializer(serializers.ModelSerializer):
         return 'N/A'
 
     def get_username(self, obj):
-        """Get the current user's user_id."""
-        user = getattr(obj, 'user', None)
-        return getattr(user, 'user_id', 'N/A') if user else 'N/A'
+        """Get the referred user's user_id (assuming linked_user_id is the referred user)."""
+        linked_user_id = getattr(obj, 'linked_user_id', None)
+        if linked_user_id:
+            try:
+                linked_user = CustomUser.objects.get(user_id=linked_user_id)
+                return getattr(linked_user, 'user_id', 'Unknown')
+            except ObjectDoesNotExist:
+                return 'Unknown'
+        return 'N/A'
 
     def get_linked_username(self, obj):
-        """Get the linked user's user_id."""
+        """Get the referred user's user_id (assuming linked_user_id is the referred user)."""
         linked_user_id = getattr(obj, 'linked_user_id', None)
         if linked_user_id:
             try:
@@ -551,4 +559,3 @@ class LevelUsersSerializer(serializers.ModelSerializer):
             if representation.get(field) is None:
                 representation[field] = 'N/A' if field not in ['amount', 'requested_date', 'total'] else 0 if field in ['amount', 'total'] else None
         return representation
-

@@ -433,7 +433,7 @@ class SendRequestReport(APIView):
             elif status.lower() == "pending":
                 queryset = queryset.exclude(status='paid')
         if user_id:
-            queryset = queryset.filter(user__user_id__iexact=user_id)
+            queryset = queryset.filter(user__user_id__icontains=user_id)
         if start_date:
             queryset = queryset.filter(requested_date__date__gte=start_date)
         if end_date:
@@ -609,7 +609,7 @@ class AUCReport(APIView):
             elif status.lower() == "pending":
                 queryset = queryset.exclude(status='paid')
         if user_id:
-            queryset = queryset.filter(user__user_id__iexact=user_id)
+            queryset = queryset.filter(user__user_id__icontains=user_id)
         if start_date:
             queryset = queryset.filter(requested_date__date__gte=start_date)
         if end_date:
@@ -1112,6 +1112,7 @@ class LevelUsersReport(APIView):
         start_date = request.query_params.get("start_date")
         end_date = request.query_params.get("end_date")
         limit = request.query_params.get("limit")
+        from_user = request.query_params.get("from_user")
         export = request.query_params.get("export")  # 'csv', 'pdf', 'xlsx'
 
         # Filters
@@ -1137,7 +1138,8 @@ class LevelUsersReport(APIView):
             queryset = queryset.filter(requested_date__date__gte=start_date)
         if end_date:
             queryset = queryset.filter(requested_date__date__lte=end_date)
-
+        if from_user:
+            queryset = queryset.filter(user__user_id__icontains=from_user)
 
         # Search filter
         search = request.query_params.get('search', '')
