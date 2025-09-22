@@ -1,21 +1,24 @@
-from django_filters import rest_framework as filters
+from django_filters import FilterSet, ChoiceFilter, CharFilter
+from django.db.models import Q, Value
+from django.db.models.functions import Concat
+from django.db.models.fields import CharField
+from datetime import date, timedelta
 from level.models import UserLevel
-from datetime import date, timedelta, datetime
 
-class PaymentFilter(filters.FilterSet):
-    status = filters.ChoiceFilter(
+class PaymentFilter(FilterSet):
+    status = ChoiceFilter(
         choices=UserLevel._meta.get_field('status').choices
     )
-    date_filter = filters.ChoiceFilter(
+    date_filter = ChoiceFilter(
         method='filter_by_period',
         choices=(
             ('today', 'Today'),
-            ('this_week', 'This Week'),  # Changed from last_week to this_week
-            ('this_month', 'This Month'),  # Changed from last_month to this_month
+            ('this_week', 'This Week'),
+            ('this_month', 'This Month'),
             ('this_year', 'This Year'),
         )
     )
-    search = filters.CharFilter(method='filter_by_search', label='Search')
+    search = CharFilter(method='filter_by_search', label='Search')
 
     def filter_by_period(self, queryset, name, value):
         today = date.today()
@@ -36,12 +39,15 @@ class PaymentFilter(filters.FilterSet):
     def filter_by_search(self, queryset, name, value):
         if not value:
             return queryset
+        # Annotate only the current user's full name for searching
+        queryset = queryset.annotate(
+            from_user_full=Concat('user__first_name', Value(' '), 'user__last_name', output_field=CharField())
+        )
         return queryset.filter(
-            Q(user__email__icontains=value) |
             Q(user__user_id__icontains=value) |
             Q(level__name__icontains=value) |
-            Q(status__icontains=value)
-        )
+            Q(from_user_full__icontains=value)
+        ).distinct()
 
     class Meta:
         model = UserLevel
