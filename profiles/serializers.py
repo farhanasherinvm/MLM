@@ -300,11 +300,12 @@ class AdminUserListSerializer(serializers.ModelSerializer):
     username = serializers.SerializerMethodField()
     profile_image = serializers.SerializerMethodField()
     level = serializers.SerializerMethodField()
-    status= serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
+    date_of_joining = serializers.SerializerMethodField()
 
     class Meta:
         model = CustomUser
-        fields = ["username", "user_id", "level", "profile_image", "status"]
+        fields = ["username", "user_id", "level", "profile_image", "status", "date_of_joining"]
 
     def get_username(self, obj):
         first = getattr(obj, "first_name", "") or ""
@@ -336,10 +337,16 @@ class AdminUserListSerializer(serializers.ModelSerializer):
             return level
         except Exception:
             return 0
-        
+
     def get_status(self, obj):
         return "Active" if obj.is_active else "Blocked"
 
+    def get_date_of_joining(self, obj):
+        doj = getattr(obj, "date_of_joining", None)
+        if doj:
+            # format as YYYY-MM-DD
+            return doj.strftime("%Y-%m-%d")
+        return None
 class AdminUserDetailSerializer(serializers.ModelSerializer):
     profile = ProfileSerializer(required=False)
     kyc = KYCSerializer(required=False)
