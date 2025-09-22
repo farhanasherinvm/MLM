@@ -11,7 +11,7 @@ from django.db.models import Q
 from datetime import datetime
 from reportlab.lib.pagesizes import A4
 from django.http import FileResponse
-
+from django.shortcuts import get_object_or_404
 from .models import *
 from .serializers import (
     RegistrationSerializer, LoginSerializer,
@@ -193,27 +193,46 @@ class UploadReceiptView(APIView):
       
 class AdminVerifyPaymentView(APIView):
     permission_classes = [IsProjectAdmin]
+
+    def get(self, request, *args, **kwargs):
+        """List all pending payments"""
+        pending = Payment.objects.filter(status="Pending")
+        data = [
+            {
+                "id": p.id,
+                "amount": str(p.amount),
+                "status": p.status,
+                "created_at": p.created_at.strftime("%Y-%m-%d %H:%M"),
+                "receipt": request.build_absolute_uri(p.receipt.url) if p.receipt else None,
+                "user_email": p.get_registration_data().get("email"),
+            }
+            for p in pending
+        ]
+        return Response({"count": pending.count(), "pending_payments": data})
+
     def post(self, request, payment_id, *args, **kwargs):
-        try:
-            payment = Payment.objects.get(id=payment_id)
-        except Payment.DoesNotExist:
-            return Response({"error": "Payment not found"}, status=404)
+        """Verify or mark payment failed"""
+        payment = get_object_or_404(Payment, id=payment_id)
 
         status_choice = request.data.get("status")
         if status_choice not in ["Verified", "Failed"]:
             return Response({"error": "Invalid status"}, status=400)
 
-        payment.status = status_choice
+        if status_choice == "Failed":
+            payment.status = "Failed"
+            payment.save()
+            return Response({"message": "Payment marked as Failed"}, status=200)
+
+        # Verified flow
+        payment.status = "Verified"
         payment.save()
 
-        if status_choice == "Verified" and not payment.user:
+        if not payment.user:
             reg_data = payment.get_registration_data()
             sponsor_id = reg_data.get("sponsor_id")
             if sponsor_id and not validate_sponsor(sponsor_id):
                 return Response({"error": "Sponsor already has 2 referrals. Cannot assign this sponsor."}, status=400)
 
-
-            # Check if a user with this email already exists
             user, created = CustomUser.objects.get_or_create(
                 email=reg_data["email"],
                 defaults={
@@ -230,7 +249,6 @@ class AdminVerifyPaymentView(APIView):
                     "upi_number": reg_data["upi_number"],
                 }
             )
-
             if created:
                 user.set_password(reg_data["password"])
                 user.save()
@@ -238,7 +256,6 @@ class AdminVerifyPaymentView(APIView):
             payment.user = user
             payment.save()
 
-            # Send email only if newly created
             if created:
                 send_mail(
                     subject="Your MLM User ID",
@@ -252,7 +269,7 @@ class AdminVerifyPaymentView(APIView):
                 "user_id": user.user_id
             })
 
-        return Response({"message": f"Payment {status_choice} successfully"})
+        return Response({"message": "Payment verified successfully"})
 
     
 class AdminAccountAPIView(APIView):
