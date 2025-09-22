@@ -616,13 +616,7 @@ class AUCReport(APIView):
                 Q(status__icontains=search)
             )
 
-        # Limit
-        if limit:
-            try:
-                limit = int(limit)
-                queryset = queryset[:limit]
-            except ValueError:
-                pass
+        
         start_date = request.query_params.get("start_date")
         end_date = request.query_params.get("end_date")
         if start_date:
@@ -639,7 +633,13 @@ class AUCReport(APIView):
                 logger.error(f"Invalid end_date format: {end_date}")
 
         # Pagination
-
+        # Limit
+        if limit:
+            try:
+                limit = int(limit)
+                queryset = queryset[:limit]
+            except ValueError:
+                pass
 
         # Export options
         if export == "csv":
@@ -797,13 +797,7 @@ class PaymentReport(APIView):
                 Q(status__icontains=search)
             )
 
-        # Limit
-        if limit:
-            try:
-                limit = int(limit)
-                queryset = queryset[:limit]
-            except ValueError:
-                pass
+       
 
         start_date = request.query_params.get("start_date")
         end_date = request.query_params.get("end_date")
@@ -819,6 +813,14 @@ class PaymentReport(APIView):
                 queryset = queryset.filter(requested_date__date__lte=end_date)
             except ValueError:
                 logger.error(f"Invalid end_date format: {end_date}")
+
+         # Limit
+        if limit:
+            try:
+                limit = int(limit)
+                queryset = queryset[:limit]
+            except ValueError:
+                pass
 
         # Export options
         if export == "csv":
