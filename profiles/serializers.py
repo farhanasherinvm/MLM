@@ -3,6 +3,7 @@ from .models import Profile,KYC
 from users.models import CustomUser, UserAccountDetails
 from users.serializers import UserAccountDetailsSerializer
 
+
 def get_all_referrals(user_obj, max_level=6):
     """
     Returns a list of all referrals under a user up to `max_level` levels.
@@ -21,6 +22,10 @@ def get_all_referrals(user_obj, max_level=6):
         current_level += 1
 
     return referrals
+
+
+
+
 class ReferralListSerializer(serializers.ModelSerializer):
     level = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
