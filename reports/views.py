@@ -16,7 +16,7 @@ from level.serializers import PaymentReportSerializer
 from .filters import PaymentFilter
 from .serializers import DashboardReportSerializer, LevelPaymentReportSerializer, SendRequestReportSerializer, AUCReportSerializer, PaymentReportSerializer, LevelUsersSerializer,BonusSummarySerializer
 from users.models import CustomUser
-from django.db.models import Count, Sum, Q
+from django.db.models import Count, Sum, Q,Value, CharField
 from django.utils import timezone
 from datetime import timedelta
 from rest_framework.views import APIView
@@ -24,6 +24,7 @@ from openpyxl import Workbook
 from rest_framework.pagination import PageNumberPagination
 import logging
 from datetime import datetime
+from django.db.models.functions import Concat
 
 logger = logging.getLogger(__name__)
 
@@ -408,8 +409,7 @@ class SendRequestReport(APIView):
         email = request.query_params.get("email")
         status = request.query_params.get("status")
         user_id = request.query_params.get("user_id")
-        first_name = request.query_params.get("first_name")
-        last_name = request.query_params.get("last_name")
+        username = request.query_params.get("username")
         start_date = request.query_params.get("start_date")
         end_date = request.query_params.get("end_date")
         limit = request.query_params.get("limit")
@@ -418,10 +418,15 @@ class SendRequestReport(APIView):
         # Filters
         if email:
             queryset = queryset.filter(user__email__icontains=email.lower())
-        if first_name:
-            queryset = queryset.filter(user__first_name__icontains=first_name.lower())
-        if last_name:
-            queryset = queryset.filter(user__last_name__icontains=last_name.lower())
+        if username:
+            # Annotate with a concatenated username (first_name + space + last_name)
+            queryset = queryset.annotate(
+                full_username=Concat('user__first_name', Value(' '), 'user__last_name', output_field=CharField())
+            ).filter(
+                Q(full_username__icontains=username.lower()) |
+                Q(user__first_name__icontains=username.lower()) |
+                Q(user__last_name__icontains=username.lower())
+            )
         if status and status.lower() != "all":
             if status.lower() == "completed":
                 queryset = queryset.filter(status='paid')  
@@ -576,11 +581,11 @@ class AUCReport(APIView):
         queryset = UserLevel.objects.select_related('user', 'level').filter(user=request.user).order_by('-approved_at')
         
         # Query params
+
         email = request.query_params.get("email")
         status = request.query_params.get("status")
         user_id = request.query_params.get("user_id")
-        first_name = request.query_params.get("first_name")
-        last_name = request.query_params.get("last_name")
+        username = request.query_params.get("username")
         start_date = request.query_params.get("start_date")
         end_date = request.query_params.get("end_date")
         limit = request.query_params.get("limit")
@@ -589,13 +594,18 @@ class AUCReport(APIView):
         # Filters
         if email:
             queryset = queryset.filter(user__email__icontains=email.lower())
-        if first_name:
-            queryset = queryset.filter(user__first_name__icontains=first_name.lower())
-        if last_name:
-            queryset = queryset.filter(user__last_name__icontains=last_name.lower())
+        if username:
+            # Annotate with a concatenated username (first_name + space + last_name)
+            queryset = queryset.annotate(
+                full_username=Concat('user__first_name', Value(' '), 'user__last_name', output_field=CharField())
+            ).filter(
+                Q(full_username__icontains=username.lower()) |
+                Q(user__first_name__icontains=username.lower()) |
+                Q(user__last_name__icontains=username.lower())
+            )
         if status and status.lower() != "all":
             if status.lower() == "completed":
-                queryset = queryset.filter(status='paid')
+                queryset = queryset.filter(status='paid')  
             elif status.lower() == "pending":
                 queryset = queryset.exclude(status='paid')
         if user_id:
@@ -604,6 +614,7 @@ class AUCReport(APIView):
             queryset = queryset.filter(requested_date__date__gte=start_date)
         if end_date:
             queryset = queryset.filter(requested_date__date__lte=end_date)
+
 
         # Search filter
         search = request.query_params.get('search', '')
@@ -757,12 +768,11 @@ class PaymentReport(APIView):
     def get(self, request):
         queryset = UserLevel.objects.select_related('user', 'level').filter(user=request.user).order_by('-requested_date')
         
-        # Query params
+ # Query params
         email = request.query_params.get("email")
         status = request.query_params.get("status")
         user_id = request.query_params.get("user_id")
-        first_name = request.query_params.get("first_name")
-        last_name = request.query_params.get("last_name")
+        username = request.query_params.get("username")
         start_date = request.query_params.get("start_date")
         end_date = request.query_params.get("end_date")
         limit = request.query_params.get("limit")
@@ -771,10 +781,15 @@ class PaymentReport(APIView):
         # Filters
         if email:
             queryset = queryset.filter(user__email__icontains=email.lower())
-        if first_name:
-            queryset = queryset.filter(user__first_name__icontains=first_name.lower())
-        if last_name:
-            queryset = queryset.filter(user__last_name__icontains=last_name.lower())
+        if username:
+            # Annotate with a concatenated username (first_name + space + last_name)
+            queryset = queryset.annotate(
+                full_username=Concat('user__first_name', Value(' '), 'user__last_name', output_field=CharField())
+            ).filter(
+                Q(full_username__icontains=username.lower()) |
+                Q(user__first_name__icontains=username.lower()) |
+                Q(user__last_name__icontains=username.lower())
+            )
         if status and status.lower() != "all":
             if status.lower() == "completed":
                 queryset = queryset.filter(status='paid')  
@@ -786,6 +801,7 @@ class PaymentReport(APIView):
             queryset = queryset.filter(requested_date__date__gte=start_date)
         if end_date:
             queryset = queryset.filter(requested_date__date__lte=end_date)
+
 
         # Search filter
         search = request.query_params.get('search', '')
@@ -1088,12 +1104,11 @@ class LevelUsersReport(APIView):
     def get(self, request):
         queryset = UserLevel.objects.select_related('user', 'level').filter(user=request.user).order_by('-approved_at')
         
-        # Query params
+    # Query params
         email = request.query_params.get("email")
         status = request.query_params.get("status")
         user_id = request.query_params.get("user_id")
-        first_name = request.query_params.get("first_name")
-        last_name = request.query_params.get("last_name")
+        username = request.query_params.get("username")
         start_date = request.query_params.get("start_date")
         end_date = request.query_params.get("end_date")
         limit = request.query_params.get("limit")
@@ -1102,10 +1117,15 @@ class LevelUsersReport(APIView):
         # Filters
         if email:
             queryset = queryset.filter(user__email__icontains=email.lower())
-        if first_name:
-            queryset = queryset.filter(user__first_name__icontains=first_name.lower())
-        if last_name:
-            queryset = queryset.filter(user__last_name__icontains=last_name.lower())
+        if username:
+            # Annotate with a concatenated username (first_name + space + last_name)
+            queryset = queryset.annotate(
+                full_username=Concat('user__first_name', Value(' '), 'user__last_name', output_field=CharField())
+            ).filter(
+                Q(full_username__icontains=username.lower()) |
+                Q(user__first_name__icontains=username.lower()) |
+                Q(user__last_name__icontains=username.lower())
+            )
         if status and status.lower() != "all":
             if status.lower() == "completed":
                 queryset = queryset.filter(status='paid')  
@@ -1117,6 +1137,7 @@ class LevelUsersReport(APIView):
             queryset = queryset.filter(requested_date__date__gte=start_date)
         if end_date:
             queryset = queryset.filter(requested_date__date__lte=end_date)
+
 
         # Search filter
         search = request.query_params.get('search', '')
