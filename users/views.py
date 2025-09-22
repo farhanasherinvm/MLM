@@ -663,8 +663,8 @@ class AdminExportUsersPDFView(APIView):
     def get(self, request, *args, **kwargs):
         users = CustomUser.objects.select_related("profile").all()
         users = apply_search_and_filters(users, request)
-        return export_users_pdf(users, filename="admin_users_export.pdf", title="Admin Users Report")    
-    
+        return export_users_pdf(users, filename="admin_users_export.pdf", title="Admin Users Report")
+     
 class AdminViewProfileImageView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -682,7 +682,6 @@ class AdminViewProfileImageView(APIView):
 
         return FileResponse(profile.profile_image.open("rb"), content_type="image/png")
     
-
 class AdminNetworkView(APIView):
     """Admin view for network users, counts, search, filter, and export"""
     permission_classes = [IsProjectAdmin]
@@ -721,7 +720,7 @@ class AdminNetworkView(APIView):
                 "blocked_count": blocked_count,
             },
             "users": serializer.data
-        })    
+        })  
 class GetUserFullNameView(APIView):
     permission_classes = [AllowAny]
 
