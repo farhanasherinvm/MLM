@@ -29,9 +29,9 @@ logger = logging.getLogger(__name__)
 
 # Existing PaymentReportViewSet (unchanged for now)
 class PaymentReportViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = UserLevel.objects.all().order_by('-approved_at')
+    queryset = UserLevel.objects.all().order_by('-requested_date')  
     serializer_class = PaymentReportSerializer
-    permission_classes = [IsAdminUser]  # Uncomment if admin access is required
+    permission_classes = [IsAdminUser]
     filter_backends = [DjangoFilterBackend]
     filterset_class = PaymentFilter
 
