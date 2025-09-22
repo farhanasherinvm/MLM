@@ -47,6 +47,7 @@ class UserLevel(models.Model):
     payment_mode = models.CharField(max_length=50, default='Razorpay', blank=True)
     transaction_id = models.CharField(max_length=100, null=True, blank=True)
     approved_at = models.DateTimeField(null=True, blank=True)
+    requested_date = models.DateTimeField(null=True, blank=True)
     status = models.CharField(
         max_length=20,
         choices=[
@@ -68,6 +69,14 @@ class UserLevel(models.Model):
 
     def __str__(self):
         return f"{self.user.user_id} - {self.level.name}"
+
+
+    def save(self, *args, **kwargs):
+        if self.pk:  # Check if the instance already exists
+            original = UserLevel.objects.get(pk=self.pk)
+            if original.status != self.status:
+                self.requested_date = timezone.now()
+        super().save(*args, **kwargs) 
 
 class LevelPayment(models.Model):
     PAYMENT_STATUS_CHOICES = [

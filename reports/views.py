@@ -6,7 +6,7 @@ from django.http import HttpResponse
 import csv
 import io
 from reportlab.pdfgen import canvas
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph,Spacer
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.pagesizes import A4
@@ -21,8 +21,9 @@ from django.utils import timezone
 from datetime import timedelta
 from rest_framework.views import APIView
 from openpyxl import Workbook
-
+from rest_framework.pagination import PageNumberPagination
 import logging
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ class PaymentReportViewSet(viewsets.ReadOnlyModelViewSet):
         response = HttpResponse(content_type='text/csv')
         response['Content-Disposition'] = 'attachment; filename="payment_report.csv"'
         writer = csv.writer(response)
-        writer.writerow(['Username', 'Level', 'Amount', 'Payment_Mode', 'Transaction_ID', 'Status', 'Approved_At'])
+        writer.writerow(['Username', 'Level', 'Amount', 'Payment_Mode', 'Transaction_ID', 'Status', 'requested_date'])
         for obj in queryset:
             writer.writerow([
                 getattr(obj.user, 'email', getattr(obj.user, 'user_id', 'Unknown')),
@@ -60,7 +61,7 @@ class PaymentReportViewSet(viewsets.ReadOnlyModelViewSet):
                 obj.payment_mode,
                 obj.transaction_id or '',
                 obj.status,
-                obj.approved_at.strftime('%Y-%m-%d %H:%M:%S') if obj.approved_at else ''
+                obj.requested_date.strftime('%Y-%m-%d %H:%M:%S') if obj.requested_date else ''
             ])
         return response
 
@@ -74,7 +75,7 @@ class PaymentReportViewSet(viewsets.ReadOnlyModelViewSet):
         y -= 20
         p.drawString(100, y, f"Generated: {timezone.now().strftime('%Y-%m-%d %H:%M:%S')} IST")
         y -= 40
-        headers = ['Username', 'Level', 'Amount', 'Payment_Mode', 'Transaction_ID', 'Status', 'Approved_At']
+        headers = ['Username', 'Level', 'Amount', 'Payment_Mode', 'Transaction_ID', 'Status', 'requested_date']
         for i, header in enumerate(headers):
             p.drawString(100 + i * 80, y, header)
         y -= 20
@@ -86,7 +87,7 @@ class PaymentReportViewSet(viewsets.ReadOnlyModelViewSet):
                 obj.payment_mode,
                 obj.transaction_id or '',
                 obj.status,
-                obj.approved_at.strftime('%Y-%m-%d %H:%M:%S') if obj.approved_at else ''
+                obj.requested_date.strftime('%Y-%m-%d %H:%M:%S') if obj.requested_date else ''
             ]
             for i, value in enumerate(row):
                 p.drawString(100 + i * 80, y, value)
@@ -256,8 +257,8 @@ class DashboardReportViewSet(viewsets.ViewSet):
         logger.debug(f"New user registrations count: {len(new_user_registrations)}")
 
         # Latest report: Data for latest help requests and payment
-        latest_refer_help = UserLevel.objects.filter(level__name='Refer Help').order_by('-approved_at').first()
-        latest_level_help = UserLevel.objects.filter(level__name__contains='Level').order_by('-approved_at').first()
+        latest_refer_help = UserLevel.objects.filter(level__name='Refer Help').order_by('-requested_date').first()
+        latest_level_help = UserLevel.objects.filter(level__name__contains='Level').order_by('-requested_date').first()
         latest_level_payment = LevelPayment.objects.order_by('-created_at').first()
 
         latest_report = {
@@ -268,7 +269,7 @@ class DashboardReportViewSet(viewsets.ViewSet):
                 'first_name': latest_refer_help.user.first_name if latest_refer_help else 'N/A',
                 'last_name': latest_refer_help.user.last_name if latest_refer_help else 'N/A',
                 'amount': latest_refer_help.level.amount if latest_refer_help else 0,
-                'time': latest_refer_help.approved_at.strftime('%Y-%m-%d %H:%M:%S') if latest_refer_help and latest_refer_help.approved_at else 'N/A'
+                'time': latest_refer_help.requested_date.strftime('%Y-%m-%d %H:%M:%S') if latest_refer_help and latest_refer_help.requested_date else 'N/A'
             } if latest_refer_help else {
                 'name': 'N/A', 'email_id': 'N/A', 'first_name': 'N/A', 'last_name': 'N/A', 'amount': 0, 'time': 'N/A'
             },
@@ -342,6 +343,8 @@ class UserReportViewSet(viewsets.ViewSet):
 
 # Existing UserLatestReportView (unchanged)
 class UserLatestReportView(APIView):
+    pagination_class = PageNumberPagination
+    pagination_class.page_size = 10
     def get(self, request, *args, **kwargs):
         logger.debug("User latest report endpoint hit for user %s", request.user.user_id)
         if not request.user.is_authenticated:
@@ -350,10 +353,10 @@ class UserLatestReportView(APIView):
         user = request.user
         # Find users referred by the current user using sponsor_id
         referred_users = CustomUser.objects.filter(sponsor_id=user.user_id)
-        user_levels = UserLevel.objects.filter(user__in=[user] + list(referred_users)).order_by('-approved_at')
+        user_levels = UserLevel.objects.filter(user__in=[user] + list(referred_users)).order_by('-requested_date')
 
         latest_refer_help = user_levels.filter(level__name='Refer Help').first()
-        latest_level_help = user_levels.filter(level__name__contains='Level').order_by('-approved_at').first()
+        latest_level_help = user_levels.filter(level__name__contains='Level').order_by('-requested_date').first()
         latest_level_payment = LevelPayment.objects.filter(user_level__user__in=[user] + list(referred_users)).order_by('-created_at').first()
 
         latest_report = {
@@ -364,7 +367,7 @@ class UserLatestReportView(APIView):
                 'first_name': latest_refer_help.user.first_name if latest_refer_help else '',
                 'last_name': latest_refer_help.user.last_name if latest_refer_help else '',
                 'amount': latest_refer_help.level.amount if latest_refer_help else 1000.0,
-                'time': latest_refer_help.approved_at.strftime('%Y-%m-%d %H:%M:%S') if latest_refer_help and latest_refer_help.approved_at else 'N/A',
+                'time': latest_refer_help.requested_date.strftime('%Y-%m-%d %H:%M:%S') if latest_refer_help and latest_refer_help.requested_date else 'N/A',
                 'user_id': latest_refer_help.user.user_id if latest_refer_help else 'N/A'
             } if latest_refer_help else {
                 'name': '', 'email_id': 'admin@gmail.com', 'first_name': '', 'last_name': '', 'amount': 1000.0, 'time': 'N/A', 'user_id': 'N/A'
@@ -376,7 +379,7 @@ class UserLatestReportView(APIView):
                 'first_name': latest_level_help.user.first_name if latest_level_help else '',
                 'last_name': latest_level_help.user.last_name if latest_level_help else '',
                 'amount': latest_level_help.level.amount if latest_level_help else 200.0,
-                'time': latest_level_help.approved_at.strftime('%Y-%m-%d %H:%M:%S') if latest_level_help and latest_level_help.approved_at else 'N/A',
+                'time': latest_level_help.requested_date.strftime('%Y-%m-%d %H:%M:%S') if latest_level_help and latest_level_help.requested_date else 'N/A',
                 'user_id': latest_level_help.user.user_id if latest_level_help else 'N/A'
             } if latest_level_help else {
                 'name': '', 'email_id': 'admin@gmail.com', 'first_name': '', 'last_name': '', 'amount': 200.0, 'time': 'N/A', 'user_id': 'N/A'
@@ -395,6 +398,8 @@ class UserLatestReportView(APIView):
 # New Report Views
 class SendRequestReport(APIView):
     # permission_classes = [IsAdminUser]
+    pagination_class = PageNumberPagination
+    pagination_class.page_size = 10
 
     def get(self, request):
         queryset = UserLevel.objects.select_related('user', 'level').filter(user=request.user).order_by('-approved_at')
@@ -425,9 +430,9 @@ class SendRequestReport(APIView):
         if user_id:
             queryset = queryset.filter(user__user_id__iexact=user_id)
         if start_date:
-            queryset = queryset.filter(approved_at__date__gte=start_date)
+            queryset = queryset.filter(requested_date__date__gte=start_date)
         if end_date:
-            queryset = queryset.filter(approved_at__date__lte=end_date)
+            queryset = queryset.filter(requested_date__date__lte=end_date)
 
         # Search filter
         search = request.query_params.get('search', '')
@@ -436,9 +441,25 @@ class SendRequestReport(APIView):
                 Q(user__first_name__icontains=search) |
                 Q(user__last_name__icontains=search) |
                 Q(user__user_id__icontains=search) |
+                Q(user__user_id__icontains=search) |
                 Q(level__name__icontains=search) |
                 Q(status__icontains=search)
             )
+
+        start_date = request.query_params.get("start_date")
+        end_date = request.query_params.get("end_date")
+        if start_date:
+            try:
+                start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+                queryset = queryset.filter(requested_date__date__gte=start_date)
+            except ValueError:
+                logger.error(f"Invalid start_date format: {start_date}")
+        if end_date:
+            try:
+                end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+                queryset = queryset.filter(requested_date__date__lte=end_date)
+            except ValueError:
+                logger.error(f"Invalid end_date format: {end_date}")
 
         # Limit
         if limit:
@@ -456,14 +477,19 @@ class SendRequestReport(APIView):
         elif export == "xlsx":
             return self.export_xlsx(queryset, 'send_request_report')
 
-        serializer = SendRequestReportSerializer(queryset, many=True)
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(queryset, request)
+        if page is not None:
+            serializer = SendRequestReportSerializer(page, many=True, context={'request': request})
+            return paginator.get_paginated_response(serializer.data)
+        serializer = SendRequestReportSerializer(queryset, many=True, context={'request': request})
         return Response(serializer.data)
 
     def export_csv(self, queryset, filename_prefix):
         response = HttpResponse(content_type="text/csv")
         response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.csv"'
         writer = csv.writer(response)
-        writer.writerow(['From User', 'Username', 'From Name', 'Amount', 'Status', 'Approved At'])
+        writer.writerow(['From User', 'Username', 'From Name', 'Amount', 'Status', 'Requested At'])
         serializer = SendRequestReportSerializer(queryset, many=True)
         for data in serializer.data:
             writer.writerow([
@@ -472,7 +498,7 @@ class SendRequestReport(APIView):
                 data['from_name'],
                 str(data['amount']),
                 data['status'],
-                data['approved_at'] if data['approved_at'] else ''
+                data['requested_date'] if data['requested_date'] else ''
             ])
         return response
 
@@ -492,7 +518,7 @@ class SendRequestReport(APIView):
                 data_item['from_name'],
                 str(data_item['amount']),
                 data_item['status'],
-                data_item['approved_at'] if data_item['approved_at'] else ''
+                data_item['requested_date'] if data_item['requested_date'] else ''
             ])
 
         table = Table(data)
@@ -525,7 +551,7 @@ class SendRequestReport(APIView):
                 data['from_name'],
                 data['amount'],
                 data['status'],
-                data['approved_at'] if data['approved_at'] else ''
+                data['requested_date'] if data['requested_date'] else ''
             ])
         output = io.BytesIO()
         wb.save(output)
@@ -542,6 +568,8 @@ class SendRequestReport(APIView):
 
 
 class AUCReport(APIView):
+    pagination_class = PageNumberPagination
+    pagination_class.page_size = 10
     # permission_classes = [IsAdminUser]
 
     def get(self, request):
@@ -573,9 +601,9 @@ class AUCReport(APIView):
         if user_id:
             queryset = queryset.filter(user__user_id__iexact=user_id)
         if start_date:
-            queryset = queryset.filter(approved_at__date__gte=start_date)
+            queryset = queryset.filter(requested_date__date__gte=start_date)
         if end_date:
-            queryset = queryset.filter(approved_at__date__lte=end_date)
+            queryset = queryset.filter(requested_date__date__lte=end_date)
 
         # Search filter
         search = request.query_params.get('search', '')
@@ -583,6 +611,7 @@ class AUCReport(APIView):
             queryset = queryset.filter(
                 Q(user__first_name__icontains=search) |
                 Q(user__last_name__icontains=search) |
+                Q(user__user_id__icontains=search) |
                 Q(user__user_id__icontains=search) |
                 Q(status__icontains=search)
             )
@@ -594,16 +623,38 @@ class AUCReport(APIView):
                 queryset = queryset[:limit]
             except ValueError:
                 pass
+        start_date = request.query_params.get("start_date")
+        end_date = request.query_params.get("end_date")
+        if start_date:
+            try:
+                start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+                queryset = queryset.filter(requested_date__date__gte=start_date)
+            except ValueError:
+                logger.error(f"Invalid start_date format: {start_date}")
+        if end_date:
+            try:
+                end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+                queryset = queryset.filter(requested_date__date__lte=end_date)
+            except ValueError:
+                logger.error(f"Invalid end_date format: {end_date}")
+
+        # Pagination
+
 
         # Export options
         if export == "csv":
             return self.export_csv(queryset, 'auc_report')
         elif export == "pdf":
             return self.export_pdf(queryset, 'auc_report')
-        elif export == "xlsx":
-            return self.export_xlsx(queryset, 'auc_report')
+        if export == "xlsx":
+            return self.export_xlsx(request, queryset, 'auc_report')
 
-        serializer = AUCReportSerializer(queryset, many=True)
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(queryset, request)
+        if page is not None:
+            serializer = AUCReportSerializer(page, many=True, context={'request': request})
+            return paginator.get_paginated_response(serializer.data)
+        serializer = AUCReportSerializer(queryset, many=True, context={'request': request})
         return Response(serializer.data)
 
     def export_csv(self, queryset, filename_prefix):
@@ -669,12 +720,12 @@ class AUCReport(APIView):
 
         return response
 
-    def export_xlsx(self, queryset, filename_prefix):
+    def export_xlsx(self, request, queryset, filename_prefix):
         wb = Workbook()
         ws = wb.active
         ws.title = "AUCReport"
         ws.append(['From User', 'Username', 'From Name', 'Linked Username', 'Amount', 'Status', 'Date'])
-        serializer = AUCReportSerializer(queryset, many=True)
+        serializer = AUCReportSerializer(queryset, many=True, context={'request': request})  # Pass request to context
         for data in serializer.data:
             ws.append([
                 data['from_user'],
@@ -688,6 +739,7 @@ class AUCReport(APIView):
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
+        timestamp = timezone.now().strftime("%Y%m%d_%H%M%S")  # Define timestamp here
         response = HttpResponse(
             output,
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -698,10 +750,12 @@ class AUCReport(APIView):
 
 
 class PaymentReport(APIView):
+    pagination_class = PageNumberPagination
+    pagination_class.page_size = 10
     # permission_classes = [IsAdminUser]
 
     def get(self, request):
-        queryset = UserLevel.objects.select_related('user', 'level').filter(user=request.user).order_by('-approved_at')
+        queryset = UserLevel.objects.select_related('user', 'level').filter(user=request.user).order_by('-requested_date')
         
         # Query params
         email = request.query_params.get("email")
@@ -729,9 +783,9 @@ class PaymentReport(APIView):
         if user_id:
             queryset = queryset.filter(user__user_id__iexact=user_id)
         if start_date:
-            queryset = queryset.filter(approved_at__date__gte=start_date)
+            queryset = queryset.filter(requested_date__date__gte=start_date)
         if end_date:
-            queryset = queryset.filter(approved_at__date__lte=end_date)
+            queryset = queryset.filter(requested_date__date__lte=end_date)
 
         # Search filter
         search = request.query_params.get('search', '')
@@ -751,6 +805,21 @@ class PaymentReport(APIView):
             except ValueError:
                 pass
 
+        start_date = request.query_params.get("start_date")
+        end_date = request.query_params.get("end_date")
+        if start_date:
+            try:
+                start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+                queryset = queryset.filter(requested_date__date__gte=start_date)
+            except ValueError:
+                logger.error(f"Invalid start_date format: {start_date}")
+        if end_date:
+            try:
+                end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+                queryset = queryset.filter(requested_date__date__lte=end_date)
+            except ValueError:
+                logger.error(f"Invalid end_date format: {end_date}")
+
         # Export options
         if export == "csv":
             return self.export_csv(queryset, 'payment_report')
@@ -759,8 +828,14 @@ class PaymentReport(APIView):
         elif export == "xlsx":
             return self.export_xlsx(queryset, 'payment_report')
 
-        serializer = PaymentReportSerializer(queryset, many=True)
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(queryset, request)
+        if page is not None:
+            serializer = PaymentReportSerializer(page, many=True, context={'request': request})
+            return paginator.get_paginated_response(serializer.data)
+        serializer = PaymentReportSerializer(queryset, many=True, context={'request': request})
         return Response(serializer.data)
+
 
     def export_csv(self, queryset, filename_prefix):
         response = HttpResponse(content_type="text/csv")
@@ -778,7 +853,7 @@ class PaymentReport(APIView):
                 str(data['payout_amount']),
                 str(data['transaction_fee']),
                 data['status'],
-                data['approved_at'] if data['approved_at'] else '',
+                data['requested_date'] if data['requested_date'] else '',
                 str(data['total'])
             ])
         return response
@@ -802,7 +877,7 @@ class PaymentReport(APIView):
                 str(data_item['payout_amount']),
                 str(data_item['transaction_fee']),
                 data_item['status'],
-                data_item['approved_at'] if data_item['approved_at'] else '',
+                data_item['requested_date'] if data_item['requested_date'] else '',
                 str(data_item['total'])
             ])
 
@@ -839,7 +914,7 @@ class PaymentReport(APIView):
                 data['payout_amount'],
                 data['transaction_fee'],
                 data['status'],
-                data['approved_at'] if data['approved_at'] else '',
+                data['requested_date'] if data['requested_date'] else '',
                 data['total']
             ])
         output = io.BytesIO()
@@ -853,176 +928,159 @@ class PaymentReport(APIView):
         return response
 
 class BonusSummary(APIView):
-    # permission_classes = [IsAdminUser]
+    pagination_class = PageNumberPagination
+    pagination_class.page_size = 10
 
     def get(self, request):
-        queryset = CustomUser.objects.filter(is_active=True).prefetch_related('userlevel_set')
-        
-        # Query params
-        email = request.query_params.get("email")
-        status = request.query_params.get("status")
-        user_id = request.query_params.get("user_id")
-        first_name = request.query_params.get("first_name")
-        last_name = request.query_params.get("last_name")
+        # Check for PDF export first
+        export = request.query_params.get("export", "").lower()  # Case-insensitive
+        record_id = request.query_params.get("record_id", None)
+        if export == "pdf" and record_id:
+            try:
+                record = UserLevel.objects.get(id=record_id, user=request.user)
+                queryset = UserLevel.objects.filter(id=record_id)  # Single record queryset
+
+                buffer = io.BytesIO()
+                doc = SimpleDocTemplate(buffer, pagesize=A4)
+                elements = []
+                styles = getSampleStyleSheet()
+                title = f"Invoice for {request.user.first_name} {request.user.last_name} ({request.user.user_id}) - Record ID {record_id} - {timezone.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                elements.append(Paragraph(title, styles["Title"]))
+                elements.append(Spacer(1, 12))
+
+                # Serialize data for the specific record
+                send_request_data = SendRequestReportSerializer(queryset, many=True, context={'request': request}).data
+                auc_report_data = AUCReportSerializer(queryset, many=True, context={'request': request}).data
+                payment_report_data = PaymentReportSerializer(queryset, many=True, context={'request': request}).data
+                level_users_data = LevelUsersSerializer(queryset, many=True, context={'request': request}).data
+
+                # Send Request Report Section
+                elements.append(Paragraph("Send Request Report", styles["Heading2"]))
+                send_data = [['From User', 'Username', 'From Name', 'Amount', 'Status', 'Approved At', 'Payment Method', 'Level']]
+                send_data.extend([[item['from_user'], item['username'], item['from_name'], str(item['amount']), item['status'],
+                                   item['requested_date'] if item['requested_date'] else '', item['payment_method'], item.get('level', '')]
+                                  for item in send_request_data])
+                table = Table(send_data)
+                table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+                ]))
+                elements.append(table)
+                elements.append(Spacer(1, 12))
+
+                # AUC Report Section
+                elements.append(Paragraph("AUC Report", styles["Heading2"]))
+                auc_data = [['From User', 'Username', 'From Name', 'Linked Username', 'Amount', 'Status', 'Date', 'Payment Method']]
+                auc_data.extend([[item['from_user'], item['username'], item['from_name'], item['linked_username'], str(item['amount']),
+                                  item['status'], item['date'] if item['date'] else '', item['payment_method']]
+                                 for item in auc_report_data])
+                table = Table(auc_data)
+                table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+                ]))
+                elements.append(table)
+                elements.append(Spacer(1, 12))
+
+                # Payment Report Section
+                elements.append(Paragraph("Payment Report", styles["Heading2"]))
+                payment_data = [['From User', 'Username', 'From Name', 'Linked Username', 'Amount', 'Payout Amount', 'Transaction Fee',
+                                 'Status', 'Approved At', 'Total']]
+                payment_data.extend([[item['from_user'], item['username'], item['from_name'], item['linked_username'],
+                                     str(item['amount']), str(item['payout_amount']), str(item['transaction_fee']), item['status'],
+                                     item['requested_date'] if item['requested_date'] else '', str(item['total'])]
+                                    for item in payment_report_data])
+                table = Table(payment_data)
+                table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+                ]))
+                elements.append(table)
+                elements.append(Spacer(1, 12))
+
+                # Level Users Report Section
+                elements.append(Paragraph("Level Users Report", styles["Heading2"]))
+                level_data = [['From User', 'Username', 'From Name', 'Linked Username', 'Amount', 'Status', 'Level', 'Approved At',
+                               'Total', 'Payment Method']]
+                level_data.extend([[item['from_user'], item['username'], item['from_name'], item['linked_username'],
+                                   str(item['amount']), item['status'], item['level'],
+                                   item['requested_date'] if item['requested_date'] else '', str(item['total']), item['payment_method']]
+                                  for item in level_users_data])
+                table = Table(level_data)
+                table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+                ]))
+                elements.append(table)
+
+                doc.build(elements)
+                buffer.seek(0)
+                response = HttpResponse(buffer, content_type="application/pdf")
+                timestamp = timezone.now().strftime("%Y%m%d_%H%M%S")  # 20250922_1335
+                response["Content-Disposition"] = f'attachment; filename="invoice_{request.user.user_id}_record_{record_id}_{timestamp}.pdf"'
+                return response
+            except UserLevel.DoesNotExist:
+                return Response({"error": "Record not found"}, status=404)
+
+        # Fetch UserLevel data for the logged-in user
+        queryset = UserLevel.objects.select_related('user', 'level').filter(user=request.user).order_by('-requested_date')
+
+        # Apply filters
         start_date = request.query_params.get("start_date")
         end_date = request.query_params.get("end_date")
-        limit = request.query_params.get("limit")
-        export = request.query_params.get("export")  # 'csv', 'pdf', 'xlsx'
-
-        # Filters
-        if email:
-            queryset = queryset.filter(email__icontains=email.lower())
-        if first_name:
-            queryset = queryset.filter(first_name__icontains=first_name.lower())
-        if last_name:
-            queryset = queryset.filter(last_name__icontains=last_name.lower())
-        if status and status.lower() != "all":
-            if status.lower() == "completed":
-                queryset = queryset.filter(status='paid')  
-            elif status.lower() == "pending":
-                queryset = queryset.exclude(status='paid')
-        if user_id:
-            queryset = queryset.filter(user_id__iexact=user_id)
-        if start_date:
-            queryset = queryset.filter(date_of_joining__date__gte=start_date)
-        if end_date:
-            queryset = queryset.filter(date_of_joining__date__lte=end_date)
-
-        # Search filter
         search = request.query_params.get('search', '')
+        if start_date:
+            try:
+                start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+                queryset = queryset.filter(requested_date__date__gte=start_date)
+            except ValueError:
+                logger.error(f"Invalid start_date format: {start_date}")
+        if end_date:
+            try:
+                end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+                queryset = queryset.filter(requested_date__date__lte=end_date)
+            except ValueError:
+                logger.error(f"Invalid end_date format: {end_date}")
         if search:
             queryset = queryset.filter(
-                Q(first_name__icontains=search) |
-                Q(last_name__icontains=search) |
-                Q(user_id__icontains=search) |
-                Q(email__icontains=search)
+                Q(user__first_name__icontains=search) |
+                Q(user__last_name__icontains=search) |
+                Q(user__user_id__icontains=search) |
+                Q(level__name__icontains=search) |
+                Q(status__icontains=search)
             )
 
-        # Limit
-        if limit:
-            try:
-                limit = int(limit)
-                queryset = queryset[:limit]
-            except ValueError:
-                pass
+        # Pagination
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(queryset, request)
+        if page is not None:
+            serializer = BonusSummarySerializer(page, many=True, context={'request': request})
+            return paginator.get_paginated_response(serializer.data)
 
-        report_data = []
-        for user in queryset:
-            user_levels = UserLevel.objects.filter(user=user)
-            if user_levels.exists():  # Only include users with levels
-                report_data.append({
-                    'user': user,
-                    'user_levels': user_levels
-                })
+        serializer = BonusSummarySerializer(queryset, many=True, context={'request': request})
+        response_data = {
+            'username': request.user.user_id,
+            'records': serializer.data
+        }
+        return Response(response_data)
 
-        # Export options
-        if export == "csv":
-            return self.export_csv(report_data, 'bonus_summary')
-        elif export == "pdf":
-            return self.export_pdf(report_data, 'bonus_summary')
-        elif export == "xlsx":
-            return self.export_xlsx(report_data, 'bonus_summary')
 
-        serializer = BonusSummarySerializer(report_data, many=True)
-        return Response(serializer.data)
-
-    def export_csv(self, report_data, filename_prefix):
-        response = HttpResponse(content_type="text/csv")
-        response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.csv"'
-        writer = csv.writer(response)
-        writer.writerow(['From User', 'Username', 'From Name', 'Linked Username', 'Bonus Amount', 'Status', 'Approved At', 'Total Bonus'])
-        for item in report_data:
-            user = item['user']
-            user_levels = item['user_levels']
-            latest_level = user_levels.order_by('-approved_at').first()
-            serializer = BonusSummarySerializer(user_levels, many=True)
-            for data in serializer.data:
-                writer.writerow([
-                    data['from_user'],
-                    data['username'],
-                    data['from_name'],
-                    data['linked_username'],
-                    str(data['bonus_amount']),
-                    data['status'],
-                    data['approved_at'] if data['approved_at'] else '',
-                    str(data['total_bonus'])
-                ])
-        return response
-
-    def export_pdf(self, report_data, filename_prefix):
-        buffer = io.BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=A4)
-        elements = []
-        styles = getSampleStyleSheet()
-        elements.append(Paragraph(f"{filename_prefix.replace('_', ' ').title()} Report", styles["Title"]))
-
-        data = [['From User', 'Username', 'From Name', 'Linked Username', 'Bonus Amount', 'Status', 'Approved At', 'Total Bonus']]
-        for item in report_data:
-            user = item['user']
-            user_levels = item['user_levels']
-            latest_level = user_levels.order_by('-approved_at').first()
-            serializer = BonusSummarySerializer(user_levels, many=True)
-            for data_item in serializer.data:
-                data.append([
-                    data_item['from_user'],
-                    data_item['username'],
-                    data_item['from_name'],
-                    data_item['linked_username'],
-                    str(data_item['bonus_amount']),
-                    data_item['status'],
-                    data_item['approved_at'] if data_item['approved_at'] else '',
-                    str(data_item['total_bonus'])
-                ])
-
-        table = Table(data)
-        table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
-        ]))
-        elements.append(table)
-        doc.build(elements)
-
-        response = HttpResponse(content_type="application/pdf")
-        response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.pdf"'
-        response.write(buffer.getvalue())
-        buffer.close()
-        return response
-
-    def export_xlsx(self, report_data, filename_prefix):
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "BonusSummary"
-        ws.append(['From User', 'Username', 'From Name', 'Linked Username', 'Bonus Amount', 'Status', 'Approved At', 'Total Bonus'])
-        for item in report_data:
-            user = item['user']
-            user_levels = item['user_levels']
-            latest_level = user_levels.order_by('-approved_at').first()
-            serializer = BonusSummarySerializer(user_levels, many=True)
-            for data in serializer.data:
-                ws.append([
-                    data['from_user'],
-                    data['username'],
-                    data['from_name'],
-                    data['linked_username'],
-                    data['bonus_amount'],
-                    data['status'],
-                    data['approved_at'] if data['approved_at'] else '',
-                    data['total_bonus']
-                ])
-        output = io.BytesIO()
-        wb.save(output)
-        output.seek(0)
-        response = HttpResponse(
-            output,
-            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-        response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.xlsx"'
-        return response
 
 class LevelUsersReport(APIView):
+    pagination_class = PageNumberPagination
+    pagination_class.page_size = 10
     # permission_classes = [IsAdminUser]
 
     def get(self, request):
@@ -1054,9 +1112,9 @@ class LevelUsersReport(APIView):
         if user_id:
             queryset = queryset.filter(user__user_id__iexact=user_id)
         if start_date:
-            queryset = queryset.filter(approved_at__date__gte=start_date)
+            queryset = queryset.filter(requested_date__date__gte=start_date)
         if end_date:
-            queryset = queryset.filter(approved_at__date__lte=end_date)
+            queryset = queryset.filter(requested_date__date__lte=end_date)
 
         # Search filter
         search = request.query_params.get('search', '')
@@ -1069,6 +1127,20 @@ class LevelUsersReport(APIView):
                 Q(status__icontains=search)
             )
 
+        start_date = request.query_params.get("start_date")
+        end_date = request.query_params.get("end_date")
+        if start_date:
+            try:
+                start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+                queryset = queryset.filter(requested_date__date__gte=start_date)
+            except ValueError:
+                logger.error(f"Invalid start_date format: {start_date}")
+        if end_date:
+            try:
+                end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+                queryset = queryset.filter(requested_date__date__lte=end_date)
+            except ValueError:
+                logger.error(f"Invalid end_date format: {end_date}")
         # Limit
         if limit:
             try:
@@ -1085,7 +1157,12 @@ class LevelUsersReport(APIView):
         elif export == "xlsx":
             return self.export_xlsx(queryset, 'level_users_report')
 
-        serializer = LevelUsersSerializer(queryset, many=True)
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(queryset, request)
+        if page is not None:
+            serializer = LevelUsersSerializer(page, many=True, context={'request': request})
+            return paginator.get_paginated_response(serializer.data)
+        serializer = LevelUsersSerializer(queryset, many=True, context={'request': request})
         return Response(serializer.data)
 
     def export_csv(self, queryset, filename_prefix):
@@ -1103,7 +1180,7 @@ class LevelUsersReport(APIView):
                 str(data['amount']),
                 data['status'],
                 data['level'],
-                data['approved_at'] if data['approved_at'] else '',
+                data['requested_date'] if data['requested_date'] else '',
                 str(data['total'])
             ])
         return response
@@ -1126,7 +1203,7 @@ class LevelUsersReport(APIView):
                 str(data_item['amount']),
                 data_item['status'],
                 data_item['level'],
-                data_item['approved_at'] if data_item['approved_at'] else '',
+                data_item['requested_date'] if data_item['requested_date'] else '',
                 str(data_item['total'])
             ])
 
@@ -1162,7 +1239,7 @@ class LevelUsersReport(APIView):
                 data['amount'],
                 data['status'],
                 data['level'],
-                data['approved_at'] if data['approved_at'] else '',
+                data['requested_date'] if data['requested_date'] else '',
                 data['total']
             ])
         output = io.BytesIO()
