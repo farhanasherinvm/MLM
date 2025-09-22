@@ -69,12 +69,13 @@ class SendRequestReportSerializer(serializers.ModelSerializer):
     username = serializers.SerializerMethodField()
     amount = serializers.DecimalField(max_digits=12, decimal_places=2, source='level.amount')
     status = serializers.SerializerMethodField()
-    approved_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", allow_null=True)
+    requested_date = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", allow_null=True)
     payment_method = serializers.SerializerMethodField()
+    level = serializers.CharField(source='level.name')
 
     class Meta:
         model = UserLevel
-        fields = ['from_user', 'username','from_name', 'amount', 'status', 'approved_at','payment_method']
+        fields = ['from_user', 'username','from_name', 'amount', 'status', 'requested_date','payment_method', 'level']
 
     def get_from_user(self, obj):
         user = getattr(obj, 'user', None)
@@ -123,7 +124,7 @@ class AUCReportSerializer(serializers.ModelSerializer):
     linked_username = serializers.SerializerMethodField()  # Linked user's user_id
     amount = serializers.DecimalField(max_digits=12, decimal_places=2, source='level.amount')
     status = serializers.SerializerMethodField()
-    date = serializers.DateTimeField(source='approved_at', format="%Y-%m-%d %H:%M:%S", allow_null=True)
+    date = serializers.DateTimeField(source='requested_date', format="%Y-%m-%d %H:%M:%S", allow_null=True)
     payment_method = serializers.SerializerMethodField()  # Payment method or proof link
 
     class Meta:
@@ -183,12 +184,12 @@ class PaymentReportSerializer(serializers.ModelSerializer):
     payout_amount = serializers.DecimalField(max_digits=12, decimal_places=2, default=0)
     transaction_fee = serializers.DecimalField(max_digits=12, decimal_places=2, default=0)
     status = serializers.SerializerMethodField()
-    approved_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", allow_null=True)
+    requested_date = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", allow_null=True)
     total = serializers.DecimalField(max_digits=12, decimal_places=2, source='level.amount')
 
     class Meta:
         model = UserLevel
-        fields = ['from_user', 'username', 'from_name', 'linked_username', 'amount', 'payout_amount', 'transaction_fee', 'status', 'approved_at', 'total']
+        fields = ['from_user', 'username', 'from_name', 'linked_username', 'amount', 'payout_amount', 'transaction_fee', 'status', 'requested_date', 'total']
 
     def get_from_user(self, obj):
         user = getattr(obj, 'user', None)
@@ -229,12 +230,12 @@ class BonusSummarySerializer(serializers.ModelSerializer):
     linked_username = serializers.SerializerMethodField()  # Linked user's user_id
     bonus_amount = serializers.DecimalField(max_digits=12, decimal_places=2, source='received')  # Bonus received
     status = serializers.SerializerMethodField()
-    approved_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", allow_null=True)
+    requested_date = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", allow_null=True)
     total_bonus = serializers.DecimalField(max_digits=12, decimal_places=2, source='received')  # Total bonus
 
     class Meta:
         model = UserLevel
-        fields = ['from_user', 'username', 'from_name', 'linked_username', 'bonus_amount', 'status', 'approved_at', 'total_bonus']
+        fields = ['id','from_user', 'username', 'from_name', 'linked_username', 'bonus_amount', 'status', 'requested_date', 'total_bonus']
 
     def get_from_user(self, obj):
         user = getattr(obj, 'user', None)
@@ -271,13 +272,13 @@ class LevelUsersSerializer(serializers.ModelSerializer):
     amount = serializers.DecimalField(max_digits=12, decimal_places=2, source='level.amount')
     status = serializers.SerializerMethodField()
     level = serializers.CharField(source='level.name')
-    approved_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", allow_null=True)
+    requested_date = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", allow_null=True)
     total = serializers.DecimalField(max_digits=12, decimal_places=2, source='level.amount')
     payment_method = serializers.SerializerMethodField()
 
     class Meta:
         model = UserLevel
-        fields = ['from_user', 'username', 'from_name', 'linked_username', 'amount', 'status', 'level', 'approved_at', 'total', 'payment_method']
+        fields = ['from_user', 'username', 'from_name', 'linked_username', 'amount', 'status', 'level', 'requested_date', 'total', 'payment_method']
 
     def get_from_user(self, obj):
         user = getattr(obj, 'user', None)
