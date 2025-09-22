@@ -17,7 +17,13 @@ from reportlab.lib import colors
 from django.http import HttpResponse, FileResponse
 
 from .models import *
-from .serializers import RegistrationSerializer,RazorpayVerifySerializer,RazorpayOrderSerializer,ResetPasswordSerializer, ForgotPasswordSerializer, AdminAccountSerializer, UserAccountDetailsSerializer, UploadReceiptSerializer, LoginSerializer
+from .serializers import (
+    RegistrationSerializer, LoginSerializer,
+    RazorpayVerifySerializer,RazorpayOrderSerializer,
+    ResetPasswordSerializer, ForgotPasswordSerializer, 
+    AdminAccountSerializer, UserAccountDetailsSerializer, 
+    UploadReceiptSerializer,  UserFullNameSerializer
+    )
 from .permissions import IsProjectAdmin
 from .utils import validate_sponsor
 from django.utils.crypto import get_random_string
@@ -897,3 +903,35 @@ class AdminNetworkView(APIView):
         response["Content-Disposition"] = 'attachment; filename="network_users.pdf"'
         response.write(pdf)
         return response
+    
+class GetUserFullNameView(APIView):
+    permission_classes = [AllowAny]
+
+    def get_user_id(self, request):
+        """Extract user_id from GET query or POST body"""
+        if request.method == "GET":
+            return request.query_params.get("user_id")
+        if request.method == "POST":
+            return request.data.get("user_id")
+        return None
+
+    def handle_request(self, user_id):
+        if not user_id:
+            return Response({"error": "user_id is required"}, status=400)
+
+        try:
+            user = CustomUser.objects.get(user_id=user_id)
+        except CustomUser.DoesNotExist:
+            return Response({"error": "Invalid user_id"}, status=404)
+
+        full_name = f"{user.first_name} {user.last_name}".strip() or user.user_id
+        serializer = UserFullNameSerializer({"user_id": user.user_id, "full_name": full_name})
+        return Response(serializer.data, status=200)
+
+    def get(self, request):
+        user_id = self.get_user_id(request)
+        return self.handle_request(user_id)
+
+    def post(self, request):
+        user_id = self.get_user_id(request)
+        return self.handle_request(user_id)

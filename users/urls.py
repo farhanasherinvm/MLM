@@ -25,5 +25,5 @@ urlpatterns = [
     path("admin/users/export/pdf/", AdminExportUsersPDFView.as_view(), name="admin-export-users-pdf"),
     path("admin/users/<str:user_id>/profile-image/", AdminViewProfileImageView.as_view()),
     path('admin/network/', AdminNetworkView.as_view(), name='admin-network'),
-    
+    path("users/fullname/", GetUserFullNameView.as_view(), name="get-user-fullname"),
 ]

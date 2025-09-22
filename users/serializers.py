@@ -307,3 +307,6 @@ class AdminUserListSerializer(serializers.ModelSerializer):
             return request.build_absolute_uri(obj.profile.profile_image.url)
         return None
 
+class UserFullNameSerializer(serializers.Serializer):
+    user_id = serializers.CharField()
+    full_name = serializers.CharField()
