@@ -485,6 +485,15 @@ def apply_search_and_filters(queryset, request):
         except ValueError:
             pass
 
+    # Level filter (post-query, but still controlled here)
+    level_filter = request.query_params.get("level") or request.data.get("level")
+    if level_filter:
+        try:
+            level_filter = int(level_filter)
+            queryset = [u for u in queryset if getattr(u, "level", None) == level_filter]
+        except (ValueError, TypeError):
+            pass
+
     return queryset
 class AdminListUsersView(APIView):
     """List, search, filter, paginate, and export users"""
@@ -696,15 +705,6 @@ class AdminNetworkView(APIView):
         total_downline = len(queryset)
         active_count = sum(1 for u in queryset if u.is_active)
         blocked_count = sum(1 for u in queryset if not u.is_active)
-
-        # Level filter
-        level_filter = request.query_params.get("level")
-        if level_filter:
-            try:
-                level_filter = int(level_filter)
-                queryset = [u for u in queryset if getattr(u, "level", 0) == level_filter]
-            except ValueError:
-                pass
 
         export_format = request.query_params.get("export")
         if export_format == "csv":
