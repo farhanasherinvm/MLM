@@ -1,6 +1,6 @@
 from django_filters import rest_framework as filters
 from level.models import UserLevel
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 
 class PaymentFilter(filters.FilterSet):
     status = filters.ChoiceFilter(
@@ -10,27 +10,39 @@ class PaymentFilter(filters.FilterSet):
         method='filter_by_period',
         choices=(
             ('today', 'Today'),
-            ('last_week', 'Last Week'),
-            ('last_month', 'Last Month'),
+            ('this_week', 'This Week'),  # Changed from last_week to this_week
+            ('this_month', 'This Month'),  # Changed from last_month to this_month
+            ('this_year', 'This Year'),
         )
     )
+    search = filters.CharFilter(method='filter_by_search', label='Search')
 
     def filter_by_period(self, queryset, name, value):
         today = date.today()
 
         if value == 'today':
-            return queryset.filter(approved_at__date=today)
-
-        elif value == 'last_week':
-            start_date = today - timedelta(days=7)
-            return queryset.filter(approved_at__date__gte=start_date, approved_at__date__lte=today)
-
-        elif value == 'last_month':
-            start_date = today - timedelta(days=30)
-            return queryset.filter(approved_at__date__gte=start_date, approved_at__date__lte=today)
-
+            return queryset.filter(requested_date__date=today)
+        elif value == 'this_week':
+            start_date = today - timedelta(days=today.weekday())  # Start of this week (Monday)
+            return queryset.filter(requested_date__date__gte=start_date, requested_date__date__lte=today)
+        elif value == 'this_month':
+            start_date = today.replace(day=1)
+            return queryset.filter(requested_date__date__gte=start_date, requested_date__date__lte=today)
+        elif value == 'this_year':
+            start_date = today.replace(month=1, day=1)
+            return queryset.filter(requested_date__date__gte=start_date, requested_date__date__lte=today)
         return queryset
+
+    def filter_by_search(self, queryset, name, value):
+        if not value:
+            return queryset
+        return queryset.filter(
+            Q(user__email__icontains=value) |
+            Q(user__user_id__icontains=value) |
+            Q(level__name__icontains=value) |
+            Q(status__icontains=value)
+        )
 
     class Meta:
         model = UserLevel
-        fields = ['status', 'date_filter']
+        fields = ['status', 'date_filter', 'search']
