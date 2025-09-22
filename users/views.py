@@ -189,7 +189,7 @@ class UploadReceiptView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
       
 class AdminVerifyPaymentView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsProjectAdmin]
     def post(self, request, payment_id, *args, **kwargs):
         try:
             payment = Payment.objects.get(id=payment_id)
