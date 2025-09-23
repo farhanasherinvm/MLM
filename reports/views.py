@@ -1139,7 +1139,9 @@ class LevelUsersReport(APIView):
         if end_date:
             queryset = queryset.filter(requested_date__date__lte=end_date)
         if from_user:
-            queryset = queryset.filter(user__user_id__icontains=from_user)
+            queryset = queryset.annotate(
+                full_from_user=Concat('user__first_name', Value(' '), 'user__last_name', output_field=CharField())
+            ).filter(full_from_user__icontains=from_user.lower())
 
         # Search filter
         search = request.query_params.get('search', '')

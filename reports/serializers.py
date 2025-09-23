@@ -95,12 +95,15 @@ class SendRequestReportSerializer(serializers.ModelSerializer):
         return data
 
     def get_from_user(self, obj):
-        """Get the current user's user_id."""
+        """Get the current user's full name."""
         user = getattr(obj, 'user', None)
-        return getattr(user, 'user_id', 'N/A') if user else 'N/A'
+        if user:
+            full_name = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip()
+            return full_name if full_name else 'N/A'
+        return 'N/A'
 
     def get_from_name(self, obj):
-        """Get the referred user's full name (assuming linked_user_id is the referred user)."""
+        """Get the linked user's full name."""
         linked_user_id = getattr(obj, 'linked_user_id', None)
         if linked_user_id:
             try:
@@ -188,9 +191,14 @@ class AUCReportSerializer(serializers.ModelSerializer):
         return data
 
     def get_from_user(self, obj):
-        """Get the current user's user_id."""
+        """Get the current user's full name."""
         user = getattr(obj, 'user', None)
-        return getattr(user, 'user_id', 'N/A') if user else 'N/A'
+        if user:
+            full_name = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip()
+            return full_name if full_name else 'N/A'
+        return 'N/A'
+
+    \
 
     def get_username(self, obj):
         """Get the referred user's user_id (assuming linked_user_id is the referred user)."""
@@ -203,8 +211,10 @@ class AUCReportSerializer(serializers.ModelSerializer):
                 return 'Unknown'
         return 'N/A'
 
+    
+
     def get_from_name(self, obj):
-        """Get the referred user's full name (assuming linked_user_id is the referred user)."""
+        """Get the linked user's full name."""
         linked_user_id = getattr(obj, 'linked_user_id', None)
         if linked_user_id:
             try:
@@ -290,9 +300,14 @@ class PaymentReportSerializer(serializers.ModelSerializer):
         return data
 
     def get_from_user(self, obj):
-        """Get the current user's user_id."""
+        """Get the current user's full name."""
         user = getattr(obj, 'user', None)
-        return getattr(user, 'user_id', 'N/A') if user else 'N/A'
+        if user:
+            full_name = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip()
+            return full_name if full_name else 'N/A'
+        return 'N/A'
+
+    
 
     def get_username(self, obj):
         """Get the referred user's user_id (assuming linked_user_id is the referred user)."""
@@ -305,8 +320,10 @@ class PaymentReportSerializer(serializers.ModelSerializer):
                 return 'Unknown'
         return 'N/A'
 
+    
+
     def get_from_name(self, obj):
-        """Get the referred user's full name (assuming linked_user_id is the referred user)."""
+        """Get the linked user's full name."""
         linked_user_id = getattr(obj, 'linked_user_id', None)
         if linked_user_id:
             try:
@@ -387,12 +404,15 @@ class BonusSummarySerializer(serializers.ModelSerializer):
         return data
 
     def get_from_user(self, obj):
-        """Get the current user's user_id."""
+        """Get the current user's full name."""
         user = getattr(obj, 'user', None)
-        return getattr(user, 'user_id', 'N/A') if user else 'N/A'
+        if user:
+            full_name = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip()
+            return full_name if full_name else 'N/A'
+        return 'N/A'
 
     def get_from_name(self, obj):
-        """Get the referred user's full name (assuming linked_user_id is the referred user)."""
+        """Get the linked user's full name."""
         linked_user_id = getattr(obj, 'linked_user_id', None)
         if linked_user_id:
             try:
@@ -478,12 +498,15 @@ class LevelUsersSerializer(serializers.ModelSerializer):
         return data
 
     def get_from_user(self, obj):
-        """Get the current user's user_id."""
+        """Get the current user's full name."""
         user = getattr(obj, 'user', None)
-        return getattr(user, 'user_id', 'N/A') if user else 'N/A'
+        if user:
+            full_name = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip()
+            return full_name if full_name else 'N/A'
+        return 'N/A'
 
     def get_from_name(self, obj):
-        """Get the referred user's full name (assuming linked_user_id is the referred user)."""
+        """Get the linked user's full name."""
         linked_user_id = getattr(obj, 'linked_user_id', None)
         if linked_user_id:
             try:
