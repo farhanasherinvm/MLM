@@ -195,8 +195,12 @@ class AdminVerifyPaymentView(APIView):
     permission_classes = [IsProjectAdmin]
 
     def get(self, request, *args, **kwargs):
-        """List all pending payments"""
-        pending = Payment.objects.filter(status="Pending")
+        """List payments (filterable by status)"""
+        status_filter = request.query_params.get("status")
+
+        payments = Payment.objects.all()
+        if status_filter in ["Pending", "Verified", "Failed"]:
+            payments = payments.filter(status=status_filter)
         data = [
             {
                 "id": p.id,
@@ -206,13 +210,18 @@ class AdminVerifyPaymentView(APIView):
                 "receipt": request.build_absolute_uri(p.receipt.url) if p.receipt else None,
                 "user_email": p.get_registration_data().get("email"),
             }
-            for p in pending
+            for p in payments
         ]
-        return Response({"count": pending.count(), "pending_payments": data})
+        return Response({
+            "count": payments.count(),
+            "status_filter": status_filter or "All",
+            "payments": data
+        })
 
     def post(self, request, payment_id, *args, **kwargs):
         """Verify or mark payment failed"""
         payment = get_object_or_404(Payment, id=payment_id)
+        reg_data = payment.get_registration_data()
 
         status_choice = request.data.get("status")
         if status_choice not in ["Verified", "Failed"]:
@@ -221,6 +230,16 @@ class AdminVerifyPaymentView(APIView):
         if status_choice == "Failed":
             payment.status = "Failed"
             payment.save()
+
+            email = reg_data.get("email")
+            if email:
+                send_mail(
+                    subject="Payment unsuccessful",
+                    message=f"Hello {email},\n\nUnfortunately, your payment has failed. Please try again.",
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[email],
+                    fail_silently=False,
+                )
             return Response({"message": "Payment marked as Failed"}, status=200)
 
         # Verified flow
@@ -265,7 +284,11 @@ class AdminVerifyPaymentView(APIView):
                     fail_silently=False,
                 )
             return Response({
-                "message": "Payment verified and user created" if created else "Payment verified, user already exists",
+                "message": (
+                    f"Payment verified and user created."
+                    f"A mail with the User ID {user.user_id} has been sent to {user.email}"
+                    if created else "Payment verified, user already exists"
+                ),
                 "user_id": user.user_id
             })
 
