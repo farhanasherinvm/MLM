@@ -287,7 +287,7 @@ class PaymentReportSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = UserLevel
-        fields = ['from_user', 'username', 'from_name', 'linked_username', 'amount', 'payout_amount', 'transaction_fee', 'status', 'requested_date', 'total']
+        fields = ['id','from_user', 'username', 'from_name', 'linked_username', 'amount', 'payout_amount', 'transaction_fee', 'status', 'requested_date', 'total']
         extra_kwargs = {
             'requested_date': {'required': False, 'allow_null': True},
         }

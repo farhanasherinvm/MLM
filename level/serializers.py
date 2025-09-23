@@ -132,21 +132,78 @@ class UserInfoSerializer(serializers.Serializer):
             logger.error(f"Error checking user status for {getattr(user, 'user_id', 'unknown')}: {str(e)}")
             return False
 
-class PaymentReportSerializer(serializers.ModelSerializer):
+class AdminPaymentReportSerializer(serializers.ModelSerializer):
     username = serializers.SerializerMethodField()
     level_name = serializers.CharField(source='level.name')
+    user_id = serializers.CharField(source='user.user_id')
     amount = serializers.DecimalField(source='level.amount', max_digits=10, decimal_places=2)
-    payment_mode = serializers.CharField()
-    transaction_id = serializers.CharField(allow_null=True)
-    status = serializers.CharField()
+    payment_method = serializers.SerializerMethodField()
+    transaction_id = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
     approved_at = serializers.DateTimeField(allow_null=True)
+    payment_proof_url = serializers.SerializerMethodField()
+    created_at = serializers.SerializerMethodField()
+    payment_id = serializers.SerializerMethodField()
 
     class Meta:
         model = UserLevel
-        fields = ['username', 'level_name', 'amount', 'payment_mode', 'transaction_id', 'status', 'approved_at']
+        fields = [ 'username', 'level_name', 'user_id', 'amount', 'payment_method', 'transaction_id', 
+                  'status', 'approved_at', 'payment_proof_url', 'created_at', 'requested_date','payment_id']
     
     def get_username(self, obj):
-        return getattr(obj.user, 'email', getattr(obj.user, 'user_id', 'Unknown'))
+        return f"{obj.user.first_name or ''} {obj.user.last_name or ''}".strip() or obj.user.user_id
+
+    def get_payment_method(self, obj):
+        """Get the payment method from the latest LevelPayment."""
+        latest_payment = getattr(obj, 'payments', []).order_by('-created_at').first()
+        return getattr(latest_payment, 'payment_method', 'N/A') if latest_payment else 'N/A'
+
+    def get_transaction_id(self, obj):
+        """Get the transaction ID from the latest LevelPayment."""
+        latest_payment = getattr(obj, 'payments', []).order_by('-created_at').first()
+        return getattr(latest_payment, 'razorpay_payment_id', '') if latest_payment else ''
+
+    def get_status(self, obj):
+        """Get status based on UserLevel.status, refined by the latest LevelPayment.status."""
+        # Start with UserLevel.status to match view filtering
+        if obj.status == 'paid':
+            return "Approved"
+        elif obj.status == 'pending':
+            latest_payment = getattr(obj, 'payments', []).order_by('-created_at').first()
+            if latest_payment and latest_payment.status == 'Verified':
+                return "Approved"  # Override to Approved if payment is Verified
+            return "Pending"
+        return "Pending"  # Default for other statuses (e.g., 'not_paid', 'rejected')
+
+    def get_payment_id(self, obj):
+        """Get the id from the latest LevelPayment for pending payments."""
+        if obj.status == 'pending':
+            latest_payment = getattr(obj, 'payments', []).order_by('-created_at').first()
+            return getattr(latest_payment, 'id', None) if latest_payment else None
+        return None
+
+    def get_payment_proof_url(self, obj):
+        """Get the payment proof URL from the latest LevelPayment."""
+        latest_payment = getattr(obj, 'payments', []).order_by('-created_at').first()
+        if latest_payment and latest_payment.payment_proof:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(latest_payment.payment_proof.url)
+        return None
+
+    def get_created_at(self, obj):
+        """Get the created_at from the latest LevelPayment."""
+        latest_payment = getattr(obj, 'payments', []).order_by('-created_at').first()
+        return getattr(latest_payment, 'created_at', None) if latest_payment else None
+
+    def to_representation(self, instance):
+        """Ensure all fields are present with fallbacks."""
+        representation = super().to_representation(instance)
+        for field in self.fields:
+            if representation.get(field) is None:
+                representation[field] = 'N/A' if field not in ['amount', 'approved_at', 'created_at', 'requested_date'] else 0 if field == 'amount' else None
+        return representation
+
 
 # class LevelPaymentSerializer(serializers.ModelSerializer):
 #     level_name = serializers.CharField(source='user_level.level.name')

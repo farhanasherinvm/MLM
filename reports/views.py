@@ -12,7 +12,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.pagesizes import A4
 from django_filters.rest_framework import DjangoFilterBackend
 from level.models import UserLevel, LevelPayment
-from level.serializers import PaymentReportSerializer
+from level.serializers import AdminPaymentReportSerializer
 from .filters import PaymentFilter
 from .serializers import DashboardReportSerializer, LevelPaymentReportSerializer, SendRequestReportSerializer, AUCReportSerializer, PaymentReportSerializer, LevelUsersSerializer,BonusSummarySerializer
 from users.models import CustomUser
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 # Existing PaymentReportViewSet (unchanged for now)
 class PaymentReportViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = UserLevel.objects.all().order_by('-requested_date')  
-    serializer_class = PaymentReportSerializer
+    serializer_class = AdminPaymentReportSerializer
     permission_classes = [IsAdminUser]
     filter_backends = [DjangoFilterBackend]
     filterset_class = PaymentFilter
