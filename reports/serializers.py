@@ -69,10 +69,11 @@ class DashboardReportSerializer(serializers.Serializer):
 
 
 class SendRequestReportSerializer(serializers.ModelSerializer):
-    from_user = serializers.SerializerMethodField()  # Current user's user_id
+    from_user = serializers.SerializerMethodField()  # Current user's name
     from_name = serializers.SerializerMethodField()  # Referred user's first_name + last_name
-    username = serializers.SerializerMethodField()  # Referred user's user_id
+    username = serializers.SerializerMethodField()  #  user's user_id
     amount = serializers.SerializerMethodField()    # Amount from level
+    linked_username = serializers.SerializerMethodField()  # Referred user's user_id
     status = serializers.SerializerMethodField()    # Converted status
     requested_date = serializers.SerializerMethodField()  # DateTime from UserLevel
     payment_method = serializers.SerializerMethodField()  # Payment method or proof link
@@ -80,7 +81,7 @@ class SendRequestReportSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = UserLevel
-        fields = ['from_user', 'username', 'from_name', 'amount', 'status', 'requested_date', 'payment_method', 'level']
+        fields = ['from_user', 'username', 'from_name', 'amount', 'status', 'requested_date', 'payment_method', 'level','linked_username']
         extra_kwargs = {
             'requested_date': {'required': False, 'allow_null': True},
         }
@@ -115,14 +116,10 @@ class SendRequestReportSerializer(serializers.ModelSerializer):
         return 'N/A'
 
     def get_username(self, obj):
-        """Get the referred user's user_id (assuming linked_user_id is the referred user)."""
-        linked_user_id = getattr(obj, 'linked_user_id', None)
-        if linked_user_id:
-            try:
-                linked_user = CustomUser.objects.get(user_id=linked_user_id)
-                return getattr(linked_user, 'user_id', 'Unknown')
-            except ObjectDoesNotExist:
-                return 'Unknown'
+        """Get the current user's user_id."""
+        user = getattr(obj, 'user', None)
+        if user:
+            return getattr(user, 'user_id', 'N/A')
         return 'N/A'
 
     def get_amount(self, obj):
@@ -153,6 +150,17 @@ class SendRequestReportSerializer(serializers.ModelSerializer):
                 return 'Manual'
         return 'N/A'
 
+    def get_linked_username(self, obj):
+        """Get the referred user's user_id (assuming linked_user_id is the referred user)."""
+        linked_user_id = getattr(obj, 'linked_user_id', None)
+        if linked_user_id:
+            try:
+                linked_user = CustomUser.objects.get(user_id=linked_user_id)
+                return getattr(linked_user, 'user_id', 'Unknown')
+            except ObjectDoesNotExist:
+                return 'Unknown'
+        return 'N/A'
+
     def get_level(self, obj):
         """Get the level name from the associated level."""
         return getattr(obj.level, 'name', 'N/A') if obj.level else 'N/A'
@@ -168,7 +176,7 @@ class SendRequestReportSerializer(serializers.ModelSerializer):
 
 class AUCReportSerializer(serializers.ModelSerializer):
     from_user = serializers.SerializerMethodField()  # Current user's user_id
-    username = serializers.SerializerMethodField()  # Referred user's user_id
+    username = serializers.SerializerMethodField()  #  user's user_id
     from_name = serializers.SerializerMethodField()  # Referred user's first_name + last_name
     linked_username = serializers.SerializerMethodField()  # Referred user's user_id
     amount = serializers.SerializerMethodField()    # Amount from level
@@ -201,14 +209,10 @@ class AUCReportSerializer(serializers.ModelSerializer):
     \
 
     def get_username(self, obj):
-        """Get the referred user's user_id (assuming linked_user_id is the referred user)."""
-        linked_user_id = getattr(obj, 'linked_user_id', None)
-        if linked_user_id:
-            try:
-                linked_user = CustomUser.objects.get(user_id=linked_user_id)
-                return getattr(linked_user, 'user_id', 'Unknown')
-            except ObjectDoesNotExist:
-                return 'Unknown'
+        """Get the current user's user_id."""
+        user = getattr(obj, 'user', None)
+        if user:
+            return getattr(user, 'user_id', 'N/A')
         return 'N/A'
 
     
@@ -310,14 +314,10 @@ class PaymentReportSerializer(serializers.ModelSerializer):
     
 
     def get_username(self, obj):
-        """Get the referred user's user_id (assuming linked_user_id is the referred user)."""
-        linked_user_id = getattr(obj, 'linked_user_id', None)
-        if linked_user_id:
-            try:
-                linked_user = CustomUser.objects.get(user_id=linked_user_id)
-                return getattr(linked_user, 'user_id', 'Unknown')
-            except ObjectDoesNotExist:
-                return 'Unknown'
+        """Get the current user's user_id."""
+        user = getattr(obj, 'user', None)
+        if user:
+            return getattr(user, 'user_id', 'N/A')
         return 'N/A'
 
     
@@ -380,21 +380,14 @@ class PaymentReportSerializer(serializers.ModelSerializer):
 
 
 class BonusSummarySerializer(serializers.ModelSerializer):
-    from_user = serializers.SerializerMethodField()  # Current user's user_id
-    from_name = serializers.SerializerMethodField()  # Referred user's first_name + last_name
-    username = serializers.SerializerMethodField()  # Referred user's user_id
-    linked_username = serializers.SerializerMethodField()  # Referred user's user_id
+    username = serializers.SerializerMethodField()  # Current user's user_id
     bonus_amount = serializers.SerializerMethodField()  # Bonus received
-    status = serializers.SerializerMethodField()
-    requested_date = serializers.SerializerMethodField()  # Requested date
-    total_bonus = serializers.SerializerMethodField()  # Total bonus
+    status = serializers.SerializerMethodField()     # Converted status
+    total_bonus = serializers.SerializerMethodField()  # Total bonus (optional aggregate)
 
     class Meta:
         model = UserLevel
-        fields = ['id', 'from_user', 'username', 'from_name', 'linked_username', 'bonus_amount', 'status', 'requested_date', 'total_bonus']
-        extra_kwargs = {
-            'requested_date': {'required': False, 'allow_null': True},
-        }
+        fields = ['id', 'username', 'bonus_amount', 'status', 'total_bonus']
 
     def validate(self, data):
         """Validate the data to ensure consistency with frontend input."""
@@ -403,46 +396,11 @@ class BonusSummarySerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Request context is missing.")
         return data
 
-    def get_from_user(self, obj):
-        """Get the current user's full name."""
+    def get_username(self, obj):
+        """Get the current user's user_id."""
         user = getattr(obj, 'user', None)
         if user:
-            full_name = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip()
-            return full_name if full_name else 'N/A'
-        return 'N/A'
-
-    def get_from_name(self, obj):
-        """Get the linked user's full name."""
-        linked_user_id = getattr(obj, 'linked_user_id', None)
-        if linked_user_id:
-            try:
-                linked_user = CustomUser.objects.get(user_id=linked_user_id)
-                full_name = f"{getattr(linked_user, 'first_name', '')} {getattr(linked_user, 'last_name', '')}".strip()
-                return full_name if full_name else 'Unknown'
-            except ObjectDoesNotExist:
-                return 'Unknown'
-        return 'N/A'
-
-    def get_username(self, obj):
-        """Get the referred user's user_id (assuming linked_user_id is the referred user)."""
-        linked_user_id = getattr(obj, 'linked_user_id', None)
-        if linked_user_id:
-            try:
-                linked_user = CustomUser.objects.get(user_id=linked_user_id)
-                return getattr(linked_user, 'user_id', 'Unknown')
-            except ObjectDoesNotExist:
-                return 'Unknown'
-        return 'N/A'
-
-    def get_linked_username(self, obj):
-        """Get the referred user's user_id (assuming linked_user_id is the referred user)."""
-        linked_user_id = getattr(obj, 'linked_user_id', None)
-        if linked_user_id:
-            try:
-                linked_user = CustomUser.objects.get(user_id=linked_user_id)
-                return getattr(linked_user, 'user_id', 'Unknown')
-            except ObjectDoesNotExist:
-                return 'Unknown'
+            return getattr(user, 'user_id', 'N/A')
         return 'N/A'
 
     def get_bonus_amount(self, obj):
@@ -450,24 +408,26 @@ class BonusSummarySerializer(serializers.ModelSerializer):
         return getattr(obj, 'received', 0) if hasattr(obj, 'received') else 0
 
     def get_status(self, obj):
-        """Convert status to 'Completed' or 'Pending'."""
-        return "Completed" if getattr(obj, 'status', '') == 'paid' else "Pending"
-
-    def get_requested_date(self, obj):
-        """Get the requested date with proper formatting."""
-        requested_date = getattr(obj, 'requested_date', None)
-        return requested_date.strftime("%Y-%m-%d %H:%M:%S") if requested_date else None
+        """Convert status to 'Completed' or 'Pending', refined by LevelPayment if exists."""
+        latest_payment = getattr(obj, 'payments', []).order_by('-created_at').first()
+        if latest_payment and latest_payment.status == 'Verified':
+            return "Completed"
+        return "Completed" if obj.status == 'paid' else "Pending"
 
     def get_total_bonus(self, obj):
-        """Get the total bonus (same as bonus_amount for now)."""
-        return getattr(obj, 'received', 0) if hasattr(obj, 'received') else 0
+        """Get the total bonus for the user across all UserLevel records."""
+        user = getattr(obj, 'user', None)
+        if user:
+            total = UserLevel.objects.filter(user=user).aggregate(total=Sum('received'))['total'] or 0
+            return total
+        return 0
 
     def to_representation(self, instance):
         """Ensure all fields are present with fallbacks."""
         representation = super().to_representation(instance)
         for field in self.fields:
             if representation.get(field) is None:
-                representation[field] = 'N/A' if field not in ['id', 'bonus_amount', 'requested_date', 'total_bonus'] else 0 if field in ['bonus_amount', 'total_bonus'] else None
+                representation[field] = 'N/A' if field not in ['bonus_amount', 'total_bonus'] else 0 if field in ['bonus_amount', 'total_bonus'] else None
         return representation
 
 
@@ -518,14 +478,10 @@ class LevelUsersSerializer(serializers.ModelSerializer):
         return 'N/A'
 
     def get_username(self, obj):
-        """Get the referred user's user_id (assuming linked_user_id is the referred user)."""
-        linked_user_id = getattr(obj, 'linked_user_id', None)
-        if linked_user_id:
-            try:
-                linked_user = CustomUser.objects.get(user_id=linked_user_id)
-                return getattr(linked_user, 'user_id', 'Unknown')
-            except ObjectDoesNotExist:
-                return 'Unknown'
+        """Get the current user's user_id."""
+        user = getattr(obj, 'user', None)
+        if user:
+            return getattr(user, 'user_id', 'N/A')
         return 'N/A'
 
     def get_linked_username(self, obj):
