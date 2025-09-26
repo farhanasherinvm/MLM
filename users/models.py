@@ -145,7 +145,7 @@ class Payment(models.Model):
     status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default="Pending")
 
     # Manual payment receipt
-    receipt = models.FileField(upload_to="payments/", blank=True, null=True)
+    receipt = models.FileField(upload_to="payments/",storage=MediaCloudinaryStorage(),  blank=True, null=True)
 
     # Store registration data as JSON string until verified
     registration_data = models.TextField(blank=True, null=True)
