@@ -206,8 +206,6 @@ class AUCReportSerializer(serializers.ModelSerializer):
             return full_name if full_name else 'N/A'
         return 'N/A'
 
-    \
-
     def get_username(self, obj):
         """Get the current user's user_id."""
         user = getattr(obj, 'user', None)

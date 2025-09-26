@@ -10,7 +10,7 @@ from django.db.models import F
 import json
 import uuid
 from django.utils import timezone
-
+from cloudinary_storage.storage import MediaCloudinaryStorage
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ class LevelPayment(models.Model):
     razorpay_order_id = models.CharField(max_length=255, blank=True, null=True)
     razorpay_payment_id = models.CharField(max_length=255, blank=True, null=True)
     razorpay_signature = models.CharField(max_length=255, blank=True, null=True)
-    payment_proof = models.FileField(upload_to='payment_proofs/', null=True, blank=True)
+    payment_proof = models.FileField(upload_to='payment_proofs/', storage=MediaCloudinaryStorage(), null=True, blank=True)
     payment_data = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
