@@ -36,6 +36,15 @@ def generate_next_userid():
         user_id = f"WS{random_part}"
         if not CustomUser.objects.filter(user_id=user_id).exists():
             return user_id
+def generate_next_placementid():
+    while True:
+        random_part = "".join(random.choices(string.digits, k=6))
+        placement_id = f"PL{random_part}"   # prefix "PL" instead of "WS"
+        if not CustomUser.objects.filter(placement_id=placement_id).exists():
+            return placement_id
+
+
+
 
 class RegistrationView(APIView):
     permission_classes = [AllowAny]
@@ -138,7 +147,7 @@ class RazorpayVerifyView(APIView):
                 "user_id": generate_next_userid(),
                 "password": reg_data["password"],
                 "sponsor_id": reg_data.get("sponsor_id"),
-                "placement_id": reg_data.get("placement_id"),
+                "placement_id": generate_next_placementid(), 
                 "first_name": reg_data["first_name"],
                 "last_name": reg_data["last_name"],
                 "mobile": reg_data["mobile"],
@@ -165,7 +174,7 @@ class RazorpayVerifyView(APIView):
         if created:
             send_mail(
                 subject="Your MLM UserID",
-                message=f"Your UserID is {user.user_id}",
+                message=f"Your UserID is {user.user_id}\n Your Placement ID is {user.placement_id}",
                 from_email=settings.DEFAULT_FROM_EMAIL,
                 recipient_list=[user.email],
                 fail_silently=True,
@@ -173,7 +182,8 @@ class RazorpayVerifyView(APIView):
 
         return Response({
             "message": "Payment verified and user created" if created else "Payment verified, user already exists",
-            "user_id": user.user_id
+            "user_id": user.user_id,
+             "placement_id": user.placement_id
         })
    
 class UploadReceiptView(APIView):
