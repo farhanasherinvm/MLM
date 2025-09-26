@@ -1,6 +1,14 @@
 from rest_framework import serializers
 from .models import Level, UserLevel, LevelPayment, get_referrer_details
 import logging
+from users.models import CustomUser
+from django.utils import timezone
+from profiles.models import Profile
+from django.conf import settings
+import random
+import uuid
+from django.db import transaction
+import string
 
 logger = logging.getLogger(__name__)
 
@@ -277,3 +285,175 @@ class ManualPaymentSerializer(serializers.Serializer):
 class InitiatePaymentSerializer(serializers.Serializer):
     user_level_id = serializers.IntegerField()
     payment_method = serializers.ChoiceField(choices=['Razorpay', 'Manual'])
+
+
+
+class UpdateLinkedUserIdSerializer(serializers.ModelSerializer):
+    linked_user_id = serializers.CharField(max_length=20, allow_blank=True, required=False)
+
+    class Meta:
+        model = UserLevel
+        fields = ['id', 'linked_user_id']
+
+    def validate_linked_user_id(self, value):
+        # Allow blank/empty string to clear the linked user ID
+        if not value:
+            return value
+            
+        # Only validate existence if a non-empty value is provided
+        if not CustomUser.objects.filter(user_id=value).exists():
+            raise serializers.ValidationError("Invalid user_id. User does not exist.")
+            
+        return value
+
+
+
+class DummyUserSerializer(serializers.Serializer):
+    user_id = serializers.CharField(max_length=20)
+    first_name = serializers.CharField(max_length=100)
+    last_name = serializers.CharField(max_length=100)
+    email = serializers.EmailField()
+    mobile = serializers.CharField(max_length=15)
+    sponsor_id = serializers.CharField(max_length=20)
+    level = serializers.CharField(source='user_level.level.name')
+    linked_user_id = serializers.CharField(max_length=20)
+
+class CreateDummyUsersSerializer(serializers.Serializer):
+    count = serializers.IntegerField(default=6, min_value=6, max_value=6)
+
+    def create(self, validated_data):
+        admin = self.context['request'].user
+        count = validated_data.get('count')
+        dummy_users_data = []
+
+        existing_fakedata = CustomUser.objects.filter(user_id__startswith='FAKEDATA').order_by('-user_id').first()
+        start_id = 1
+        if existing_fakedata:
+            try:
+                id_part = existing_fakedata.user_id.replace('FAKEDATA', '').split('_')[0]
+                start_id = int(id_part) + 1
+            except ValueError:
+                pass
+
+        existing_user_ids = set(CustomUser.objects.values_list('user_id', flat=True))
+        existing_emails = set(CustomUser.objects.values_list('email', flat=True))
+        existing_mobiles = set(CustomUser.objects.values_list('mobile', flat=True))
+
+        user_ids = []
+        emails = []
+        mobiles = []
+
+        for i in range(count):
+            new_id = f'FAKEDATA{start_id + i:04d}'
+            j = 0
+            while new_id in existing_user_ids:
+                j += 1
+                new_id = f'FAKEDATA{start_id + i:04d}_{j:02d}'
+            user_ids.append(new_id)
+            existing_user_ids.add(new_id)
+
+        for i in range(count):
+            new_email = f'fake_user_{"".join(random.choices(string.ascii_lowercase + string.digits, k=8))}@gmail.com'
+            while new_email in existing_emails:
+                new_email = f'fake_user_{"".join(random.choices(string.ascii_lowercase + string.digits, k=8))}@gmail.com'
+            emails.append(new_email)
+            existing_emails.add(new_email)
+
+        for i in range(count):
+            new_mobile = ''.join(random.choices('0123456789', k=10))
+            while new_mobile in existing_mobiles:
+                new_mobile = ''.join(random.choices('0123456789', k=10))
+            mobiles.append(new_mobile)
+            existing_mobiles.add(new_mobile)
+
+        admin_user_levels = list(UserLevel.objects.filter(user=admin).exclude(level__name='Refer Help').order_by('level__order'))
+
+        with transaction.atomic():
+            new_users = [
+                CustomUser(
+                    user_id=user_ids[i],
+                    first_name=f'FakeFirst{start_id + i}',
+                    last_name=f'FakeLast{start_id + i}',
+                    email=emails[i],
+                    mobile=mobiles[i],
+                    sponsor_id=admin.user_id,
+                    is_active=True,
+                    date_of_joining=timezone.now()
+                ) for i in range(count)
+            ]
+            
+            CustomUser.objects.bulk_create(new_users)
+            created_users = list(CustomUser.objects.filter(user_id__in=user_ids))
+
+            if not created_users:
+                raise serializers.ValidationError("Failed to create any users due to conflicts")
+
+            new_user_levels = []
+            existing_user_level_pks = set(UserLevel.objects.filter(user__in=created_users).values_list('user__pk', flat=True))
+            admin_level_to_dummy_map = {}
+
+            for i, dummy_user in enumerate(created_users):
+                level_index = i % len(admin_user_levels)
+                assigned_admin_level = admin_user_levels[level_index]
+                assigned_level = assigned_admin_level.level
+
+                if dummy_user.pk in existing_user_level_pks:
+                    try:
+                        user_level = UserLevel.objects.get(user=dummy_user, level=assigned_level)
+                    except UserLevel.DoesNotExist:
+                        # Fallback for existing users if UserLevel isn't automatically created
+                        user_level = UserLevel(
+                            user=dummy_user,
+                            level=assigned_level,
+                            linked_user_id=admin.user_id,
+                            is_active=True,
+                            payment_mode='Manual',
+                            status='pending'
+                        )
+                else:
+                    user_level = UserLevel(
+                        user=dummy_user,
+                        level=assigned_level,
+                        linked_user_id=admin.user_id,
+                        is_active=True,
+                        payment_mode='Manual',
+                        status='pending'
+                    )
+                    new_user_levels.append(user_level)
+
+                admin_level_to_dummy_map[assigned_level.pk] = dummy_user.user_id
+
+                dummy_users_data.append({
+                    'user_id': dummy_user.user_id,
+                    'first_name': dummy_user.first_name,
+                    'last_name': dummy_user.last_name,
+                    'email': dummy_user.email,
+                    'mobile': dummy_user.mobile,
+                    'sponsor_id': dummy_user.sponsor_id,
+                    'level': assigned_level.name,
+                    'linked_user_id': user_level.linked_user_id,
+                })
+
+            UserLevel.objects.bulk_create(new_user_levels)
+            
+            # Update the Admin's UserLevel records with the linked_user_id
+            updates_for_admin_levels = []
+            
+            admin_levels_to_update = list(UserLevel.objects.filter(
+                user=admin
+            ).exclude(level__name='Refer Help').order_by('level__order'))
+
+            for admin_ul in admin_levels_to_update:
+                linked_id = admin_level_to_dummy_map.get(admin_ul.level.pk)
+                
+                if linked_id and admin_ul.linked_user_id != linked_id:
+                    admin_ul.linked_user_id = linked_id
+                    updates_for_admin_levels.append(admin_ul)
+
+            if updates_for_admin_levels:
+                UserLevel.objects.bulk_update(
+                    updates_for_admin_levels, 
+                    fields=['linked_user_id']
+                )
+
+        return {'message': f"{len(dummy_users_data)} fake users created and linked to admin's levels", 'dummy_users': dummy_users_data}

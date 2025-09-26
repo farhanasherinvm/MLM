@@ -7,7 +7,7 @@ from .models import Level, UserLevel, LevelPayment, get_referrer_details
 from .serializers import (
     LevelSerializer, UserLevelStatusSerializer, UserLevelFinancialSerializer, 
     UserInfoSerializer, LevelRazorpayOrderSerializer, LevelRazorpayVerifySerializer,
-    LevelPaymentSerializer, AdminPendingPaymentsSerializer, ManualPaymentSerializer,InitiatePaymentSerializer
+    LevelPaymentSerializer, AdminPendingPaymentsSerializer, ManualPaymentSerializer,InitiatePaymentSerializer,CreateDummyUsersSerializer, UpdateLinkedUserIdSerializer
 )
 from .permissions import IsAdminOrReadOnly
 from profiles.models import Profile
@@ -549,3 +549,28 @@ class InitiatePaymentView(APIView):
                 "level_name": user_level.level.name,
                 "payment_amount": user_level.level.amount
             }, status=status.HTTP_200_OK)
+
+
+class UpdateLinkedUserIdView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def patch(self, request, pk):
+        try:
+            user_level = UserLevel.objects.get(pk=pk)
+        except UserLevel.DoesNotExist:
+            return Response({"error": "UserLevel not found"}, status=404)
+
+        serializer = UpdateLinkedUserIdSerializer(user_level, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({"message": "linked_user_id updated successfully", "data": serializer.data})
+        return Response(serializer.errors, status=400)
+
+class CreateDummyUsers(APIView):
+    permission_classes = [IsAdminUser]
+
+    def post(self, request):
+        serializer = CreateDummyUsersSerializer(data=request.data, context={'request': request})
+        if serializer.is_valid():
+            return Response(serializer.save(), status=201)
+        return Response(serializer.errors, status=400)
