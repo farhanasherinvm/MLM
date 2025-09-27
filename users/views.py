@@ -36,13 +36,6 @@ def generate_next_userid():
         user_id = f"WS{random_part}"
         if not CustomUser.objects.filter(user_id=user_id).exists():
             return user_id
-def generate_next_placementid():
-    while True:
-        random_part = "".join(random.choices(string.digits, k=6))
-        placement_id = f"PL{random_part}"   # prefix "PL" instead of "WS"
-        if not CustomUser.objects.filter(placement_id=placement_id).exists():
-            return placement_id
-
 
 
 

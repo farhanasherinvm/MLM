@@ -233,9 +233,10 @@ SIMPLE_JWT = {
 
 }
 
-RAZORPAY_KEY_ID ='rzp_test_nGk98ngKrPHf2J'
-RAZORPAY_KEY_SECRET ='Gh7CpAcNtrKTQsE35rLEAm19'
-
+# RAZORPAY_KEY_ID ='rzp_test_nGk98ngKrPHf2J'
+# RAZORPAY_KEY_SECRET ='Gh7CpAcNtrKTQsE35rLEAm19'
+RAZORPAY_KEY_ID='rzp_test_RMYgDd9o5n2SOD'
+RAZORPAY_KEY_SECRET='7rV1tuKez0XP6x6Ue8euXjBs'
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",  # For local development with your Vite/React/Vue app
     "http://127.0.0.1:5173",
