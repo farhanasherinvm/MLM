@@ -34,19 +34,12 @@ class RegistrationSerializer(serializers.Serializer):
 
         # ✅ Sponsor must be provided
         sponsor_id = data.get("sponsor_id")
-
         if not sponsor_id:
             raise serializers.ValidationError({"sponsor_id": "Sponsor ID is required."})
 
         # ✅ Sponsor must exist
         if not CustomUser.objects.filter(user_id=sponsor_id).exists():
             raise serializers.ValidationError({"sponsor_id": "Sponsor ID does not exist in the system."})
-
-        # ✅ Sponsor must not exceed 2 referrals
-        if not validate_sponsor(sponsor_id):
-            raise serializers.ValidationError(
-                {"sponsor_id": "This sponsor already has 2 referrals. Choose another sponsor."}
-            )
 
         return data
     

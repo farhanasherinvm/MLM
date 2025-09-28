@@ -252,8 +252,6 @@ class AdminVerifyPaymentView(APIView):
         if not payment.user:
             reg_data = payment.get_registration_data()
             sponsor_id = reg_data.get("sponsor_id")
-            if sponsor_id and not validate_sponsor(sponsor_id):
-                return Response({"error": "Sponsor already has 2 referrals. Cannot assign this sponsor."}, status=400)
 
             user, created = CustomUser.objects.get_or_create(
                 email=reg_data["email"],
