@@ -10,6 +10,9 @@ from django.db.models import Q
 from django.contrib.auth import get_user_model
 from datetime import datetime, timedelta
 
+
+from rest_framework.exceptions import PermissionDenied
+
 from rest_framework.permissions import IsAuthenticated
 
 from .serializers import ReferralListSerializer,CurrentUserProfileSerializer
@@ -52,15 +55,33 @@ class ProfileView(generics.RetrieveUpdateAPIView):
         return self.request.user.profile
 
 
-
 class KYCView(generics.RetrieveUpdateAPIView):
     serializer_class = KYCSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_object(self):
-        #only one KYC
-        obj, created = KYC.objects.get_or_create(user=self.request.user)
+        # Always get the existing KYC for the user
+        try:
+            obj = KYC.objects.get(user=self.request.user)
+        except KYC.DoesNotExist:
+            # Allow creating only if user doesn't have one
+            obj = KYC(user=self.request.user)
         return obj
+
+    def update(self, request, *args, **kwargs):
+        obj = self.get_object()
+
+        # Users can only update once; after verified, only admin can update
+        if obj.pk is not None and not request.user.is_staff:
+            raise PermissionDenied("You cannot update KYC again. Please contact admin.")
+
+        # If obj exists in DB, update; if it's new, save first
+        return super().update(request, *args, **kwargs)
+
+
+    def perform_update(self, serializer):
+        # Save serializer normally
+        serializer.save()
 
 class ReferralView(APIView):
     permission_classes = [permissions.IsAuthenticated]

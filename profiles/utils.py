@@ -9,11 +9,21 @@ def get_all_referrals(user, max_level=6):
         if level > max_level:
             return
 
-        referrals = CustomUser.objects.filter(sponsor_id=u.user_id)
-        for r in referrals:
-            r.temp_level = level
-            result.append(r)
-            fetch(r, level + 1)
+        children = list(CustomUser.objects.filter(sponsor_id=u.user_id).order_by("id"))
+
+        for idx, child in enumerate(children):
+            # Mark placement vs referral
+            if idx < 2:
+                child.temp_type = "Placement"   # First 2 users are placements
+                child.temp_position = "Left" if idx == 0 else "Right"
+            else:
+                child.temp_type = "Referral"    # Others are referrals
+                child.temp_position = None
+
+            child.temp_level = level
+            result.append(child)
+
+            fetch(child, level + 1)
 
     fetch(user, 1)
     return result

@@ -29,6 +29,8 @@ from rest_framework.pagination import PageNumberPagination
 # import admin serializer from profiles
 from profiles.serializers import AdminUserListSerializer, AdminUserDetailSerializer, AdminNetworkUserSerializer
 
+from users.utils import generate_next_placementid
+from users.utils import assign_placement_id
 
 def generate_next_userid():
     while True:
@@ -129,9 +131,16 @@ class RazorpayVerifyView(APIView):
         reg_data = payment.get_registration_data()
 
         # Validate sponsor before user creation
-        sponsor_id = reg_data.get("sponsor_id") or reg_data.get("sponsor_id")
+        sponsor_id = reg_data.get("sponsor_id")   # 🔹 CHANGED: store sponsor_id properly
+        sponsor = None                           # 🔹 CHANGED: define sponsor variable
         if sponsor_id:
-            validate_sponsor(sponsor_id)
+            if not validate_sponsor(sponsor_id):  # 🔹 CHANGED: validate sponsor before using
+                return Response({"error": "Invalid sponsor ID"}, status=400)
+            sponsor = CustomUser.objects.get(user_id=sponsor_id)  # 🔹 CHANGED: fetch sponsor object
+
+        # ✅ Generate placement ID
+        placement_id = generate_next_placementid() if sponsor else None
+        
 
         # Check if user with this email already exists
         user, created = CustomUser.objects.get_or_create(
@@ -139,8 +148,8 @@ class RazorpayVerifyView(APIView):
             defaults={
                 "user_id": generate_next_userid(),
                 "password": reg_data["password"],
-                "sponsor_id": reg_data.get("sponsor_id"),
-                "placement_id": generate_next_placementid(), 
+                "sponsor_id": sponsor.user_id if sponsor else None, 
+                "placement_id": placement_id,  
                 "first_name": reg_data["first_name"],
                 "last_name": reg_data["last_name"],
                 "mobile": reg_data["mobile"],

@@ -138,7 +138,6 @@ class ReferralListSerializer(serializers.ModelSerializer):
         return None
 
 
-
 class ProfileSerializer(serializers.ModelSerializer):
     # User fields
     user_id = serializers.CharField(source='user.user_id', read_only=True)
@@ -151,12 +150,14 @@ class ProfileSerializer(serializers.ModelSerializer):
     )
 
     # Referral info
-    referrals = serializers.SerializerMethodField()
+    placements = serializers.SerializerMethodField()
+    referrals = serializers.SerializerMethodField()   # changed name from direct_referrals
     referred_by_id = serializers.SerializerMethodField()
     referred_by_name = serializers.SerializerMethodField()
     count_out_of_2 = serializers.SerializerMethodField()
     percentage = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
+    placement_id = serializers.CharField(source='user.placement_id', read_only=True)
 
     # Profile fields (all writable)
     district = serializers.CharField(required=False, allow_blank=True)
@@ -172,10 +173,10 @@ class ProfileSerializer(serializers.ModelSerializer):
         fields = [
             "user_id", "first_name", "last_name", "email", "mobile",
             "status", "date_of_join", "count_out_of_2", "percentage",
-            "referred_by_id", "referred_by_name",
+            "referred_by_id", "referred_by_name","placement_id", 
             "district", "state", "address", "place", "pincode",
             "whatsapp_number", "profile_image",
-            "referrals",
+            "placements", "referrals",
         ]
 
     # ---------- Update method ----------
@@ -201,13 +202,13 @@ class ProfileSerializer(serializers.ModelSerializer):
         return obj.user.sponsor_id if obj.user.sponsor_id else None
 
     def get_referred_by_name(self, obj):
-        return self.get_referred_by_name_for(obj.user)
+        return self._get_sponsor_name(obj.user)
 
-    def get_referred_by_name_for(self, user):
+    def _get_sponsor_name(self, user):
         if user.sponsor_id:
             try:
                 sponsor = CustomUser.objects.get(user_id__iexact=user.sponsor_id)
-                return f"{(sponsor.first_name or '').strip()} {(sponsor.last_name or '').strip()}"
+                return f"{(sponsor.first_name or '').strip()} {(sponsor.last_name or '').strip()}".strip()
             except CustomUser.DoesNotExist:
                 return None
         return None
@@ -221,30 +222,24 @@ class ProfileSerializer(serializers.ModelSerializer):
         return f"{(referred_count / 2) * 100:.0f}%"
 
     def get_profile_image(self, obj):
-        profile = getattr(obj, "profile", None)
-        if profile and profile.profile_image:
-            return profile.profile_image.url
+        if obj.profile_image:
+            return obj.profile_image.url
         return None
 
+    # ---------- Placements (first 2 users only, binary tree) ----------
+    def get_placements(self, obj):
+        return self._build_levels(obj.user.user_id)
+
+    # ---------- Referrals (all other users beyond first 2) ----------
     def get_referrals(self, obj):
-        return self.build_levels(obj.user.user_id)
+        all_referrals = list(CustomUser.objects.filter(sponsor_id=obj.user.user_id).order_by("id"))
+        extra_referrals = all_referrals[2:]  # after first 2
 
-    # ---------- Recursive referral tree ----------
-    def build_levels(self, user_id, level=1, max_level=6):
-        if level > max_level:
-            return {}
-
-        slots = [
-            {"position": "Left", "status": "Not Available"},
-            {"position": "Right", "status": "Not Available"},
-        ]
-
-        referrals = list(CustomUser.objects.filter(sponsor_id=user_id)[:2])
-
-        for i, child in enumerate(referrals):
+        referral_list = []
+        for child in extra_referrals:
             profile = getattr(child, "profile", None)
-            slots[i] = {
-                "position": "Left" if i == 0 else "Right",
+            
+            referral_list.append({
                 "user_id": child.user_id,
                 "name": f"{child.first_name} {child.last_name}",
                 "email": child.email,
@@ -261,17 +256,60 @@ class ProfileSerializer(serializers.ModelSerializer):
                 "count_out_of_2": f"{CustomUser.objects.filter(sponsor_id=child.user_id).count()}/2",
                 "percentage": f"{(CustomUser.objects.filter(sponsor_id=child.user_id).count() / 2) * 100:.0f}%",
                 "referred_by_id": child.sponsor_id,
-                "referred_by_name": self.get_referred_by_name_for(child),
-                "next_level": self.build_levels(child.user_id, level + 1, max_level),
+               
+                "referred_by_name": self._get_sponsor_name(child),
+                "placements": self._build_levels(child.user_id),  # starts its own tree
+            })
+        return referral_list
+
+    # ---------- Recursive placement tree ----------
+    def _build_levels(self, user_id, level=1, max_level=6):
+        if level > max_level:
+            return {}
+
+        slots = [
+            {"position": "Left", "status": "Not Available"},
+            {"position": "Right", "status": "Not Available"},
+        ]
+
+        referrals = list(CustomUser.objects.filter(sponsor_id=user_id).order_by("id")[:2])
+
+        for i, child in enumerate(referrals):
+            profile = getattr(child, "profile", None)
+            child_count = CustomUser.objects.filter(sponsor_id=child.user_id).count()
+             
+            slots[i] = {
+                "position": "Left" if i == 0 else "Right",
+                "user_id": child.user_id,
+                "name": f"{child.first_name} {child.last_name}",
+                "email": child.email,
+                "mobile": child.mobile,
+                "district": profile.district if profile else None,
+                "state": profile.state if profile else None,
+                "address": profile.address if profile else None,
+                "place": profile.place if profile else None,
+                "pincode": profile.pincode if profile else None,
+                "whatsapp_number": profile.whatsapp_number if profile else None,
+                "profile_image": profile.profile_image.url if profile and profile.profile_image else None,
+                "status": "Active" if child.is_active else "Inactive",
+                "date_of_join": child.date_of_joining.strftime("%Y-%m-%d %H:%M:%S"),
+                "count_out_of_2": f"{child_count}/2",
+                "percentage": f"{(child_count / 2) * 100:.0f}%",
+                "referred_by_id": child.sponsor_id,
+                "placement_id": child.sponsor_id, 
+                "referred_by_name": self._get_sponsor_name(child),
+                "next_level": self._build_levels(child.user_id, level + 1, max_level),
             }
 
         return {f"Level {level}": slots}
 
 
-class KYCSerializer(serializers.ModelSerializer):
 
-    id_number_nominee = serializers.CharField(source='id_number')
+class KYCSerializer(serializers.ModelSerializer):
+    # Map nominee fields
+    id_number_nominee = serializers.CharField(source='id_number', allow_blank=False)
     id_card_image_nominee = serializers.ImageField(source='id_card_image')
+
     class Meta:
         model = KYC
         fields = [
@@ -287,6 +325,14 @@ class KYCSerializer(serializers.ModelSerializer):
             "created_at",
         ]
         read_only_fields = ["verified", "created_at"]
+
+    def validate_id_number(self, value):
+        user = self.context['request'].user
+        # Check if ID number already exists for another user
+        if KYC.objects.exclude(user=user).filter(id_number=value).exists():
+            raise serializers.ValidationError("This ID number is already used by another user.")
+        return value
+
 
 class ReferralSerializer(serializers.Serializer):
     referral_id = serializers.CharField()

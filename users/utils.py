@@ -8,16 +8,35 @@ from django.http import HttpResponse
 
 from users.models import CustomUser
 
-def validate_sponsor(sponsor_id: str) -> bool:
-    """
-    Validate sponsor:
-      1. Sponsor must exist in the system.
-    """
-    try:
-        sponsor = CustomUser.objects.get(user_id=sponsor_id)
-    except CustomUser.DoesNotExist:
-        return False
 
+def assign_placement_id(sponsor):
+    if not sponsor:
+        return None
+
+    # Get all users already placed under this sponsor
+    placed_children = CustomUser.objects.filter(placement_id=sponsor.user_id).order_by("id")
+
+    if placed_children.count() < 2:  # Only first 2 get placement
+        return sponsor.user_id
+    return None  # Others get no placement
+
+def generate_next_placementid():
+    """
+    Generate next placement_id for a new user.
+    For now, it just increments the max existing placement_id by 1.
+    """
+    
+
+    last_user = CustomUser.objects.order_by("-placement_id").first()
+    if last_user and last_user.placement_id:
+        try:
+            return int(last_user.placement_id) + 1
+        except ValueError:
+            return 1
+    return 1
+
+
+def validate_sponsor(sponsor_id: str) -> bool:
     return CustomUser.objects.filter(user_id=sponsor_id).exists()
 
 def export_users_csv(queryset, filename="users.csv"):
