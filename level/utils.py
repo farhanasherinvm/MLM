@@ -10,25 +10,30 @@ logger = logging.getLogger(__name__)
 
 
 def check_and_enforce_payment_lock(receiving_user, level_amount_to_credit):
-    """
-    Checks if the user has hit the cap and enforces payment for the lock level.
-    Returns (can_credit_payment, message)
-    """
-    try:
-        refer_help_level = UserLevel.objects.get(
-            user=receiving_user, 
-            level__name=constants.LOCK_LEVEL_NAME 
-        )
-    except UserLevel.DoesNotExist:
-        return False, f"Setup error: Lock level '{constants.LOCK_LEVEL_NAME}' not found for receiving user."
-
+    
+    # 1. Calculate total received (Always required to check the cap)
     aggregation_result = UserLevel.objects.filter(user=receiving_user)\
         .exclude(level__name=constants.LOCK_LEVEL_NAME)\
         .aggregate(total_received=Sum('received'))
 
     total_received = aggregation_result['total_received'] or Decimal('0.00')
 
+    # 2. Only proceed with lock logic if the cap is reached
     if total_received >= constants.PAYMENT_CAP_AMOUNT:
+        
+        # Cap is reached. Now we MUST check the lock level status.
+        try:
+            refer_help_level = UserLevel.objects.get(
+                user=receiving_user, 
+                level__name=constants.LOCK_LEVEL_NAME 
+            )
+        except UserLevel.DoesNotExist:
+            # If the user hit the cap but the lock level is missing (Setup error),
+            # we assume they are locked and return a clean restriction error.
+            return False, (
+                 f"Payment restricted: R{total_received} cap reached. "
+                 f"Lock level '{constants.LOCK_LEVEL_NAME}' is missing. Please contact support."
+             )
         
         if refer_help_level.status != 'paid':
             return False, (
@@ -38,11 +43,11 @@ def check_and_enforce_payment_lock(receiving_user, level_amount_to_credit):
         
         return True, "Payment unlocked via Refer Help."
 
+    # 3. Cap not reached. Payment is allowed.
     return True, "Payment allowed: Cap not yet reached."
 
 
 def credit_level_payment(level_payment_instance: LevelPayment):
-    """Handles the final crediting of a verified payment after lock is cleared."""
     
     payment_amount = level_payment_instance.amount
     referrer_user_id = level_payment_instance.user_level.linked_user_id
@@ -66,7 +71,6 @@ def credit_level_payment(level_payment_instance: LevelPayment):
         )
     except UserLevel.DoesNotExist:
         return False, f"Setup Error: Referrer does not hold UserLevel for {level_being_paid.name}."
-
     
     with transaction.atomic():
         UserLevel.objects.filter(pk=referrer_user_level.pk).update(
