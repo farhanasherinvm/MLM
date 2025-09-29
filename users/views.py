@@ -94,117 +94,135 @@ class RazorpayVerifyView(APIView):
 
     def post(self, request):
         import logging
+        from django.db import IntegrityError
         logger = logging.getLogger(__name__)
 
-        serializer = RazorpayVerifySerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=400)
-
-        data = serializer.validated_data
-
+        # Wrap whole handler so any unexpected exception returns JSON (not HTML 500)
         try:
-            payment = Payment.objects.get(
-                razorpay_order_id=data["razorpay_order_id"],
-                status="Pending"
-            )
-        except Payment.DoesNotExist:
-            return Response({"error": "Payment not found or already processed"}, status=404)
+            serializer = RazorpayVerifySerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=400)
 
-        # 🔹 Mock verification for Postman / dev mode
-        if getattr(settings, "RAZORPAY_TEST_MODE", True):
-            verification_ok = True
-        else:
-            client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+            data = serializer.validated_data
+
             try:
-                client.utility.verify_payment_signature({
-                    "razorpay_order_id": data["razorpay_order_id"],
-                    "razorpay_payment_id": data["razorpay_payment_id"],
-                    "razorpay_signature": data["razorpay_signature"],
-                })
+                payment = Payment.objects.get(
+                    razorpay_order_id=data["razorpay_order_id"],
+                    status="Pending"
+                )
+            except Payment.DoesNotExist:
+                return Response({"error": "Payment not found or already processed"}, status=404)
+
+            # 🔹 Mock verification for Postman / dev mode
+            if getattr(settings, "RAZORPAY_TEST_MODE", True):
                 verification_ok = True
-            except Exception:
-                verification_ok = False
+            else:
+                client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+                try:
+                    client.utility.verify_payment_signature({
+                        "razorpay_order_id": data["razorpay_order_id"],
+                        "razorpay_payment_id": data["razorpay_payment_id"],
+                        "razorpay_signature": data["razorpay_signature"],
+                    })
+                    verification_ok = True
+                except Exception:
+                    verification_ok = False
 
-        if not verification_ok:
-            payment.status = "Failed"
-            payment.save()
-            return Response({"error": "Signature verification failed"}, status=400)
+            if not verification_ok:
+                payment.status = "Failed"
+                payment.save()
+                return Response({"error": "Signature verification failed"}, status=400)
 
-        # ✅ Get registration data from payment
-        reg_data = payment.get_registration_data() or {}
+            # ✅ Get registration data from payment
+            reg_data = payment.get_registration_data() or {}
 
-        # 🚨 Ensure required fields exist
-        required_fields = ["email", "password", "first_name", "last_name"]
-        missing_fields = [f for f in required_fields if not reg_data.get(f)]
-        if missing_fields:
-            return Response(
-                {"error": f"Missing required fields in registration data: {', '.join(missing_fields)}"},
-                status=400
-            )
+            # 🚨 Ensure required fields exist (fail with JSON if missing)
+            required_fields = ["email", "password", "first_name", "last_name"]
+            missing_fields = [f for f in required_fields if not reg_data.get(f)]
+            if missing_fields:
+                return Response(
+                    {"error": f"Missing required fields in registration data: {', '.join(missing_fields)}"},
+                    status=400
+                )
 
-        # Validate sponsor before user creation
-        sponsor_id = reg_data.get("sponsor_id")
-        sponsor = None
-        if sponsor_id:
-            if not validate_sponsor(sponsor_id):
-                return Response({"error": "Invalid sponsor ID"}, status=400)
-            sponsor = CustomUser.objects.filter(user_id=sponsor_id).first()
+            # Validate sponsor before user creation
+            sponsor_id = reg_data.get("sponsor_id")
+            sponsor = None
+            if sponsor_id:
+                if not validate_sponsor(sponsor_id):
+                    return Response({"error": "Invalid sponsor ID"}, status=400)
+                sponsor = CustomUser.objects.filter(user_id=sponsor_id).first()
 
-        # ✅ Generate placement ID
-        placement_id = generate_next_placementid() if sponsor else None
+            # ✅ Generate placement ID
+            placement_id = generate_next_placementid() if sponsor else None
 
-        # Check if user with this email already exists
-        try:
-            user, created = CustomUser.objects.get_or_create(
-                email=reg_data.get("email"),
-                defaults={
-                    "user_id": generate_next_userid(),
-                    "sponsor_id": sponsor.user_id if sponsor else None,
-                    "placement_id": placement_id,
-                    "first_name": reg_data.get("first_name", ""),
-                    "last_name": reg_data.get("last_name", ""),
-                    "mobile": reg_data.get("mobile", ""),
-                    "whatsapp_number": reg_data.get("whatsapp_number", ""),
-                    "pincode": reg_data.get("pincode", ""),
-                    "payment_type": reg_data.get("payment_type", "Other"),
-                    "upi_number": reg_data.get("upi_number", ""),
-                }
-            )
+            # Build defaults safely (use .get to avoid KeyError)
+            defaults = {
+                "user_id": generate_next_userid(),
+                "sponsor_id": sponsor.user_id if sponsor else None,
+                "placement_id": placement_id,
+                "first_name": reg_data.get("first_name", ""),
+                "last_name": reg_data.get("last_name", ""),
+                "mobile": reg_data.get("mobile", ""),
+                "whatsapp_number": reg_data.get("whatsapp_number", ""),
+                "pincode": reg_data.get("pincode", ""),
+                "payment_type": reg_data.get("payment_type", "Other"),
+                "upi_number": reg_data.get("upi_number", ""),
+            }
+
+            # Attempt to get_or_create user and handle DB integrity errors
+            try:
+                user, created = CustomUser.objects.get_or_create(
+                    email=reg_data.get("email"),
+                    defaults=defaults
+                )
+            except IntegrityError as ie:
+                logger.exception("IntegrityError while creating user in RazorpayVerify")
+                return Response({"error": "Database integrity error while creating user.",
+                                 "details": str(ie)}, status=409)
+            except Exception as e:
+                logger.exception("Unexpected error while creating user in RazorpayVerify")
+                return Response({"error": "User creation failed.", "details": str(e)}, status=500)
 
             # Ensure password is set correctly for newly created user
             if created:
-                user.set_password(reg_data.get("password"))
+                raw_password = reg_data.get("password")
+                if not raw_password:
+                    # Shouldn't happen due to earlier check, but double-guard
+                    return Response({"error": "Password missing in registration data."}, status=400)
+                user.set_password(raw_password)
                 user.save()
 
-        except Exception as e:
-            logger.exception("Error creating user from RazorpayVerify")
-            return Response({"error": f"User creation failed: {str(e)}"}, status=500)
+            # Update payment record
+            payment.user = user
+            payment.status = "Verified"
+            payment.razorpay_payment_id = data.get("razorpay_payment_id")
+            payment.razorpay_signature = data.get("razorpay_signature")
+            payment.save()
 
-        # Update payment record
-        payment.user = user
-        payment.status = "Verified"
-        payment.razorpay_payment_id = data["razorpay_payment_id"]
-        payment.razorpay_signature = data["razorpay_signature"]
-        payment.save()
+            # Send email only if newly created (don't allow mail errors to crash handler)
+            if created:
+                try:
+                    send_mail(
+                        subject="Your MLM UserID",
+                        message=f"Your UserID is {user.user_id}\nYour Placement ID is {user.placement_id}",
+                        from_email=settings.DEFAULT_FROM_EMAIL,
+                        recipient_list=[user.email],
+                        fail_silently=True,
+                    )
+                except Exception as mail_err:
+                    logger.warning(f"Failed to send welcome email: {mail_err}")
 
-        # Send email only if newly created
-        if created:
-            try:
-                send_mail(
-                    subject="Your MLM UserID",
-                    message=f"Your UserID is {user.user_id}\nYour Placement ID is {user.placement_id}",
-                    from_email=settings.DEFAULT_FROM_EMAIL,
-                    recipient_list=[user.email],
-                    fail_silently=True,
-                )
-            except Exception as mail_err:
-                logger.warning(f"Failed to send welcome email: {mail_err}")
+            return Response({
+                "message": "Payment verified and user created" if created else "Payment verified, user already exists",
+                "user_id": user.user_id,
+                "placement_id": user.placement_id,
+            })
 
-        return Response({
-            "message": "Payment verified and user created" if created else "Payment verified, user already exists",
-            "user_id": user.user_id,
-            "placement_id": user.placement_id,
-        })
+        except Exception as outer_exc:
+            # Catch anything else and return JSON instead of HTML 500
+            logger.exception("Unhandled exception in RazorpayVerifyView.post")
+            return Response({"error": "Internal server error", "details": str(outer_exc)}, status=500)
    
 class UploadReceiptView(APIView):
     permission_classes = [AllowAny]
