@@ -45,7 +45,12 @@ class RegistrationSerializer(serializers.Serializer):
     
     def create_payment(self, validated_data):
         data_copy = dict(validated_data)
-        data_copy.pop("confirm_password")
+        password = data_copy.get("password")
+        confirm_password = data_copy.get("confirm_password", password)
+        if not password:
+            raise serializers.ValidationError({"password": "Password is required."})
+        data_copy["password"] = password
+        data_copy["confirm_password"] = confirm_password
         payment = Payment.objects.create()
         payment.set_registration_data(data_copy)
         return payment

@@ -93,6 +93,9 @@ class RazorpayVerifyView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
+        import logging
+        logger = logging.getLogger(__name__)
+
         serializer = RazorpayVerifySerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=400)
@@ -119,7 +122,7 @@ class RazorpayVerifyView(APIView):
                     "razorpay_signature": data["razorpay_signature"],
                 })
                 verification_ok = True
-            except:
+            except Exception:
                 verification_ok = False
 
         if not verification_ok:
@@ -128,42 +131,54 @@ class RazorpayVerifyView(APIView):
             return Response({"error": "Signature verification failed"}, status=400)
 
         # ✅ Get registration data from payment
-        reg_data = payment.get_registration_data()
+        reg_data = payment.get_registration_data() or {}
+
+        # 🚨 Ensure required fields exist
+        required_fields = ["email", "password", "first_name", "last_name"]
+        missing_fields = [f for f in required_fields if not reg_data.get(f)]
+        if missing_fields:
+            return Response(
+                {"error": f"Missing required fields in registration data: {', '.join(missing_fields)}"},
+                status=400
+            )
 
         # Validate sponsor before user creation
-        sponsor_id = reg_data.get("sponsor_id")   # 🔹 CHANGED: store sponsor_id properly
-        sponsor = None                           # 🔹 CHANGED: define sponsor variable
+        sponsor_id = reg_data.get("sponsor_id")
+        sponsor = None
         if sponsor_id:
-            if not validate_sponsor(sponsor_id):  # 🔹 CHANGED: validate sponsor before using
+            if not validate_sponsor(sponsor_id):
                 return Response({"error": "Invalid sponsor ID"}, status=400)
-            sponsor = CustomUser.objects.get(user_id=sponsor_id)  # 🔹 CHANGED: fetch sponsor object
+            sponsor = CustomUser.objects.filter(user_id=sponsor_id).first()
 
         # ✅ Generate placement ID
         placement_id = generate_next_placementid() if sponsor else None
-        
 
         # Check if user with this email already exists
-        user, created = CustomUser.objects.get_or_create(
-            email=reg_data["email"],
-            defaults={
-                "user_id": generate_next_userid(),
-                "password": reg_data["password"],
-                "sponsor_id": sponsor.user_id if sponsor else None, 
-                "placement_id": placement_id,  
-                "first_name": reg_data["first_name"],
-                "last_name": reg_data["last_name"],
-                "mobile": reg_data["mobile"],
-                "whatsapp_number": reg_data["whatsapp_number"],
-                "pincode": reg_data["pincode"],
-                "payment_type": reg_data["payment_type"],
-                "upi_number": reg_data["upi_number"],
-            }
-        )
+        try:
+            user, created = CustomUser.objects.get_or_create(
+                email=reg_data.get("email"),
+                defaults={
+                    "user_id": generate_next_userid(),
+                    "sponsor_id": sponsor.user_id if sponsor else None,
+                    "placement_id": placement_id,
+                    "first_name": reg_data.get("first_name", ""),
+                    "last_name": reg_data.get("last_name", ""),
+                    "mobile": reg_data.get("mobile", ""),
+                    "whatsapp_number": reg_data.get("whatsapp_number", ""),
+                    "pincode": reg_data.get("pincode", ""),
+                    "payment_type": reg_data.get("payment_type", "Other"),
+                    "upi_number": reg_data.get("upi_number", ""),
+                }
+            )
 
-        # Ensure password is set correctly for newly created user
-        if created:
-            user.set_password(reg_data["password"])
-            user.save()
+            # Ensure password is set correctly for newly created user
+            if created:
+                user.set_password(reg_data.get("password"))
+                user.save()
+
+        except Exception as e:
+            logger.exception("Error creating user from RazorpayVerify")
+            return Response({"error": f"User creation failed: {str(e)}"}, status=500)
 
         # Update payment record
         payment.user = user
@@ -174,18 +189,21 @@ class RazorpayVerifyView(APIView):
 
         # Send email only if newly created
         if created:
-            send_mail(
-                subject="Your MLM UserID",
-                message=f"Your UserID is {user.user_id}\n Your Placement ID is {user.placement_id}",
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[user.email],
-                fail_silently=True,
-            )
+            try:
+                send_mail(
+                    subject="Your MLM UserID",
+                    message=f"Your UserID is {user.user_id}\nYour Placement ID is {user.placement_id}",
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[user.email],
+                    fail_silently=True,
+                )
+            except Exception as mail_err:
+                logger.warning(f"Failed to send welcome email: {mail_err}")
 
         return Response({
             "message": "Payment verified and user created" if created else "Payment verified, user already exists",
             "user_id": user.user_id,
-             "placement_id": user.placement_id
+            "placement_id": user.placement_id,
         })
    
 class UploadReceiptView(APIView):
