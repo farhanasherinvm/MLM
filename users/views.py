@@ -118,14 +118,16 @@ class RazorpayVerifyView(APIView):
             else:
                 client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
                 try:
-                    client.utility.verify_payment_signature({
+                    params_dict = {
                         "razorpay_order_id": data["razorpay_order_id"],
                         "razorpay_payment_id": data["razorpay_payment_id"],
                         "razorpay_signature": data["razorpay_signature"],
-                    })
+                    }
+                    client.utility.verify_payment_signature(params_dict)
                     verification_ok = True
-                except Exception:
-                    verification_ok = False
+                except Exception as e:
+                    print(f"Razorpay Verification Error: {e}") 
+                    return Response({'error': 'Payment verification failed.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
             if not verification_ok:
                 payment.status = "Failed"
