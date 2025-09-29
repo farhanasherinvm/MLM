@@ -1,6 +1,5 @@
 import string, random, razorpay
 from django.conf import settings
-from django.core.mail import send_mail
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
@@ -21,7 +20,7 @@ from .serializers import (
     UploadReceiptSerializer,  UserFullNameSerializer
     )
 from .permissions import IsProjectAdmin
-from .utils import validate_sponsor, export_users_csv, export_users_pdf
+from .utils import validate_sponsor, export_users_csv, export_users_pdf, safe_send_mail
 from django.utils.crypto import get_random_string
 from rest_framework.permissions import IsAdminUser
 from profiles.models import Profile
@@ -202,17 +201,11 @@ class RazorpayVerifyView(APIView):
 
             # Send email only if newly created (don't allow mail errors to crash handler)
             if created:
-                try:
-                    send_mail(
-                        subject="Your MLM UserID",
-                        message=f"Your UserID is {user.user_id}\nYour Placement ID is {user.placement_id}",
-                        from_email=settings.DEFAULT_FROM_EMAIL,
-                        recipient_list=[user.email],
-                        fail_silently=True,
+                safe_send_mail(
+                    subject="Your MLM UserID",
+                    message=f"Your UserID is {user.user_id}\nYour Placement ID is {user.placement_id}",
+                    recipient_list=[user.email],
                     )
-                except Exception as mail_err:
-                    logger.warning(f"Failed to send welcome email: {mail_err}")
-
             return Response({
                 "message": "Payment verified and user created" if created else "Payment verified, user already exists",
                 "user_id": user.user_id,
@@ -281,12 +274,10 @@ class AdminVerifyPaymentView(APIView):
 
             email = reg_data.get("email")
             if email:
-                send_mail(
-                    subject="Payment unsuccessful",
-                    message=f"Hello {email},\n\nUnfortunately, your payment has failed. Please try again.",
-                    from_email=settings.DEFAULT_FROM_EMAIL,
-                    recipient_list=[email],
-                    fail_silently=False,
+                safe_send_mail(
+                subject="Payment unsuccessful",
+                message=f"Hello {email},\n\nUnfortunately, your payment has failed. Please try again.",
+                recipient_list=[email],
                 )
             return Response({"message": "Payment marked as Failed"}, status=200)
 
@@ -322,13 +313,11 @@ class AdminVerifyPaymentView(APIView):
             payment.save()
 
             if created:
-                send_mail(
+                safe_send_mail(
                     subject="Your MLM User ID",
                     message=f"Hello {user.user_id},\n\nYour payment has been verified. Your User ID is: {user.user_id}",
-                    from_email=settings.DEFAULT_FROM_EMAIL,
                     recipient_list=[user.email],
-                    fail_silently=False,
-                )
+                    )
             return Response({
                 "message": (
                     f"Payment verified and user created."
@@ -409,14 +398,11 @@ class ForgotPasswordView(APIView):
         PasswordResetToken.objects.create(user=user, token=token)
         reset_link = f"https://winnersclubx.netlify.app/api/reset-password/?token={token}"
 
-        send_mail(
+        safe_send_mail(
             subject="Reset Your Password",
             message=f"Click this link to reset your password:\n{reset_link}",
-            from_email=settings.DEFAULT_FROM_EMAIL,
             recipient_list=[user.email],
-            fail_silently=False,
         )
-
         return Response({"message": f"Password reset link send to {user.user_id}'s email", "reset_link": reset_link})
         
 class ResetPasswordView(APIView):
@@ -433,12 +419,10 @@ class ResetPasswordView(APIView):
         reset_token.is_used = True
         reset_token.save()
 
-        send_mail(
+        safe_send_mail(
             subject="Password Reset Successful",
-            message=f"Your password has been reset. You can now login using your new password.",
-            from_email=settings.DEFAULT_FROM_EMAIL,
+            message="Your password has been reset. You can now login using your new password.",
             recipient_list=[user.email],
-            fail_silently=False,
         )
         return Response({"message": f"Password for {user.user_id} reset successfully."})
     
@@ -727,14 +711,11 @@ class AdminResetUserPasswordView(APIView):
         user.save()
 
         # Optional: Send email notification
-        send_mail(
+        safe_send_mail(
             subject="Your Password Has Been Reset",
             message=f"Hello {user.first_name},\n\nYour password has been reset by the admin. Your new password is: {new_password}",
-            from_email=settings.DEFAULT_FROM_EMAIL,
             recipient_list=[user.email],
-            fail_silently=True,
         )
-
         return Response({"message": f"Password reset successfully for {user.user_id}"})
 
    

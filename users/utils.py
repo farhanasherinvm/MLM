@@ -8,6 +8,12 @@ from django.http import HttpResponse
 
 from users.models import CustomUser
 
+import logging
+from django.core.mail import send_mail
+from django.conf import settings
+
+logger = logging.getLogger(__name__)
+
 
 def assign_placement_id(sponsor):
     if not sponsor:
@@ -56,7 +62,6 @@ def export_users_csv(queryset, filename="users.csv"):
 
     return response
 
-
 def export_users_pdf(queryset, filename="users.pdf", title="Users Report"):
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4)
@@ -94,3 +99,23 @@ def export_users_pdf(queryset, filename="users.pdf", title="Users Report"):
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     response.write(pdf)
     return response
+
+# ✅ Safe email wrapper
+def safe_send_mail(subject, message, recipient_list, from_email=None, fail_silently=True):
+    """
+    Wrapper around Django's send_mail to ensure errors never crash API calls.
+    Logs errors instead of raising.
+    """
+    from_email = from_email or settings.DEFAULT_FROM_EMAIL
+    try:
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=from_email,
+            recipient_list=recipient_list,
+            fail_silently=fail_silently,
+        )
+        return True
+    except Exception as e:
+        logger.warning(f"Email sending failed to {recipient_list}: {e}")
+        return False
