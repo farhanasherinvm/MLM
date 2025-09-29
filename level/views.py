@@ -308,7 +308,7 @@ class ManualPaymentView(APIView):
         except UserLevel.DoesNotExist:
             return Response({"error": "UserLevel not found, already paid, or payment not enabled"}, status=status.HTTP_404_NOT_FOUND)
 
-        payment_proof = serializer.validated_data['payment_proof']
+        payment_proof = serializer.validated_data.get('payment_proof')
         level_payment = LevelPayment.objects.create(
             user_level=user_level,
             amount=user_level.level.amount,

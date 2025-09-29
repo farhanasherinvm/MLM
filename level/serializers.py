@@ -280,7 +280,7 @@ class AdminPendingPaymentsSerializer(serializers.ModelSerializer):
 
 class ManualPaymentSerializer(serializers.Serializer):
     user_level_id = serializers.IntegerField()
-    payment_proof = serializers.FileField()
+    payment_proof = serializers.FileField(required=False)
 
 class InitiatePaymentSerializer(serializers.Serializer):
     user_level_id = serializers.IntegerField()

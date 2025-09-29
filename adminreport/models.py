@@ -4,6 +4,7 @@ from users.models import CustomUser
 from level.models import UserLevel, LevelPayment
 from django.db.models.signals import post_save
 from django.dispatch import receiver
+from decimal import Decimal # <--- IMPORT THE DECIMAL CLASS
 
 class AdminNotification(models.Model):
     OPERATION_CHOICES = [
@@ -29,8 +30,9 @@ class AdminNotification(models.Model):
         return f"{self.operation_type} - {self.user.user_id} at {self.timestamp}"
 
     def save(self, *args, **kwargs):
+        # CORRECTION 1: Convert 0.18 to Decimal before multiplication
         if self.amount and self.gic is None:
-            self.gic = self.amount * 0.18
+            self.gic = self.amount * Decimal('0.18') 
         super().save(*args, **kwargs)
 
 @receiver(post_save, sender=LevelPayment)
@@ -39,11 +41,22 @@ def log_payment_notification(sender, instance, created, **kwargs):
         user_level = instance.user_level
         user = user_level.user
         amount = instance.amount
-        description = f"User {user.user_id} paid Level {user_level.level.name} - Amount: ${amount}, GIC: ${amount * 0.18}, Status: {instance.status}"
+        
+        # CORRECTION 2: Convert 0.18 to Decimal before multiplication
+        gic_amount = amount * Decimal('0.18') 
+        
+        # Use Decimal('0.18') for precise monetary calculation
+        description = (
+            f"User {user.user_id} paid Level {user_level.level.name} - "
+            f"Amount: ${amount}, GIC: ${gic_amount.quantize(Decimal('0.01'))}, " # Quantize for clean display
+            f"Status: {instance.status}"
+        )
+        
         AdminNotification.objects.update_or_create(
             user=user,
             operation_type='level_payment',
             user_level=user_level,
             level_payment=instance,
-            defaults={'description': description, 'amount': amount}
+            # Pass the calculated gic_amount to the defaults
+            defaults={'description': description, 'amount': amount, 'gic': gic_amount} 
         )
