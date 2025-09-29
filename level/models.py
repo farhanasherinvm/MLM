@@ -83,6 +83,7 @@ class LevelPayment(models.Model):
         ("Pending", "Pending"),
         ("Verified", "Verified"),
         ("Failed", "Failed"),
+        ('Restricted', 'Payment On Hold - Cap Reached')
     ]
     PAYMENT_METHOD_CHOICES = [
         ("Razorpay", "Razorpay"),

@@ -19,6 +19,8 @@ from django.db.models import Count, Q
 import logging
 import razorpay
 from django.conf import settings
+from .utils import check_and_enforce_payment_lock
+
 
 logger = logging.getLogger(__name__)
 
@@ -431,7 +433,6 @@ class LevelCompletionViewSet(viewsets.ViewSet):
         return Response(data)
 
 
-
 class InitiatePaymentView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -453,7 +454,44 @@ class InitiatePaymentView(APIView):
 
         payment_method = serializer.validated_data['payment_method']
 
+        # --- BEGIN: LOCK ENFORCEMENT CHECK ---
+        referrer = None
+        if user_level.linked_user_id:
+            try:
+                # Fetch the referrer to check their lock status
+                referrer = CustomUser.objects.get(user_id=user_level.linked_user_id)
+            except CustomUser.DoesNotExist:
+                # Log a warning, but often the payment should proceed if the referrer is missing
+                logger.warning(f"Payment initiation error: Referrer not found for linked_user_id: {user_level.linked_user_id}")
+                # Set referrer to None to continue, assuming payment goes to admin/platform or is blocked later.
+                referrer = None 
+            
+            if referrer:
+                level_amount = user_level.level.amount
+                # Check if the referrer (receiving user) is locked
+                can_pay, message = check_and_enforce_payment_lock(referrer, level_amount)
+                
+                if not can_pay:
+                    # BLOCK PAYMENT: Referrer is locked from receiving.
+                    return Response({
+                        "error": "Payment Blocked",
+                        "detail": message, 
+                        "referrer_id": referrer.user_id,
+                        "level_name": user_level.level.name,
+                    }, status=status.HTTP_403_FORBIDDEN)
+        # --- END: LOCK ENFORCEMENT CHECK ---
+
+        
         if payment_method == 'Razorpay':
+            
+            # The referrer fetching logic is repeated here from the lock check, 
+            # but we keep it to ensure 'referrer' is defined for the details section below
+            if not referrer and user_level.linked_user_id:
+                try:
+                    referrer = CustomUser.objects.get(user_id=user_level.linked_user_id)
+                except CustomUser.DoesNotExist:
+                    pass
+
             level_payment = LevelPayment.objects.create(
                 user_level=user_level,
                 amount=user_level.level.amount,
@@ -478,21 +516,14 @@ class InitiatePaymentView(APIView):
 
             logger.info(f"Razorpay order {order['id']} created for LevelPayment {level_payment.id} (user: {request.user.user_id}, level: {user_level.level.name})")
 
-            # Fetch referrer details using linked_user_id
-            referrer = None
-            if user_level.linked_user_id:
-                try:
-                    referrer = CustomUser.objects.get(user_id=user_level.linked_user_id)
-                except CustomUser.DoesNotExist:
-                    logger.warning(f"Referrer not found for linked_user_id: {user_level.linked_user_id}")
-
             # Fetch upi_number from CustomUser or Profile
             upi_number = 'N/A'
             if referrer:
                 upi_number = getattr(referrer, 'upi_number', 'N/A')
                 if upi_number == 'N/A':
                     try:
-                        profile = Profile.objects.get(user=referrer)
+                        # Assuming Profile model is defined and accessible
+                        profile = Profile.objects.get(user=referrer) 
                         upi_number = getattr(profile, 'upi_number', 'N/A')
                     except Profile.DoesNotExist:
                         pass
@@ -516,21 +547,23 @@ class InitiatePaymentView(APIView):
             }, status=status.HTTP_201_CREATED)
 
         else:  # Manual
-            # Fetch referrer details using linked_user_id
-            referrer = None
-            if user_level.linked_user_id:
+            
+            # The referrer fetching logic is repeated here from the lock check, 
+            # but we keep it to ensure 'referrer' is defined for the details section below
+            if not referrer and user_level.linked_user_id:
                 try:
                     referrer = CustomUser.objects.get(user_id=user_level.linked_user_id)
                 except CustomUser.DoesNotExist:
-                    logger.warning(f"Referrer not found for linked_user_id: {user_level.linked_user_id}")
-
+                    pass
+                    
             # Fetch upi_number from CustomUser or Profile
             upi_number = 'N/A'
             if referrer:
                 upi_number = getattr(referrer, 'upi_number', 'N/A')
                 if upi_number == 'N/A':
                     try:
-                        profile = Profile.objects.get(user=referrer)
+                        # Assuming Profile model is defined and accessible
+                        profile = Profile.objects.get(user=referrer) 
                         upi_number = getattr(profile, 'upi_number', 'N/A')
                     except Profile.DoesNotExist:
                         pass
@@ -540,6 +573,8 @@ class InitiatePaymentView(APIView):
                 'user_id': getattr(referrer, 'user_id', 'N/A') if referrer else 'N/A',
                 'full_name': f"{getattr(referrer, 'first_name', '')} {getattr(referrer, 'last_name', '')}".strip() if referrer else 'N/A'
             }
+            
+            # The rest of the manual payment flow continues...
 
             return Response({
                 "payment_method": "Manual",
@@ -549,6 +584,8 @@ class InitiatePaymentView(APIView):
                 "level_name": user_level.level.name,
                 "payment_amount": user_level.level.amount
             }, status=status.HTTP_200_OK)
+
+
 
 
 class UpdateLinkedUserIdView(APIView):

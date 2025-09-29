@@ -1,0 +1,80 @@
+from decimal import Decimal
+from django.db import transaction
+from django.db.models import Sum, F 
+from level import constants 
+from .models import UserLevel, LevelPayment 
+from users.models import CustomUser 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def check_and_enforce_payment_lock(receiving_user, level_amount_to_credit):
+    """
+    Checks if the user has hit the cap and enforces payment for the lock level.
+    Returns (can_credit_payment, message)
+    """
+    try:
+        refer_help_level = UserLevel.objects.get(
+            user=receiving_user, 
+            level__name=constants.LOCK_LEVEL_NAME 
+        )
+    except UserLevel.DoesNotExist:
+        return False, f"Setup error: Lock level '{constants.LOCK_LEVEL_NAME}' not found for receiving user."
+
+    aggregation_result = UserLevel.objects.filter(user=receiving_user)\
+        .exclude(level__name=constants.LOCK_LEVEL_NAME)\
+        .aggregate(total_received=Sum('received'))
+
+    total_received = aggregation_result['total_received'] or Decimal('0.00')
+
+    if total_received >= constants.PAYMENT_CAP_AMOUNT:
+        
+        if refer_help_level.status != 'paid':
+            return False, (
+                f"Payment restricted: R{total_received} cap reached. "
+                f"Please pay the '{constants.LOCK_LEVEL_NAME}' level to unlock."
+            )
+        
+        return True, "Payment unlocked via Refer Help."
+
+    return True, "Payment allowed: Cap not yet reached."
+
+
+def credit_level_payment(level_payment_instance: LevelPayment):
+    """Handles the final crediting of a verified payment after lock is cleared."""
+    
+    payment_amount = level_payment_instance.amount
+    referrer_user_id = level_payment_instance.user_level.linked_user_id
+
+    if not referrer_user_id:
+        level_payment_instance.status = constants.CREDITED_STATUS
+        level_payment_instance.save()
+        return True, "Payment completed, no referrer credit required."
+
+    try:
+        referrer = CustomUser.objects.get(user_id=referrer_user_id)
+    except CustomUser.DoesNotExist:
+        return False, f"Setup Error: Referrer (user_id: {referrer_user_id}) not found."
+
+    level_being_paid = level_payment_instance.user_level.level
+    
+    try:
+        referrer_user_level = UserLevel.objects.get(
+            user=referrer,
+            level=level_being_paid
+        )
+    except UserLevel.DoesNotExist:
+        return False, f"Setup Error: Referrer does not hold UserLevel for {level_being_paid.name}."
+
+    
+    with transaction.atomic():
+        UserLevel.objects.filter(pk=referrer_user_level.pk).update(
+            received=F('received') + payment_amount,
+            balance=F('balance') + payment_amount
+        )
+        
+        level_payment_instance.status = constants.CREDITED_STATUS 
+        level_payment_instance.save()
+    
+    return True, "Payment credited."
