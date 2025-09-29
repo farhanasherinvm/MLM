@@ -24,4 +24,5 @@ urlpatterns = [
     path('api/', include('level.urls')),
     path('api/', include('reports.urls')),
     path('api/', include('notifications.urls')),
+    path('api/admin-report/', include('adminreport.urls')),
 ]

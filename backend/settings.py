@@ -50,7 +50,8 @@ INSTALLED_APPS = [
     'users',
     'level',
     'reports',
-    'notifications',  
+    'notifications',
+    'adminreport'  
 ]
 
 MIDDLEWARE = [
