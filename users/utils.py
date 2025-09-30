@@ -212,10 +212,6 @@ def generate_numeric_otp(length=None):
     return "".join(random.choices(string.digits, k=int(length)))
 
 def create_and_send_otp(email):
-    """
-    Create an EmailVerification entry with an OTP and send it to the user's email.
-    Returns tuple: (EmailVerification instance, sent_boolean, error_message_or_None)
-    """
     email = email.strip().lower()
     otp = generate_numeric_otp()
     expiry_minutes = getattr(settings, "OTP_EXPIRY_MINUTES", 10)
@@ -229,16 +225,11 @@ def create_and_send_otp(email):
     )
 
     subject = "Your verification code"
-    message = (
-        f"Your verification code is: {otp}\n\n"
-        f"This code expires in {expiry_minutes} minute(s).\n\n"
-        "If you didn't request this, please ignore this email."
-    )
-    sent, error = safe_send_mail(subject=subject, message=message, recipient_list=[email])
-    if sent:
-        logger.info("Sent OTP email to %s (db id=%s)", email, ev.id)
-        return ev, True, None
-    else:
-        logger.warning("Failed to send OTP email for %s (db id=%s): %s", email, ev.id, error)
-        # We still return the ev object so the flow can continue, but indicate sending failed.
-        return ev, False, error
+    message = f"Your verification code is: {otp}\n\nThis code expires in {expiry_minutes} minutes."
+
+    try:
+        sent, error = safe_send_mail(subject=subject, message=message, recipient_list=[email])
+    except Exception as e:
+        sent, error = False, str(e)
+
+    return ev, sent, error

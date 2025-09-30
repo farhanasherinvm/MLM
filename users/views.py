@@ -50,7 +50,6 @@ class SendOTPView(APIView):
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data["email"].strip().lower()
 
-        # prevent requesting OTP for already-registered email
         if CustomUser.objects.filter(email__iexact=email).exists():
             return Response({"error": "Email already registered."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -58,26 +57,24 @@ class SendOTPView(APIView):
             ev, sent, error = create_and_send_otp(email)
 
             response_data = {
-                "message": "OTP processing complete.",
+                "message": "OTP generated successfully.",
                 "sent": bool(sent),
             }
 
-            # include helpful info for testing if send failed or if DEBUG=True
-            if not sent:
-                response_data["error"] = error or "Unknown error sending email."
-                # include OTP so you can verify in Postman when email sending fails
+            if sent:
+                return Response(response_data, status=status.HTTP_200_OK)
+            else:
+                # ✅ Don’t raise 500, return error + OTP for testing
+                response_data["error"] = error or "Email sending failed."
                 response_data["otp"] = ev.otp_code
-            elif settings.DEBUG:
-                # still include OTP in debug mode (safe for dev only)
-                response_data["debug_otp"] = ev.otp_code
+                return Response(response_data, status=status.HTTP_200_OK)
 
-            return Response(response_data, status=status.HTTP_200_OK)
-
-        except Exception as ex:
-            # Never raise a 500 due to email sending — return structured error response.
-            logging.exception("Unexpected error in SendOTPView")
-            return Response({"error": "Failed to create OTP.", "details": str(ex)}, status=status.HTTP_200_OK)
-
+        except Exception as e:
+            # ✅ Catch-all fallback, no more 500s
+            return Response(
+                {"error": "Unexpected error.", "details": str(e)},
+                status=status.HTTP_200_OK
+            )
     
 class VerifyOTPView(APIView):
     """
