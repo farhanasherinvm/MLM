@@ -35,8 +35,8 @@ SECRET_KEY = 'django-insecure-5*(zbso#o2n0ur6wt1-2ku#r^!ev0m9=ob8y67d1u37522s@rr
 #     'django-insecure-5*(zbso#o2n0ur6wt1-2ku#r^!ev0m9=ob8y67d1u37522s@rr' # Replace this with a new, random 50+ char string for better local security
 # )
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-#DEBUG = os.getenv('DJANGO_DEBUG', 'True') == 'True'
+# DEBUG = True
+DEBUG = os.getenv('DJANGO_DEBUG', 'False') == 'True'
 
 ALLOWED_HOSTS = ["mlm-pmif.onrender.com", '127.0.0.1:8000', '127.0.0.1', 'localhost']
 
@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     'cloudinary_storage',
     'cloudinary',
     'corsheaders',
+    'django.contrib.sites',
     'profiles',
     'users',
     'level',
@@ -152,14 +153,25 @@ USE_I18N = True
 
 USE_TZ = True
 
-EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = 'smtp.gmail.com'
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
-EMAIL_HOST_USER = 'zecserbusiness@gmail.com'
-EMAIL_HOST_PASSWORD = 'wlsx ausq sxkm qxhr'
-DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+SITE_ID = 1 
+# EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+# EMAIL_HOST = 'smtp.gmail.com'
+# EMAIL_PORT = 587
+# EMAIL_USE_TLS = True
+# EMAIL_HOST_USER = 'zecserbusiness@gmail.com'
+# EMAIL_HOST_PASSWORD = 'wlsx ausq sxkm qxhr'
+# DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
+EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
+EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True") == "True"
+
+# CRITICAL: These MUST fetch from Render environment variables
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER") 
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD") 
+
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "no-reply@example.com")
 # EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
 # EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
 # EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
@@ -228,8 +240,6 @@ SIMPLE_JWT = {
 RAZORPAY_KEY_ID='rzp_test_RMYgDd9o5n2SOD'
 RAZORPAY_KEY_SECRET='7rV1tuKez0XP6x6Ue8euXjBs'
 
-# Default sender email used by safe_send_mail
-DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
 # OTP settings for email verification before registration
 OTP_EXPIRY_MINUTES = 10     # OTP validity in minutes (configurable)

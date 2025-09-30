@@ -54,7 +54,7 @@ class RegistrationSerializer(serializers.Serializer):
         email = data.get("email", "").strip().lower()
         verified = EmailVerification.objects.filter(email__iexact=email, is_verified=True).exists()
         if not verified:
-            raise serializers.ValidationError({"email": "Email not verified. Please verify email with OTP before registering."})
+            raise serializers.ValidationError({"email": "Please verify email with OTP before registering."})
 
         return data
     
