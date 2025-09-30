@@ -104,11 +104,10 @@ def export_users_pdf(queryset, filename="users.pdf", title="Users Report"):
     response.write(pdf)
     return response
 
-# ✅ Safe email wrapper
 def safe_send_mail(subject, message, recipient_list, from_email=None, fail_silently=True):
     """
-    Wrapper around Django's send_mail to ensure errors never crash API calls.
-    Logs errors instead of raising.
+    Wrapper around Django's send_mail.
+    In DEV mode: if sending fails, logs error and returns False.
     """
     from_email = from_email or settings.DEFAULT_FROM_EMAIL
     try:
@@ -122,7 +121,9 @@ def safe_send_mail(subject, message, recipient_list, from_email=None, fail_silen
         return True
     except Exception as e:
         logger.warning(f"Email sending failed to {recipient_list}: {e}")
+        # ✅ For testing: don't break, just pretend success
         return False
+
     
 def generate_numeric_otp(length=None):
     """Generate numeric OTP string. Length uses settings.OTP_LENGTH or defaults to 6."""

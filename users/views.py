@@ -43,11 +43,6 @@ def generate_next_userid():
             return user_id
 
 class SendOTPView(APIView):
-    """
-    Request an OTP to be sent to the provided email.
-    - email must not already be registered as a user.
-    - creates EmailVerification record and sends a numeric OTP to email.
-    """
     permission_classes = [AllowAny]
 
     def post(self, request, *args, **kwargs):
@@ -55,17 +50,19 @@ class SendOTPView(APIView):
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data["email"].strip().lower()
 
-        # Do not allow OTP to be requested for already-registered emails
         if CustomUser.objects.filter(email__iexact=email).exists():
             return Response({"error": "Email already registered."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             ev = create_and_send_otp(email)
-            return Response({"message": "OTP sent to email."}, status=status.HTTP_200_OK)
+            response_data = {"message": "OTP sent to email."}
+            # ✅ Add OTP in response if in DEBUG mode
+            if settings.DEBUG:
+                response_data["debug_otp"] = ev.otp_code
+            return Response(response_data, status=status.HTTP_200_OK)
         except Exception as e:
             logging.exception("Error creating/sending OTP")
             return Response({"error": "Failed to create or send OTP."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 
 class VerifyOTPView(APIView):
     """
