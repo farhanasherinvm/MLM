@@ -97,24 +97,32 @@ class RazorpayVerifyView(APIView):
         from django.db import IntegrityError
         logger = logging.getLogger(__name__)
 
-        # Wrap whole handler so any unexpected exception returns JSON (not HTML 500)
+        logger.debug("🔹 RazorpayVerifyView called with data: %s", request.data)
+
         try:
+            # Step 1: Validate serializer
             serializer = RazorpayVerifySerializer(data=request.data)
             if not serializer.is_valid():
+                logger.error("❌ Serializer validation failed: %s", serializer.errors)
                 return Response(serializer.errors, status=400)
 
             data = serializer.validated_data
+            logger.debug("✅ Serializer valid. Data: %s", data)
 
+            # Step 2: Lookup Payment
             try:
                 payment = Payment.objects.get(
                     razorpay_order_id=data["razorpay_order_id"],
                     status="Pending"
                 )
+                logger.debug("✅ Payment %s found with status Pending", payment.id)
             except Payment.DoesNotExist:
+                logger.error("❌ Payment not found for order_id=%s", data["razorpay_order_id"])
                 return Response({"error": "Payment not found or already processed"}, status=404)
 
-            # 🔹 Mock verification for Postman / dev mode
+            # Step 3: Verify Razorpay signature (skip if TEST_MODE)
             if getattr(settings, "RAZORPAY_TEST_MODE", True):
+                logger.debug("⚡ RAZORPAY_TEST_MODE=True, skipping signature verification")
                 verification_ok = True
             else:
                 client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
@@ -126,41 +134,47 @@ class RazorpayVerifyView(APIView):
                     }
                     client.utility.verify_payment_signature(params_dict)
                     verification_ok = True
+                    logger.debug("✅ Razorpay signature verification passed")
                 except Exception as e:
-                    print(f"Razorpay Verification Error: {e}") 
-                    return Response({'error': 'Payment verification failed.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                    logger.exception("❌ Razorpay signature verification failed")
+                    return Response({'error': 'Payment verification failed.'}, status=500)
 
             if not verification_ok:
                 payment.status = "Failed"
                 payment.save()
+                logger.warning("❌ Verification failed, payment %s marked as Failed", payment.id)
                 return Response({"error": "Signature verification failed"}, status=400)
 
-            # ✅ Get registration data from payment
+            # Step 4: Load registration data
             reg_data = payment.get_registration_data() or {}
+            logger.debug("📦 Registration data loaded: %s", reg_data)
 
-            # 🚨 Ensure required fields exist (fail with JSON if missing)
             required_fields = ["email", "password", "first_name", "last_name"]
             missing_fields = [f for f in required_fields if not reg_data.get(f)]
             if missing_fields:
+                logger.error("❌ Missing fields in registration data: %s", missing_fields)
                 return Response(
                     {"error": f"Missing required fields in registration data: {', '.join(missing_fields)}"},
                     status=400
                 )
 
-            # Validate sponsor before user creation
+            # Step 5: Validate sponsor
             sponsor_id = reg_data.get("sponsor_id")
             sponsor = None
             if sponsor_id:
                 if not validate_sponsor(sponsor_id):
+                    logger.error("❌ Invalid sponsor ID: %s", sponsor_id)
                     return Response({"error": "Invalid sponsor ID"}, status=400)
                 sponsor = CustomUser.objects.filter(user_id=sponsor_id).first()
+                logger.debug("✅ Sponsor validated: %s", sponsor_id)
 
-            # ✅ Generate placement ID
+            # Step 6: Generate placement and user IDs
             placement_id = generate_next_placementid() if sponsor else None
+            user_id = generate_next_userid()
+            logger.debug("🆕 Generated user_id=%s, placement_id=%s", user_id, placement_id)
 
-            # Build defaults safely (use .get to avoid KeyError)
             defaults = {
-                "user_id": generate_next_userid(),
+                "user_id": user_id,
                 "sponsor_id": sponsor.user_id if sponsor else None,
                 "placement_id": placement_id,
                 "first_name": reg_data.get("first_name", ""),
@@ -172,43 +186,48 @@ class RazorpayVerifyView(APIView):
                 "upi_number": reg_data.get("upi_number", ""),
             }
 
-            # Attempt to get_or_create user and handle DB integrity errors
+            # Step 7: Create user
             try:
                 user, created = CustomUser.objects.get_or_create(
                     email=reg_data.get("email"),
                     defaults=defaults
                 )
+                logger.debug("✅ User %s retrieved/created. created=%s", user.id, created)
             except IntegrityError as ie:
-                logger.exception("IntegrityError while creating user in RazorpayVerify")
+                logger.exception("❌ IntegrityError while creating user")
                 return Response({"error": "Database integrity error while creating user.",
                                  "details": str(ie)}, status=409)
             except Exception as e:
-                logger.exception("Unexpected error while creating user in RazorpayVerify")
+                logger.exception("❌ Unexpected error while creating user")
                 return Response({"error": "User creation failed.", "details": str(e)}, status=500)
 
-            # Ensure password is set correctly for newly created user
+            # Step 8: Set password for new users
             if created:
                 raw_password = reg_data.get("password")
                 if not raw_password:
-                    # Shouldn't happen due to earlier check, but double-guard
+                    logger.error("❌ Password missing in registration data for new user")
                     return Response({"error": "Password missing in registration data."}, status=400)
                 user.set_password(raw_password)
                 user.save()
+                logger.debug("✅ Password set for new user %s", user.user_id)
 
-            # Update payment record
+            # Step 9: Update payment record
             payment.user = user
             payment.status = "Verified"
             payment.razorpay_payment_id = data.get("razorpay_payment_id")
             payment.razorpay_signature = data.get("razorpay_signature")
             payment.save()
+            logger.debug("✅ Payment %s updated and linked to user %s", payment.id, user.user_id)
 
-            # Send email only if newly created (don't allow mail errors to crash handler)
+            # Step 10: Send welcome email
             if created:
-                safe_send_mail(
+                sent = safe_send_mail(
                     subject="Your MLM UserID",
                     message=f"Your UserID is {user.user_id}\nYour Placement ID is {user.placement_id}",
                     recipient_list=[user.email],
-                    )
+                )
+                logger.debug("📧 Email send attempted to %s. Success=%s", user.email, sent)
+
             return Response({
                 "message": "Payment verified and user created" if created else "Payment verified, user already exists",
                 "user_id": user.user_id,
@@ -216,9 +235,9 @@ class RazorpayVerifyView(APIView):
             })
 
         except Exception as outer_exc:
-            # Catch anything else and return JSON instead of HTML 500
-            logger.exception("Unhandled exception in RazorpayVerifyView.post")
+            logger.exception("❌ Unhandled exception in RazorpayVerifyView.post")
             return Response({"error": "Internal server error", "details": str(outer_exc)}, status=500)
+
    
 class UploadReceiptView(APIView):
     permission_classes = [AllowAny]
