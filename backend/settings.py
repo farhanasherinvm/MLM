@@ -177,12 +177,24 @@ USE_I18N = True
 
 USE_TZ = True
 
-EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = 'smtp.gmail.com'
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
-EMAIL_HOST_USER = 'zecserbusiness@gmail.com'
-EMAIL_HOST_PASSWORD = 'wlsx ausq sxkm qxhr'
+# EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+# EMAIL_HOST = 'smtp.gmail.com'
+# EMAIL_PORT = 587
+# EMAIL_USE_TLS = True
+# EMAIL_HOST_USER = 'zecserbusiness@gmail.com'
+# EMAIL_HOST_PASSWORD = 'wlsx ausq sxkm qxhr'
+
+EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
+EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True") == "True"
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "zecserbusiness@gmail.com")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "wlsx ausq sxkm qxhr")
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "no-reply@example.com")
+
+RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "rzp_test_RMYgDd9o5n2SOD")
+RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "7rV1tuKez0XP6x6Ue8euXjBs")
+
 
 # Cloudinary Settings
 CLOUDINARY_CLOUD_NAME = "dunlntdy3"
@@ -236,8 +248,8 @@ SIMPLE_JWT = {
 
 # RAZORPAY_KEY_ID ='rzp_test_nGk98ngKrPHf2J'
 # RAZORPAY_KEY_SECRET ='Gh7CpAcNtrKTQsE35rLEAm19'
-RAZORPAY_KEY_ID='rzp_test_RMYgDd9o5n2SOD'
-RAZORPAY_KEY_SECRET='7rV1tuKez0XP6x6Ue8euXjBs'
+# RAZORPAY_KEY_ID='rzp_test_RMYgDd9o5n2SOD'
+# RAZORPAY_KEY_SECRET='7rV1tuKez0XP6x6Ue8euXjBs'
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",  # For local development with your Vite/React/Vue app
     "http://127.0.0.1:5173",
