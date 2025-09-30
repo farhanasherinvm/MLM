@@ -53,28 +53,13 @@ class SendOTPView(APIView):
         if CustomUser.objects.filter(email__iexact=email).exists():
             return Response({"error": "Email already registered."}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            ev, sent, error = create_and_send_otp(email)
+        ev, sent, error = create_and_send_otp(email)
 
-            response_data = {
-                "message": "OTP generated successfully.",
-                "sent": bool(sent),
-            }
-
-            if sent:
-                return Response(response_data, status=status.HTTP_200_OK)
-            else:
-                # ✅ Don’t raise 500, return error + OTP for testing
-                response_data["error"] = error or "Email sending failed."
-                response_data["otp"] = ev.otp_code
-                return Response(response_data, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            # ✅ Catch-all fallback, no more 500s
-            return Response(
-                {"error": "Unexpected error.", "details": str(e)},
-                status=status.HTTP_200_OK
-            )
+        response_data = {"message": "OTP generated successfully.", "sent": sent}
+        if not sent:
+            response_data["error"] = error
+            response_data["otp"] = ev.otp_code  # fallback so user can still verify
+        return Response(response_data, status=status.HTTP_200_OK)
     
 class VerifyOTPView(APIView):
     """
