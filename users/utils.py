@@ -204,6 +204,113 @@ def safe_send_mail(subject, message, recipient_list, from_email=None):
     # Combine errors for debugging
     errors = "; ".join(filter(None, [err, err2 if 'err2' in locals() else None, err3 if 'err3' in locals() else None]))
     return False, errors or "All send attempts failed"
+# --- add near the other send helpers in users/utils.py ---
+
+def safe_send_mail_with_info(subject, message, recipient_list, from_email=None, timeout=20):
+    """
+    Like safe_send_mail but returns detailed provider info:
+      (sent_bool, error_string_or_None, info_dict_or_None)
+
+    info_dict will be like:
+      { "transport": "sendgrid" | "django_smtp" | "smtplib",
+        "status": "<http code or success marker>",
+        "detail": "<provider response or exception string>" }
+    """
+    # 1) Try SendGrid HTTP
+    try:
+        api_key = getattr(settings, "SENDGRID_API_KEY", None)
+        if api_key:
+            import json
+            import urllib.request
+            url = "https://api.sendgrid.com/v3/mail/send"
+            data = {
+                "personalizations": [{"to": [{"email": e} for e in (recipient_list if isinstance(recipient_list, (list, tuple)) else [recipient_list])]}],
+                "from": {"email": from_email or getattr(settings, "DEFAULT_FROM_EMAIL", "no-reply@example.com")},
+                "subject": subject,
+                "content": [{"type": "text/plain", "value": message}],
+            }
+            req = urllib.request.Request(url, data=json.dumps(data).encode("utf-8"), headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}"
+            })
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    status = resp.getcode()
+                    headers = dict(resp.getheaders())
+                    body = resp.read().decode(errors="ignore")
+                    if 200 <= status < 300:
+                        return True, None, {"transport": "sendgrid", "status": status, "detail": "Accepted by SendGrid", "headers": headers, "body": body}
+                    else:
+                        return False, f"SendGrid returned {status}", {"transport": "sendgrid", "status": status, "detail": body}
+            except Exception as e:
+                # capture exception string and continue to fallback
+                sg_err = str(e)
+                logger.warning("SendGrid attempt failed: %s", sg_err)
+                sg_info = {"transport": "sendgrid", "status": "exception", "detail": sg_err}
+        else:
+            sg_info = {"transport": "sendgrid", "status": "skipped", "detail": "SENDGRID_API_KEY not configured"}
+    except Exception as e:
+        sg_info = {"transport": "sendgrid", "status": "exception", "detail": str(e)}
+        logger.exception("Unexpected error preparing SendGrid request")
+
+    # 2) Try Django's send_mail (SMTP backend configured in settings.py)
+    try:
+        # Using django.core.mail.send_mail; wrap exceptions
+        num = send_mail(
+            subject,
+            message,
+            from_email or getattr(settings, "DEFAULT_FROM_EMAIL", None),
+            recipient_list if isinstance(recipient_list, (list, tuple)) else [recipient_list],
+        )
+        # send_mail returns number of successfully delivered messages (or may be 0)
+        return True, None, {"transport": "django_smtp", "status": "sent_count", "detail": f"send_mail returned: {num}"}
+    except Exception as e:
+        django_err = str(e)
+        logger.warning("Django send_mail failed: %s", django_err)
+        django_info = {"transport": "django_smtp", "status": "exception", "detail": django_err}
+
+    # 3) smtplib fallback
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        smtp_host = getattr(settings, "EMAIL_HOST", "smtp.gmail.com")
+        smtp_port = int(getattr(settings, "EMAIL_PORT", 587))
+        use_tls = getattr(settings, "EMAIL_USE_TLS", True)
+        username = getattr(settings, "EMAIL_HOST_USER", None)
+        password = getattr(settings, "EMAIL_HOST_PASSWORD", None)
+        from_addr = from_email or username or ("no-reply@" + (settings.ALLOWED_HOSTS[0] if getattr(settings, "ALLOWED_HOSTS", []) else "example.com"))
+        to_addrs = recipient_list if isinstance(recipient_list, (list, tuple)) else [recipient_list]
+
+        msg = MIMEText(message)
+        msg["Subject"] = subject
+        msg["From"] = from_addr
+        msg["To"] = ", ".join(to_addrs)
+
+        server = smtplib.SMTP(smtp_host, smtp_port, timeout=timeout)
+        if use_tls:
+            server.starttls()
+        if username and password:
+            server.login(username, password)
+        code, response = server.sendmail(from_addr, to_addrs, msg.as_string()), None
+        # smtplib SMTP.sendmail returns a dict of failed recipients; empty dict => success
+        server.quit()
+        if code == {}:
+            return True, None, {"transport": "smtplib", "status": "ok", "detail": "smtplib sendmail returned empty dict (success)"}
+        else:
+            return False, f"smtplib sendmail returned failures: {code}", {"transport": "smtplib", "status": "failed_recipients", "detail": code}
+    except Exception as e:
+        sm_err = str(e)
+        logger.warning("smtplib failed: %s", sm_err)
+        sm_info = {"transport": "smtplib", "status": "exception", "detail": sm_err}
+
+    # If we get here, all attempts failed: combine info for debugging
+    combined = {
+        "sendgrid": sg_info if 'sg_info' in locals() else None,
+        "django_smtp": django_info if 'django_info' in locals() else None,
+        "smtplib": sm_info if 'sm_info' in locals() else None,
+    }
+    err_msg = "All send attempts failed; see info"
+    return False, err_msg, {"transport": "none", "status": "all_failed", "detail": combined}
 
 # ----------------------------
 # OTP helpers
@@ -214,39 +321,43 @@ def generate_numeric_otp(length=None):
 
 def create_and_send_otp(email):
     """
-    Create an EmailVerification record and attempt to send OTP.
-    Returns tuple: (EmailVerification instance, sent_bool, error_string_or_None, traceback_string_or_None)
+    Create an EmailVerification entry with an OTP and attempt to send it.
+    Returns tuple: (EmailVerification instance, sent_boolean, error_message_or_None, provider_info_or_None)
     """
     try:
         email_clean = email.strip().lower()
         otp = generate_numeric_otp()
         expiry_minutes = int(getattr(settings, "OTP_EXPIRY_MINUTES", 10))
+
         ev = EmailVerification.objects.create(
             email=email_clean,
             otp_code=otp,
             expires_at=timezone.now() + timedelta(minutes=expiry_minutes),
             is_verified=False,
-            attempts=0
+            attempts=0,
         )
 
         subject = "Your verification code"
         message = f"Your verification code is: {otp}\n\nThis code expires in {expiry_minutes} minute(s)."
 
-        sent, error = safe_send_mail(subject, message, [email_clean], from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None))
+        sent, error, info = safe_send_mail_with_info(
+            subject=subject,
+            message=message,
+            recipient_list=[email_clean],
+            from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None),
+        )
+
         if sent:
-            logger.info("OTP sent to %s (ev id=%s)", email_clean, ev.id)
-            return ev, True, None, None
+            logger.info("OTP created and transport accepted for %s (ev id=%s) via %s", email_clean, ev.id, info.get("transport") if isinstance(info, dict) else None)
+            return ev, True, None, info
         else:
-            logger.warning("Failed to send OTP to %s (ev id=%s): %s", email_clean, ev.id, error)
-            tb = None
-            return ev, False, str(error), tb
+            logger.warning("OTP created but sending failed for %s (ev id=%s). error=%s info=%s", email_clean, ev.id, error, info)
+            return ev, False, str(error), info
+
     except Exception as e:
-        # Should never raise; capture traceback and return
         tb = traceback.format_exc()
         logger.exception("Unexpected error in create_and_send_otp")
-        # If ev exists, return it; else, create a placeholder record if possible
         try:
-            ev
+            return ev, False, str(e), {"traceback": tb}
         except NameError:
-            ev = None
-        return ev, False, str(e), tb
+            return None, False, str(e), {"traceback": tb}

@@ -44,8 +44,6 @@ def generate_next_userid():
 
 # inside users/views.py - replace existing SendOTPView with this:
 
-import traceback
-
 class SendOTPView(APIView):
     permission_classes = [AllowAny]
 
@@ -54,33 +52,33 @@ class SendOTPView(APIView):
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data["email"].strip().lower()
 
-        # Prevent OTP for already-registered email
         if CustomUser.objects.filter(email__iexact=email).exists():
             return Response({"error": "Email already registered."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # create OTP and try sending
-        ev, sent, error, tb = create_and_send_otp(email)
+        ev, sent, error, provider_info = create_and_send_otp(email)
 
-        # Build response
-        response = {
-            "message": "OTP processed.",
-            "sent": bool(sent),
-        }
-
+        # Build response for debugging on live server
         if sent:
-            # In DEBUG we can include debug_otp (remove in production)
+            response = {
+                "message": "OTP generated successfully.",
+                "sent": True,
+                "transport": provider_info.get("transport") if isinstance(provider_info, dict) else provider_info,
+                "provider_info": provider_info,
+            }
+            # include OTP only in debug mode or if you explicitly want it for testing
             if getattr(settings, "DEBUG", False):
                 response["debug_otp"] = ev.otp_code if ev else None
             return Response(response, status=status.HTTP_200_OK)
-
-        # If not sent, include error details (for debugging). This prevents 500.
-        response["error"] = error or "Unknown error sending OTP"
-        # include OTP so you can proceed with testing immediately
-        response["otp"] = ev.otp_code if ev else None
-        # include traceback for easier diagnosis (remove after debugging)
-        response["traceback"] = tb
-        return Response(response, status=status.HTTP_200_OK)
-
+        else:
+            response = {
+                "message": "OTP generated but sending failed.",
+                "sent": False,
+                "error": error,
+                "transport": provider_info.get("transport") if isinstance(provider_info, dict) else provider_info,
+                "provider_info": provider_info,
+                "otp": ev.otp_code if ev else None  # include for immediate testing
+            }
+            return Response(response, status=status.HTTP_200_OK)
     
 class VerifyOTPView(APIView):
     """
