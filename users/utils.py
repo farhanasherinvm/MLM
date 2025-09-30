@@ -106,24 +106,11 @@ def export_users_pdf(queryset, filename="users.pdf", title="Users Report"):
 
 def safe_send_mail(subject, message, recipient_list, from_email=None, fail_silently=True):
     """
-    Wrapper around Django's send_mail.
-    In DEV mode: if sending fails, logs error and returns False.
+    Dummy mailer for development.
+    Instead of sending an email, just log/pretend success.
     """
-    from_email = from_email or settings.DEFAULT_FROM_EMAIL
-    try:
-        send_mail(
-            subject=subject,
-            message=message,
-            from_email=from_email,
-            recipient_list=recipient_list,
-            fail_silently=fail_silently,
-        )
-        return True
-    except Exception as e:
-        logger.warning(f"Email sending failed to {recipient_list}: {e}")
-        # ✅ For testing: don't break, just pretend success
-        return False
-
+    logger.info(f"[DEV MODE] Would send email to {recipient_list}: {message}")
+    return True
     
 def generate_numeric_otp(length=None):
     """Generate numeric OTP string. Length uses settings.OTP_LENGTH or defaults to 6."""

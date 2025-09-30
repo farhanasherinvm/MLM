@@ -53,17 +53,17 @@ class SendOTPView(APIView):
         if CustomUser.objects.filter(email__iexact=email).exists():
             return Response({"error": "Email already registered."}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            ev = create_and_send_otp(email)
-            response_data = {"message": "OTP sent to email."}
-            # ✅ Add OTP in response if in DEBUG mode
-            if settings.DEBUG:
-                response_data["debug_otp"] = ev.otp_code
-            return Response(response_data, status=status.HTTP_200_OK)
-        except Exception as e:
-            logging.exception("Error creating/sending OTP")
-            return Response({"error": "Failed to create or send OTP."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        ev = create_and_send_otp(email)
 
+        # ✅ Always return OTP in API response (for testing)
+        return Response(
+            {
+                "message": "OTP generated successfully.",
+                "otp": ev.otp_code
+            },
+            status=status.HTTP_200_OK
+        )
+    
 class VerifyOTPView(APIView):
     """
     Verify the OTP for an email address.
