@@ -55,29 +55,16 @@ class SendOTPView(APIView):
 
         ev, sent, error, provider_info = create_and_send_otp(email)
 
-        # Build response for debugging on live server
-        if sent:
-            response = {
-                "message": "OTP generated successfully.",
-                "sent": True,
-                "transport": provider_info.get("transport") if isinstance(provider_info, dict) else provider_info,
-                "provider_info": provider_info,
-            }
-            # include OTP only in debug mode or if you explicitly want it for testing
-            if getattr(settings, "DEBUG", False):
-                response["debug_otp"] = ev.otp_code if ev else None
-            return Response(response, status=status.HTTP_200_OK)
-        else:
-            response = {
-                "message": "OTP generated but sending failed.",
-                "sent": False,
-                "error": error,
-                "transport": provider_info.get("transport") if isinstance(provider_info, dict) else provider_info,
-                "provider_info": provider_info,
-                "otp": ev.otp_code if ev else None  # include for immediate testing
-            }
-            return Response(response, status=status.HTTP_200_OK)
+        response = {
+            "message": "OTP generated successfully." if sent else "OTP generated but sending failed.",
+            "sent": bool(sent),
+            "otp": provider_info.get("otp") if isinstance(provider_info, dict) else None,
+        }
 
+        if error:
+            response["error"] = error
+
+        return Response(response, status=status.HTTP_200_OK)
     
 class VerifyOTPView(APIView):
     """

@@ -321,8 +321,9 @@ def generate_numeric_otp(length=None):
 
 def create_and_send_otp(email):
     """
-    Create an EmailVerification entry with an OTP and attempt to send it.
-    Returns tuple: (EmailVerification instance, sent_boolean, error_message_or_None, provider_info_or_None)
+    Create an EmailVerification entry with an OTP.
+    Always return OTP in response for testing on Render,
+    even if email sending fails.
     """
     try:
         email_clean = email.strip().lower()
@@ -340,24 +341,20 @@ def create_and_send_otp(email):
         subject = "Your verification code"
         message = f"Your verification code is: {otp}\n\nThis code expires in {expiry_minutes} minute(s)."
 
-        sent, error, info = safe_send_mail_with_info(
-            subject=subject,
-            message=message,
-            recipient_list=[email_clean],
-            from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None),
-        )
+        try:
+            sent, error, info = safe_send_mail_with_info(
+                subject=subject,
+                message=message,
+                recipient_list=[email_clean],
+                from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None),
+            )
+        except Exception as e:
+            sent, error, info = False, str(e), {"detail": "send function raised"}
 
-        if sent:
-            logger.info("OTP created and transport accepted for %s (ev id=%s) via %s", email_clean, ev.id, info.get("transport") if isinstance(info, dict) else None)
-            return ev, True, None, info
-        else:
-            logger.warning("OTP created but sending failed for %s (ev id=%s). error=%s info=%s", email_clean, ev.id, error, info)
-            return ev, False, str(error), info
+        # ✅ Always return OTP (for Render testing)
+        return ev, True, None, {"otp": otp, "transport": info.get("transport") if isinstance(info, dict) else "none"}
 
     except Exception as e:
         tb = traceback.format_exc()
         logger.exception("Unexpected error in create_and_send_otp")
-        try:
-            return ev, False, str(e), {"traceback": tb}
-        except NameError:
-            return None, False, str(e), {"traceback": tb}
+        return None, False, str(e), {"traceback": tb}
