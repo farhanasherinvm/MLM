@@ -7,7 +7,7 @@ env/
 venv/
 .venv/
 *.sqlite3
-
+.env
 # Django
 *.log
 *.pot
