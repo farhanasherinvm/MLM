@@ -42,8 +42,6 @@ def generate_next_userid():
         if not CustomUser.objects.filter(user_id=user_id).exists():
             return user_id
 
-# inside users/views.py - replace existing SendOTPView with this:
-
 class SendOTPView(APIView):
     permission_classes = [AllowAny]
 
@@ -52,33 +50,32 @@ class SendOTPView(APIView):
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data["email"].strip().lower()
 
+        # Prevent sending OTP to already registered users
         if CustomUser.objects.filter(email__iexact=email).exists():
-            return Response({"error": "Email already registered."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Email already registered."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         ev, sent, error, provider_info = create_and_send_otp(email)
 
-        # Build response for debugging on live server
-        if sent:
-            response = {
-                "message": "OTP generated successfully.",
-                "sent": True,
-                "transport": provider_info.get("transport") if isinstance(provider_info, dict) else provider_info,
-                "provider_info": provider_info,
-            }
-            # include OTP only in debug mode or if you explicitly want it for testing
-            if getattr(settings, "DEBUG", False):
-                response["debug_otp"] = ev.otp_code if ev else None
-            return Response(response, status=status.HTTP_200_OK)
-        else:
-            response = {
-                "message": "OTP generated but sending failed.",
-                "sent": False,
-                "error": error,
-                "transport": provider_info.get("transport") if isinstance(provider_info, dict) else provider_info,
-                "provider_info": provider_info,
-                "otp": ev.otp_code if ev else None  # include for immediate testing
-            }
-            return Response(response, status=status.HTTP_200_OK)
+        response = {
+            "message": "OTP generated successfully." if sent else "OTP generated but sending failed.",
+            "sent": bool(sent),
+        }
+
+        # Always include OTP at top level if running on Render
+        if os.environ.get("RENDER"):
+            response["otp"] = provider_info.get("otp") if isinstance(provider_info, dict) else None
+
+        # Add extra debug info if sending failed (but don’t expose in production)
+        if not sent:
+            response["error"] = error
+            if not os.environ.get("RENDER"):
+                # fallback: still include OTP for local debug
+                response["otp"] = provider_info.get("otp") if isinstance(provider_info, dict) else None
+
+        return Response(response, status=status.HTTP_200_OK)
     
 class VerifyOTPView(APIView):
     """
