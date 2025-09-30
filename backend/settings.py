@@ -18,15 +18,26 @@ from datetime import timedelta
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",  # For local development with your Vite/React/Vue app
+    "http://127.0.0.1:5173",
+    "https://winnersclubx.netlify.app",  # A common alternative for local host
+    "https://mlm-pmif.onrender.com",
+    # Add your deployed frontend URL here when you have one (e.g., "https://your-frontend-domain.com")
+]
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = 'django-insecure-5*(zbso#o2n0ur6wt1-2ku#r^!ev0m9=ob8y67d1u37522s@rr'
-
+# SECRET_KEY = os.getenv(
+#     'DJANGO_SECRET_KEY',
+#     'django-insecure-5*(zbso#o2n0ur6wt1-2ku#r^!ev0m9=ob8y67d1u37522s@rr' # Replace this with a new, random 50+ char string for better local security
+# )
 # SECURITY WARNING: don't run with debug turned on in production!
-# DEBUG = True
-DEBUG = False
+DEBUG = True
+#DEBUG = os.getenv('DJANGO_DEBUG', 'True') == 'True'
+
 ALLOWED_HOSTS = ["mlm-pmif.onrender.com", '127.0.0.1:8000', '127.0.0.1', 'localhost']
 
 
@@ -88,40 +99,6 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.sqlite3',
-#         'NAME': BASE_DIR / 'db.sqlite3',
-#     }
-# }
-
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.postgresql',
-#         'NAME': 'mydb',
-#         'USER': 'myuser',
-#         'PASSWORD': 'mypassword',
-#         'HOST': 'localhost',
-#         'PORT': '5432',
-#     }
-#}
-
-
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.postgresql',
-#         'NAME': 'neondb',
-#         'USER': 'neondb_owner',
-#         'PASSWORD': 'npg_tVEbBRgya7M1',
-#         'HOST': 'ep-delicate-surf-adlw8o3w-pooler.c-2.us-east-1.aws.neon.tech',
-#         'PORT': '5432',
-#         'OPTIONS': {
-#             'sslmode': 'require',
-#         },
-#         'CONN_MAX_AGE': 600,
-#     }
-# }
-# 
 
 DATABASES = {
     'default': {
@@ -141,10 +118,8 @@ DATABASES = {
 
 
 
-# 'postgresql://neondb_owner:npg_gusviL3OT6qr@ep-odd-cake-admzygcm-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require'
 # ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv())
-# MEDIA_URL = '/media/'
-# MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
 
 
 # Password validation
@@ -177,20 +152,20 @@ USE_I18N = True
 
 USE_TZ = True
 
-# EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-# EMAIL_HOST = 'smtp.gmail.com'
-# EMAIL_PORT = 587
-# EMAIL_USE_TLS = True
-# EMAIL_HOST_USER = 'zecserbusiness@gmail.com'
-# EMAIL_HOST_PASSWORD = 'wlsx ausq sxkm qxhr'
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = 'zecserbusiness@gmail.com'
+EMAIL_HOST_PASSWORD = 'wlsx ausq sxkm qxhr'
 
-EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
-EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
-EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
-EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True") == "True"
-EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "zecserbusiness@gmail.com")
-EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "wlsx ausq sxkm qxhr")
-DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "no-reply@example.com")
+# EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
+# EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+# EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+# EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True") == "True"
+# EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "zecserbusiness@gmail.com")
+# EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "wlsx ausq sxkm qxhr")
+# DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "no-reply@example.com")
 
 # RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "rzp_test_RMYgDd9o5n2SOD")
 # RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "7rV1tuKez0XP6x6Ue8euXjBs")
@@ -213,6 +188,7 @@ STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+# MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
@@ -250,9 +226,4 @@ SIMPLE_JWT = {
 # RAZORPAY_KEY_SECRET ='Gh7CpAcNtrKTQsE35rLEAm19'
 RAZORPAY_KEY_ID='rzp_test_RMYgDd9o5n2SOD'
 RAZORPAY_KEY_SECRET='7rV1tuKez0XP6x6Ue8euXjBs'
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",  # For local development with your Vite/React/Vue app
-    "http://127.0.0.1:5173",
-    "https://winnersclubx.netlify.app",  # A common alternative for local host
-    # Add your deployed frontend URL here when you have one (e.g., "https://your-frontend-domain.com")
-]
+
