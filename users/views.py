@@ -17,10 +17,11 @@ from .serializers import (
     RazorpayVerifySerializer,RazorpayOrderSerializer,
     ResetPasswordSerializer, ForgotPasswordSerializer, 
     AdminAccountSerializer, UserAccountDetailsSerializer, 
-    UploadReceiptSerializer,  UserFullNameSerializer
+    UploadReceiptSerializer,  UserFullNameSerializer,
+    SendOTPSerializer, VerifyOTPSerializer,
     )
 from .permissions import IsProjectAdmin
-from .utils import validate_sponsor, export_users_csv, export_users_pdf, safe_send_mail
+from .utils import validate_sponsor, export_users_csv, export_users_pdf
 from django.utils.crypto import get_random_string
 from rest_framework.permissions import IsAdminUser
 from profiles.models import Profile
@@ -31,6 +32,8 @@ import logging
 from django.db import IntegrityError, transaction
 from users.utils import generate_next_placementid
 from users.utils import assign_placement_id
+from users.utils import create_and_send_otp
+from users.utils import safe_send_mail
 
 def generate_next_userid():
     while True:
@@ -39,7 +42,66 @@ def generate_next_userid():
         if not CustomUser.objects.filter(user_id=user_id).exists():
             return user_id
 
+class SendOTPView(APIView):
+    """
+    Request an OTP to be sent to the provided email.
+    - email must not already be registered as a user.
+    - creates EmailVerification record and sends a numeric OTP to email.
+    """
+    permission_classes = [AllowAny]
 
+    def post(self, request, *args, **kwargs):
+        serializer = SendOTPSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data["email"].strip().lower()
+
+        # Do not allow OTP to be requested for already-registered emails
+        if CustomUser.objects.filter(email__iexact=email).exists():
+            return Response({"error": "Email already registered."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            ev = create_and_send_otp(email)
+            return Response({"message": "OTP sent to email."}, status=status.HTTP_200_OK)
+        except Exception as e:
+            logging.exception("Error creating/sending OTP")
+            return Response({"error": "Failed to create or send OTP."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class VerifyOTPView(APIView):
+    """
+    Verify the OTP for an email address.
+    Request body: { "email": "...", "otp_code": "123456" }
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        serializer = VerifyOTPSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        email = serializer.validated_data["email"].strip().lower()
+        otp_code = serializer.validated_data["otp_code"].strip()
+
+        # Find latest non-verified record for this email
+        ev = EmailVerification.objects.filter(email__iexact=email, is_verified=False).order_by("-created_at").first()
+        if not ev:
+            return Response({"error": "No OTP request found for this email. Please request OTP first."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if ev.is_expired():
+            return Response({"error": "OTP expired. Please request a new OTP."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Optionally enforce max attempts
+        max_attempts = getattr(settings, "OTP_MAX_ATTEMPTS", 5)
+        if ev.attempts >= max_attempts:
+            return Response({"error": "Too many attempts. Please request a new OTP."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if ev.otp_code == otp_code:
+            ev.is_verified = True
+            ev.save(update_fields=["is_verified"])
+            return Response({"message": "Email verified successfully."}, status=status.HTTP_200_OK)
+        else:
+            ev.attempts += 1
+            ev.save(update_fields=["attempts"])
+            return Response({"error": "Invalid OTP."}, status=status.HTTP_400_BAD_REQUEST)
 
 class RegistrationView(APIView):
     permission_classes = [AllowAny]

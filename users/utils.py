@@ -6,7 +6,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 from django.http import HttpResponse
 
-from users.models import CustomUser
+from users.models import CustomUser, EmailVerification
 
 import logging
 from django.core.mail import send_mail
@@ -14,6 +14,10 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
+import random
+import string
+from django.utils import timezone
+from datetime import timedelta
 
 def assign_placement_id(sponsor):
     if not sponsor:
@@ -119,3 +123,40 @@ def safe_send_mail(subject, message, recipient_list, from_email=None, fail_silen
     except Exception as e:
         logger.warning(f"Email sending failed to {recipient_list}: {e}")
         return False
+    
+def generate_numeric_otp(length=None):
+    """Generate numeric OTP string. Length uses settings.OTP_LENGTH or defaults to 6."""
+    length = length or getattr(settings, "OTP_LENGTH", 6)
+    return "".join(random.choices(string.digits, k=int(length)))
+
+
+def create_and_send_otp(email):
+    """
+    Create an EmailVerification entry with an OTP and send it to the user's email.
+    Returns the EmailVerification instance (even if mail sending fails).
+    """
+    email = email.strip().lower()
+    otp = generate_numeric_otp()
+    expiry_minutes = getattr(settings, "OTP_EXPIRY_MINUTES", 10)
+
+    ev = EmailVerification.objects.create(
+        email=email,
+        otp_code=otp,
+        expires_at=timezone.now() + timedelta(minutes=expiry_minutes),
+        is_verified=False,
+        attempts=0
+    )
+
+    subject = "Your verification code"
+    message = (
+        f"Your verification code is: {otp}\n\n"
+        f"This code expires in {expiry_minutes} minute(s).\n\n"
+        "If you didn't request this, please ignore this email."
+    )
+    sent = safe_send_mail(subject=subject, message=message, recipient_list=[email])
+    if not sent:
+        logger.warning("Failed to send OTP email for %s (db record created id=%s)", email, ev.id)
+    else:
+        logger.info("Sent OTP email to %s (db id=%s)", email, ev.id)
+
+    return ev

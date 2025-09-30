@@ -227,3 +227,10 @@ SIMPLE_JWT = {
 RAZORPAY_KEY_ID='rzp_test_RMYgDd9o5n2SOD'
 RAZORPAY_KEY_SECRET='7rV1tuKez0XP6x6Ue8euXjBs'
 
+# Default sender email used by safe_send_mail
+DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+
+# OTP settings for email verification before registration
+OTP_EXPIRY_MINUTES = 10     # OTP validity in minutes (configurable)
+OTP_LENGTH = 6              # number of digits in OTP
+OTP_MAX_ATTEMPTS = 5        # max verification attempts allowed

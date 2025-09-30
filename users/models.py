@@ -1,6 +1,8 @@
 import os
 import uuid
 import random
+from datetime import timedelta
+
 from django.db import models
 from cloudinary_storage.storage import MediaCloudinaryStorage
 from django.contrib.auth.models import (
@@ -8,6 +10,8 @@ from django.contrib.auth.models import (
 )
 import json
 import logging
+from django.utils import timezone
+from django.conf import settings
 logger = logging.getLogger(__name__) 
 
 
@@ -57,7 +61,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(unique=True)
     mobile = models.CharField(max_length=15, unique=True)
 
-    whatsapp_number = models.CharField(max_length=15, null=True, blank=True, unique=True)
+    whatsapp_number = models.CharField(max_length=15, null=True, blank=True)
     pincode = models.CharField(max_length=10)
     payment_type = models.CharField(max_length=20, choices=PAYMENT_CHOICES)
     upi_number = models.CharField(max_length=50)
@@ -218,3 +222,34 @@ class UserAccountDetails(models.Model):
     def __str__(self):
         return f"AccountDetails({self.user.user_id})"
 
+class EmailVerification(models.Model):
+    """
+    Stores OTP for an email address. Used for verifying email BEFORE registration.
+    """
+    email = models.EmailField(db_index=True)
+    otp_code = models.CharField(max_length=10)
+    token = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    is_verified = models.BooleanField(default=False)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        verbose_name = "Email Verification"
+        verbose_name_plural = "Email Verifications"
+        ordering = ["-created_at"]
+
+    def save(self, *args, **kwargs):
+        # Ensure expires_at is set if not provided
+        if not self.expires_at:
+            minutes = getattr(settings, "OTP_EXPIRY_MINUTES", 10)
+            self.expires_at = timezone.now() + timedelta(minutes=minutes)
+        super().save(*args, **kwargs)
+
+    def is_expired(self):
+        if not self.expires_at:
+            return False
+        return timezone.now() > self.expires_at
+
+    def __str__(self):
+        return f"EmailVerification({self.email} - verified={self.is_verified})"

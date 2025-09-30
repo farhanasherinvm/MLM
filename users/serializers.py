@@ -5,6 +5,13 @@ from django.contrib.auth import get_user_model
 from .utils import validate_sponsor
 
 User = get_user_model()
+
+class SendOTPSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+class VerifyOTPSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    otp_code = serializers.CharField()
 class RegistrationSerializer(serializers.Serializer):
     sponsor_id = serializers.CharField(required=True)
     placement_id = serializers.CharField(required=False, allow_blank=True)
@@ -40,6 +47,12 @@ class RegistrationSerializer(serializers.Serializer):
         # ✅ Sponsor must exist
         if not CustomUser.objects.filter(user_id=sponsor_id).exists():
             raise serializers.ValidationError({"sponsor_id": "Sponsor ID does not exist in the system."})
+        
+        # ✅ Email must have been verified via OTP before registering
+        email = data.get("email", "").strip().lower()
+        verified = EmailVerification.objects.filter(email__iexact=email, is_verified=True).exists()
+        if not verified:
+            raise serializers.ValidationError({"email": "Email not verified. Please verify email with OTP before registering."})
 
         return data
     
