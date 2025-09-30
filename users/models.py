@@ -7,8 +7,8 @@ from django.contrib.auth.models import (
     AbstractBaseUser, PermissionsMixin, BaseUserManager
 )
 import json
-from django.utils import timezone
-from django.conf import settings
+import logging
+logger = logging.getLogger(__name__) 
 
 
 PAYMENT_CHOICES = [
@@ -145,7 +145,7 @@ class Payment(models.Model):
     status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default="Pending")
 
     # Manual payment receipt
-    receipt = models.FileField(upload_to="payments/",storage=MediaCloudinaryStorage(),  blank=True, null=True)
+    receipt = models.FileField(upload_to="payments/", storage=MediaCloudinaryStorage(), blank=True, null=True)
 
     # Store registration data as JSON string until verified
     registration_data = models.TextField(blank=True, null=True)
@@ -161,16 +161,30 @@ class Payment(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def set_registration_data(self, data: dict):
-        self.registration_data = json.dumps(data)
-        self.save()
+        """Safely serialize registration data to JSON."""
+        try:
+            self.registration_data = json.dumps(data)
+        except Exception as e:
+            logger.error(f"Failed to serialize registration_data for Payment {self.id}: {e}")
+            self.registration_data = "{}"
+        self.save(update_fields=["registration_data"])
 
     def get_registration_data(self):
-        if self.registration_data:
+        """
+        Safely parse registration_data JSON.
+        Returns {} if empty or invalid JSON.
+        """
+        if not self.registration_data:
+            return {}
+        try:
             return json.loads(self.registration_data)
-        return {}
+        except Exception as e:
+            logger.warning(f"Invalid registration_data JSON for Payment {self.id}: {e}")
+            return {}
 
     def __str__(self):
         return f"Payment {self.id} - {self.status}"
+
     
 class AdminAccountDetails(models.Model):
     account_number = models.CharField(max_length=50)

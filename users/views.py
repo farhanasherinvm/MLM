@@ -27,7 +27,8 @@ from profiles.models import Profile
 from rest_framework.pagination import PageNumberPagination
 # import admin serializer from profiles
 from profiles.serializers import AdminUserListSerializer, AdminUserDetailSerializer, AdminNetworkUserSerializer
-
+import logging
+from django.db import IntegrityError, transaction
 from users.utils import generate_next_placementid
 from users.utils import assign_placement_id
 
