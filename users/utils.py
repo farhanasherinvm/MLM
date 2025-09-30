@@ -321,43 +321,39 @@ def generate_numeric_otp(length=None):
 
 def create_and_send_otp(email):
     """
-    Create an EmailVerification entry with an OTP and attempt to send it.
-    Returns tuple: (EmailVerification instance, sent_boolean, error_message_or_None, provider_info_or_None)
+    Create an EmailVerification record and attempt to send OTP.
+    Returns tuple: (EmailVerification instance, sent_bool, error_string_or_None, traceback_string_or_None)
     """
     try:
         email_clean = email.strip().lower()
         otp = generate_numeric_otp()
         expiry_minutes = int(getattr(settings, "OTP_EXPIRY_MINUTES", 10))
-
         ev = EmailVerification.objects.create(
             email=email_clean,
             otp_code=otp,
             expires_at=timezone.now() + timedelta(minutes=expiry_minutes),
             is_verified=False,
-            attempts=0,
+            attempts=0
         )
 
         subject = "Your verification code"
         message = f"Your verification code is: {otp}\n\nThis code expires in {expiry_minutes} minute(s)."
 
-        sent, error, info = safe_send_mail_with_info(
-            subject=subject,
-            message=message,
-            recipient_list=[email_clean],
-            from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None),
-        )
-
+        sent, error = safe_send_mail(subject, message, [email_clean], from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None))
         if sent:
-            logger.info("OTP created and transport accepted for %s (ev id=%s) via %s", email_clean, ev.id, info.get("transport") if isinstance(info, dict) else None)
-            return ev, True, None, info
+            logger.info("OTP sent to %s (ev id=%s)", email_clean, ev.id)
+            return ev, True, None, None
         else:
-            logger.warning("OTP created but sending failed for %s (ev id=%s). error=%s info=%s", email_clean, ev.id, error, info)
-            return ev, False, str(error), info
-
+            logger.warning("Failed to send OTP to %s (ev id=%s): %s", email_clean, ev.id, error)
+            tb = None
+            return ev, False, str(error), tb
     except Exception as e:
+        # Should never raise; capture traceback and return
         tb = traceback.format_exc()
         logger.exception("Unexpected error in create_and_send_otp")
+        # If ev exists, return it; else, create a placeholder record if possible
         try:
-            return ev, False, str(e), {"traceback": tb}
+            ev
         except NameError:
-            return None, False, str(e), {"traceback": tb}
+            ev = None
+        return ev, False, str(e), tb
