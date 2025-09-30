@@ -42,8 +42,6 @@ def generate_next_userid():
         if not CustomUser.objects.filter(user_id=user_id).exists():
             return user_id
 
-# inside users/views.py - replace existing SendOTPView with this:
-
 class SendOTPView(APIView):
     permission_classes = [AllowAny]
 
@@ -79,6 +77,7 @@ class SendOTPView(APIView):
                 "otp": ev.otp_code if ev else None  # include for immediate testing
             }
             return Response(response, status=status.HTTP_200_OK)
+
     
 class VerifyOTPView(APIView):
     """
