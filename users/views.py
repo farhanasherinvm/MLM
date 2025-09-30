@@ -67,40 +67,36 @@ class SendOTPView(APIView):
         return Response(response, status=status.HTTP_200_OK)
     
 class VerifyOTPView(APIView):
-    """
-    Verify the OTP for an email address.
-    Request body: { "email": "...", "otp_code": "123456" }
-    """
     permission_classes = [AllowAny]
 
     def post(self, request, *args, **kwargs):
         serializer = VerifyOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-
         email = serializer.validated_data["email"].strip().lower()
-        otp_code = serializer.validated_data["otp_code"].strip()
+        otp = serializer.validated_data["otp"].strip()
 
-        # Find latest non-verified record for this email
-        ev = EmailVerification.objects.filter(email__iexact=email, is_verified=False).order_by("-created_at").first()
-        if not ev:
-            return Response({"error": "No OTP request found for this email. Please request OTP first."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            ev = EmailVerification.objects.filter(email=email).latest("created_at")
+        except EmailVerification.DoesNotExist:
+            return Response({"error": "No OTP request found for this email."},
+                            status=status.HTTP_400_BAD_REQUEST)
 
-        if ev.is_expired():
-            return Response({"error": "OTP expired. Please request a new OTP."}, status=status.HTTP_400_BAD_REQUEST)
+        # Check expiry
+        if timezone.now() > ev.expires_at:
+            return Response({"error": "OTP expired."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Optionally enforce max attempts
-        max_attempts = getattr(settings, "OTP_MAX_ATTEMPTS", 5)
-        if ev.attempts >= max_attempts:
-            return Response({"error": "Too many attempts. Please request a new OTP."}, status=status.HTTP_400_BAD_REQUEST)
-
-        if ev.otp_code == otp_code:
-            ev.is_verified = True
-            ev.save(update_fields=["is_verified"])
-            return Response({"message": "Email verified successfully."}, status=status.HTTP_200_OK)
-        else:
+        # ✅ Allow OTP from response (for Render testing) OR from real email delivery (production)
+        if ev.otp_code != otp:
             ev.attempts += 1
             ev.save(update_fields=["attempts"])
             return Response({"error": "Invalid OTP."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Mark verified
+        ev.is_verified = True
+        ev.save(update_fields=["is_verified"])
+
+        return Response({"message": "OTP verified successfully.", "email": email})
+
 
 class RegistrationView(APIView):
     permission_classes = [AllowAny]
