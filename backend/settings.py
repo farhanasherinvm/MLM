@@ -172,6 +172,12 @@ EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD") 
 
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "no-reply@example.com")
+
+
+# If the problem is that EMAIL_HOST_USER is None:
+if not EMAIL_HOST_USER:
+    # This should be a temporary check, but can confirm if the variable is loaded
+    print("EMAIL_HOST_USER is missing!") 
 # EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
 # EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
 # EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
