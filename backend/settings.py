@@ -26,7 +26,7 @@ SECRET_KEY = 'django-insecure-5*(zbso#o2n0ur6wt1-2ku#r^!ev0m9=ob8y67d1u37522s@rr
 
 # SECURITY WARNING: don't run with debug turned on in production!
 # DEBUG = True
-DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+DEBUG = False
 ALLOWED_HOSTS = ["mlm-pmif.onrender.com", '127.0.0.1:8000', '127.0.0.1', 'localhost']
 
 
@@ -192,8 +192,8 @@ EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "zecserbusiness@gmail.com")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "wlsx ausq sxkm qxhr")
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "no-reply@example.com")
 
-RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "rzp_test_RMYgDd9o5n2SOD")
-RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "7rV1tuKez0XP6x6Ue8euXjBs")
+# RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "rzp_test_RMYgDd9o5n2SOD")
+# RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "7rV1tuKez0XP6x6Ue8euXjBs")
 
 
 # Cloudinary Settings
@@ -248,8 +248,8 @@ SIMPLE_JWT = {
 
 # RAZORPAY_KEY_ID ='rzp_test_nGk98ngKrPHf2J'
 # RAZORPAY_KEY_SECRET ='Gh7CpAcNtrKTQsE35rLEAm19'
-# RAZORPAY_KEY_ID='rzp_test_RMYgDd9o5n2SOD'
-# RAZORPAY_KEY_SECRET='7rV1tuKez0XP6x6Ue8euXjBs'
+RAZORPAY_KEY_ID='rzp_test_RMYgDd9o5n2SOD'
+RAZORPAY_KEY_SECRET='7rV1tuKez0XP6x6Ue8euXjBs'
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",  # For local development with your Vite/React/Vue app
     "http://127.0.0.1:5173",
