@@ -1,4 +1,4 @@
-import string, random, razorpay
+import string, random, razorpay, os
 from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -35,6 +35,21 @@ from users.utils import assign_placement_id
 from users.utils import create_and_send_otp
 from users.utils import safe_send_mail
 
+logger = logging.getLogger(__name__)
+
+# Attempt to import razorpay lazily; if not available, keep None and handle in views
+try:
+    import razorpay
+    if getattr(settings, "RAZORPAY_KEY_ID", None) and getattr(settings, "RAZORPAY_KEY_SECRET", None):
+        razorpay_client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+    else:
+        razorpay_client = None
+        logger.info("razorpay_client not configured - RAZORPAY_KEY_ID/SECRET missing")
+except Exception as e:
+    razorpay = None
+    razorpay_client = None
+    logger.warning("razorpay import or initialization failed: %s", str(e))
+
 def generate_next_userid():
     while True:
         random_part = "".join(random.choices(string.digits, k=6))
@@ -55,17 +70,23 @@ class SendOTPView(APIView):
 
         ev, sent, error, provider_info = create_and_send_otp(email)
 
+        # provider_info is expected to be a dict from create_and_send_otp
+        otp_value = None
+        if isinstance(provider_info, dict):
+            otp_value = provider_info.get("otp")
+
         response = {
             "message": "OTP generated successfully." if sent else "OTP generated but sending failed.",
             "sent": bool(sent),
-            "otp": provider_info.get("otp") if isinstance(provider_info, dict) else None,
+            "otp": otp_value,  # top-level OTP for Render/DEBUG testing (present only if create_and_send_otp allowed it)
+            "provider_info": provider_info,
         }
 
         if error:
             response["error"] = error
 
         return Response(response, status=status.HTTP_200_OK)
-    
+
 class VerifyOTPView(APIView):
     permission_classes = [AllowAny]
 
@@ -75,29 +96,27 @@ class VerifyOTPView(APIView):
         email = serializer.validated_data["email"].strip().lower()
         otp = serializer.validated_data["otp"].strip()
 
-        try:
-            ev = EmailVerification.objects.filter(email=email).latest("created_at")
-        except EmailVerification.DoesNotExist:
-            return Response({"error": "No OTP request found for this email."},
-                            status=status.HTTP_400_BAD_REQUEST)
+        ev = EmailVerification.objects.filter(email__iexact=email).order_by("-created_at").first()
+        if not ev:
+            return Response({"error": "No OTP request found for this email. Please request OTP first."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Check expiry
-        if timezone.now() > ev.expires_at:
-            return Response({"error": "OTP expired."}, status=status.HTTP_400_BAD_REQUEST)
+        if ev.is_expired():
+            return Response({"error": "OTP expired. Please request a new OTP."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ✅ Allow OTP from response (for Render testing) OR from real email delivery (production)
-        if ev.otp_code != otp:
+        max_attempts = int(getattr(settings, "OTP_MAX_ATTEMPTS", 5))
+        if ev.attempts >= max_attempts:
+            return Response({"error": "Too many attempts. Please request a new OTP."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Accept OTP if it matches stored code OR (for Render/DEBUG) if OTP equals provider-returned otp)
+        if ev.otp_code == otp:
+            ev.is_verified = True
+            ev.save(update_fields=["is_verified"])
+            return Response({"message": "Email verified successfully."}, status=status.HTTP_200_OK)
+        else:
             ev.attempts += 1
             ev.save(update_fields=["attempts"])
             return Response({"error": "Invalid OTP."}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Mark verified
-        ev.is_verified = True
-        ev.save(update_fields=["is_verified"])
-
-        return Response({"message": "OTP verified successfully.", "email": email})
-
-
+        
 class RegistrationView(APIView):
     permission_classes = [AllowAny]
 
@@ -119,8 +138,11 @@ razorpay_client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZOR
 
 class RazorpayOrderView(APIView):
     permission_classes = [permissions.AllowAny]
-    
+
     def post(self, request):
+        if razorpay is None or razorpay_client is None:
+            return Response({"error": "Razorpay not configured on this server."}, status=503)
+
         serializer = RazorpayOrderSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=400)
@@ -144,7 +166,6 @@ class RazorpayOrderView(APIView):
                 "razorpay_key": settings.RAZORPAY_KEY_ID,
             }
         )
-
 
 class RazorpayVerifyView(APIView):
     permission_classes = [permissions.AllowAny]

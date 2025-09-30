@@ -10,8 +10,10 @@ class SendOTPSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
 class VerifyOTPSerializer(serializers.Serializer):
+    # unified to accept "otp" (short, easier in API/testing).
     email = serializers.EmailField()
-    otp_code = serializers.CharField()
+    otp = serializers.CharField()
+    
 class RegistrationSerializer(serializers.Serializer):
     sponsor_id = serializers.CharField(required=True)
     placement_id = serializers.CharField(required=False, allow_blank=True)
