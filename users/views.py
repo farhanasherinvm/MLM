@@ -50,19 +50,34 @@ class SendOTPView(APIView):
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data["email"].strip().lower()
 
+        # prevent requesting OTP for already-registered email
         if CustomUser.objects.filter(email__iexact=email).exists():
             return Response({"error": "Email already registered."}, status=status.HTTP_400_BAD_REQUEST)
 
-        ev = create_and_send_otp(email)
+        try:
+            ev, sent, error = create_and_send_otp(email)
 
-        # ✅ Always return OTP in API response (for testing)
-        return Response(
-            {
-                "message": "OTP generated successfully.",
-                "otp": ev.otp_code
-            },
-            status=status.HTTP_200_OK
-        )
+            response_data = {
+                "message": "OTP processing complete.",
+                "sent": bool(sent),
+            }
+
+            # include helpful info for testing if send failed or if DEBUG=True
+            if not sent:
+                response_data["error"] = error or "Unknown error sending email."
+                # include OTP so you can verify in Postman when email sending fails
+                response_data["otp"] = ev.otp_code
+            elif settings.DEBUG:
+                # still include OTP in debug mode (safe for dev only)
+                response_data["debug_otp"] = ev.otp_code
+
+            return Response(response_data, status=status.HTTP_200_OK)
+
+        except Exception as ex:
+            # Never raise a 500 due to email sending — return structured error response.
+            logging.exception("Unexpected error in SendOTPView")
+            return Response({"error": "Failed to create OTP.", "details": str(ex)}, status=status.HTTP_200_OK)
+
     
 class VerifyOTPView(APIView):
     """
