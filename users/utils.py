@@ -14,8 +14,12 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
+import os
 import random
 import string
+import json
+import urllib.request
+import traceback
 from django.utils import timezone
 from datetime import timedelta
 
@@ -104,70 +108,19 @@ def export_users_pdf(queryset, filename="users.pdf", title="Users Report"):
     response.write(pdf)
     return response
 
-def _send_via_django(subject, message, recipient_list, from_email=None, fail_silently=True):
-    try:
-        send_mail(
-            subject=subject,
-            message=message,
-            from_email=from_email or settings.DEFAULT_FROM_EMAIL,
-            recipient_list=recipient_list,
-            fail_silently=fail_silently,
-        )
-        return True, None
-    except Exception as e:
-        logger.warning("Django send_mail failed: %s", e)
-        return False, f"Django send_mail failed: {e}"
-
-def _send_via_smtplib(subject, message, recipient_list, from_email=None):
+def _send_via_sendgrid(subject, message, recipient_list, from_email=None):
     """
-    Low-level SMTP fallback using smtplib. Uses settings.EMAIL_* credentials.
-    This may fail if the host blocks outbound SMTP.
-    """
-    try:
-        import smtplib
-        from email.mime.text import MIMEText
-
-        smtp_host = getattr(settings, "EMAIL_HOST", "smtp.gmail.com")
-        smtp_port = getattr(settings, "EMAIL_PORT", 587)
-        use_tls = getattr(settings, "EMAIL_USE_TLS", True)
-        username = getattr(settings, "EMAIL_HOST_USER", None)
-        password = getattr(settings, "EMAIL_HOST_PASSWORD", None)
-        from_addr = from_email or username or ("no-reply@" + (settings.ALLOWED_HOSTS[0] if settings.ALLOWED_HOSTS else "example.com"))
-        to_addr_list = recipient_list if isinstance(recipient_list, (list, tuple)) else [recipient_list]
-
-        msg = MIMEText(message)
-        msg["Subject"] = subject
-        msg["From"] = from_addr
-        msg["To"] = ", ".join(to_addr_list)
-
-        server = smtplib.SMTP(smtp_host, smtp_port, timeout=20)
-        if use_tls:
-            server.starttls()
-        if username and password:
-            server.login(username, password)
-        server.sendmail(from_addr, to_addr_list, msg.as_string())
-        server.quit()
-        return True, None
-    except Exception as e:
-        logger.warning("smtplib send failed: %s", e)
-        return False, f"smtplib send failed: {e}"
-
-def _send_via_sendgrid_http(subject, message, recipient_list, from_email=None):
-    """
-    HTTP fallback using SendGrid Web API. Requires settings.SENDGRID_API_KEY.
-    If you want to use SendGrid, set SENDGRID_API_KEY in your settings (or environment).
+    Send via SendGrid HTTP API. Requires settings.SENDGRID_API_KEY.
+    Returns (True, None) on success, (False, error_string) on failure.
     """
     api_key = getattr(settings, "SENDGRID_API_KEY", None)
     if not api_key:
-        return False, "SendGrid API key not configured."
+        return False, "SendGrid API key not configured"
     try:
-        import json
-        import urllib.request
-
         url = "https://api.sendgrid.com/v3/mail/send"
         data = {
-            "personalizations": [{"to": [{"email": email} for email in (recipient_list if isinstance(recipient_list, (list,tuple)) else [recipient_list])]}],
-            "from": {"email": from_email or settings.DEFAULT_FROM_EMAIL},
+            "personalizations": [{"to": [{"email": e} for e in (recipient_list if isinstance(recipient_list, (list,tuple)) else [recipient_list])]}],
+            "from": {"email": from_email or getattr(settings, "DEFAULT_FROM_EMAIL", "no-reply@example.com")},
             "subject": subject,
             "content": [{"type": "text/plain", "value": message}],
         }
@@ -176,64 +129,124 @@ def _send_via_sendgrid_http(subject, message, recipient_list, from_email=None):
             "Authorization": f"Bearer {api_key}"
         })
         with urllib.request.urlopen(req, timeout=20) as resp:
-            if 200 <= resp.getcode() < 300:
+            status = resp.getcode()
+            if 200 <= status < 300:
                 return True, None
-            else:
-                return False, f"SendGrid returned status {resp.getcode()}"
+            return False, f"SendGrid returned HTTP {status}"
     except Exception as e:
-        logger.warning("SendGrid HTTP send failed: %s", e)
-        return False, f"SendGrid HTTP send failed: {e}"
+        logger.warning("SendGrid send failed: %s", e)
+        return False, f"SendGrid exception: {e}"
 
-import os
-
-def safe_send_mail(subject, message, recipient_list, from_email=None, fail_silently=True):
+def _send_via_django(subject, message, recipient_list, from_email=None):
     """
-    Try to send mail. On Render (where SMTP is blocked), skip sending to avoid 500.
+    Use Django send_mail (wrap exceptions).
     """
     try:
-        # Detect Render environment
-        if os.environ.get("RENDER"):
-            # ✅ Skip actual send, pretend success
-            logger.warning("Running on Render: skipping real email send.")
-            return True, None
-
-        # Otherwise use Django's email backend (works locally)
-        send_mail(
-            subject=subject,
-            message=message,
-            from_email=from_email or settings.DEFAULT_FROM_EMAIL,
-            recipient_list=recipient_list,
-            fail_silently=False,
-        )
+        send_mail(subject, message, from_email or getattr(settings, "DEFAULT_FROM_EMAIL", None), recipient_list)
         return True, None
     except Exception as e:
-        logger.error("Email send failed: %s", e)
-        return False, str(e)
-    
+        logger.warning("Django send_mail failed: %s", e)
+        return False, f"Django send_mail exception: {e}"
+
+def _send_via_smtplib(subject, message, recipient_list, from_email=None):
+    """
+    Low-level smtplib fallback.
+    """
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        smtp_host = getattr(settings, "EMAIL_HOST", "smtp.gmail.com")
+        smtp_port = getattr(settings, "EMAIL_PORT", 587)
+        use_tls = getattr(settings, "EMAIL_USE_TLS", True)
+        username = getattr(settings, "EMAIL_HOST_USER", None)
+        password = getattr(settings, "EMAIL_HOST_PASSWORD", None)
+        from_addr = from_email or username or ("no-reply@" + (settings.ALLOWED_HOSTS[0] if settings.ALLOWED_HOSTS else "example.com"))
+        to_addrs = recipient_list if isinstance(recipient_list, (list,tuple)) else [recipient_list]
+
+        msg = MIMEText(message)
+        msg["Subject"] = subject
+        msg["From"] = from_addr
+        msg["To"] = ", ".join(to_addrs)
+
+        server = smtplib.SMTP(smtp_host, smtp_port, timeout=20)
+        if use_tls:
+            server.starttls()
+        if username and password:
+            server.login(username, password)
+        server.sendmail(from_addr, to_addrs, msg.as_string())
+        server.quit()
+        return True, None
+    except Exception as e:
+        logger.warning("smtplib send failed: %s", e)
+        return False, f"smtplib exception: {e}"
+
+def safe_send_mail(subject, message, recipient_list, from_email=None):
+    """
+    Robust mailer: try SendGrid HTTP, then Django send_mail, then smtplib.
+    Returns (sent_bool, error_string_or_None).
+    This function will NOT raise — it always returns a (bool, str|None).
+    """
+    # 1) SendGrid first (HTTP)
+    sent, err = _send_via_sendgrid(subject, message, recipient_list, from_email)
+    if sent:
+        return True, None
+
+    # 2) Django send_mail
+    sent, err2 = _send_via_django(subject, message, recipient_list, from_email)
+    if sent:
+        return True, None
+
+    # 3) smtplib fallback
+    sent, err3 = _send_via_smtplib(subject, message, recipient_list, from_email)
+    if sent:
+        return True, None
+
+    # Combine errors for debugging
+    errors = "; ".join(filter(None, [err, err2 if 'err2' in locals() else None, err3 if 'err3' in locals() else None]))
+    return False, errors or "All send attempts failed"
+
+# ----------------------------
+# OTP helpers
+# ----------------------------
 def generate_numeric_otp(length=None):
-    """Generate numeric OTP string. Length uses settings.OTP_LENGTH or defaults to 6."""
-    length = length or getattr(settings, "OTP_LENGTH", 6)
-    return "".join(random.choices(string.digits, k=int(length)))
+    length = int(length or getattr(settings, "OTP_LENGTH", 6))
+    return "".join(random.choices(string.digits, k=length))
 
 def create_and_send_otp(email):
-    email = email.strip().lower()
-    otp = generate_numeric_otp()
-    expiry_minutes = getattr(settings, "OTP_EXPIRY_MINUTES", 10)
-
-    ev = EmailVerification.objects.create(
-        email=email,
-        otp_code=otp,
-        expires_at=timezone.now() + timedelta(minutes=expiry_minutes),
-        is_verified=False,
-        attempts=0
-    )
-
-    subject = "Your verification code"
-    message = f"Your verification code is: {otp}\n\nThis code expires in {expiry_minutes} minutes."
-
+    """
+    Create an EmailVerification record and attempt to send OTP.
+    Returns tuple: (EmailVerification instance, sent_bool, error_string_or_None, traceback_string_or_None)
+    """
     try:
-        sent, error = safe_send_mail(subject=subject, message=message, recipient_list=[email])
-    except Exception as e:
-        sent, error = False, str(e)
+        email_clean = email.strip().lower()
+        otp = generate_numeric_otp()
+        expiry_minutes = int(getattr(settings, "OTP_EXPIRY_MINUTES", 10))
+        ev = EmailVerification.objects.create(
+            email=email_clean,
+            otp_code=otp,
+            expires_at=timezone.now() + timedelta(minutes=expiry_minutes),
+            is_verified=False,
+            attempts=0
+        )
 
-    return ev, sent, error
+        subject = "Your verification code"
+        message = f"Your verification code is: {otp}\n\nThis code expires in {expiry_minutes} minute(s)."
+
+        sent, error = safe_send_mail(subject, message, [email_clean], from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None))
+        if sent:
+            logger.info("OTP sent to %s (ev id=%s)", email_clean, ev.id)
+            return ev, True, None, None
+        else:
+            logger.warning("Failed to send OTP to %s (ev id=%s): %s", email_clean, ev.id, error)
+            tb = None
+            return ev, False, str(error), tb
+    except Exception as e:
+        # Should never raise; capture traceback and return
+        tb = traceback.format_exc()
+        logger.exception("Unexpected error in create_and_send_otp")
+        # If ev exists, return it; else, create a placeholder record if possible
+        try:
+            ev
+        except NameError:
+            ev = None
+        return ev, False, str(e), tb
