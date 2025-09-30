@@ -186,32 +186,25 @@ def _send_via_sendgrid_http(subject, message, recipient_list, from_email=None):
 
 def safe_send_mail(subject, message, recipient_list, from_email=None, fail_silently=True):
     """
-    Robust mailer:
-      1) Try Django send_mail (uses settings)
-      2) If fails, try direct smtplib (Gmail-like credentials)
-      3) If fails, try SendGrid HTTP API if SENDGRID_API_KEY configured
-      4) If everything fails, return (False, error_message)
-    Returns: (sent_boolean, error_message_or_None)
+    Always try HTTP API first (SendGrid). SMTP will almost always fail on Render.
     """
-    # Attempt via Django send_mail first
-    sent, err = _send_via_django(subject, message, recipient_list, from_email, fail_silently)
+    # 1) Try SendGrid API
+    sent, err = _send_via_sendgrid_http(subject, message, recipient_list, from_email)
     if sent:
         return True, None
 
-    # Try smtplib fallback
-    sent2, err2 = _send_via_smtplib(subject, message, recipient_list, from_email)
+    # 2) Fallback to Django send_mail (SMTP)
+    sent2, err2 = _send_via_django(subject, message, recipient_list, from_email, fail_silently)
     if sent2:
         return True, None
 
-    # Try SendGrid HTTP fallback
-    sent3, err3 = _send_via_sendgrid_http(subject, message, recipient_list, from_email)
+    # 3) Fallback to smtplib (last resort)
+    sent3, err3 = _send_via_smtplib(subject, message, recipient_list, from_email)
     if sent3:
         return True, None
 
-    # All attempts failed, combine errors for debugging/logging
-    combined_error = "; ".join(filter(None, [err, err2, err3]))
-    logger.error("All email sending attempts failed: %s", combined_error)
-    return False, combined_error
+    return False, "; ".join(filter(None, [err, err2, err3]))
+
     
 def generate_numeric_otp(length=None):
     """Generate numeric OTP string. Length uses settings.OTP_LENGTH or defaults to 6."""
