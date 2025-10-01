@@ -18,11 +18,11 @@ CORS_ALLOWED_ORIGINS = [
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-# SECRET_KEY = 'django-insecure-5*(zbso#o2n0ur6wt1-2ku#r^!ev0m9=ob8y67d1u37522s@rr'
-SECRET_KEY = config('DJANGO_SECRET_KEY') 
+SECRET_KEY = 'django-insecure-5*(zbso#o2n0ur6wt1-2ku#r^!ev0m9=ob8y67d1u37522s@rr'
+
 # SECURITY WARNING: don't run with debug turned on in production!
-# DEBUG = True
-DEBUG = config('DEBUG', default=False, cast=bool)
+DEBUG = True
+#DEBUG = config('DEBUG', default=False, cast=bool)
 
 ALLOWED_HOSTS = ["mlm-pmif.onrender.com", '127.0.0.1:8000', '127.0.0.1', 'localhost']
 
