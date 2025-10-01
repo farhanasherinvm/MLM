@@ -86,35 +86,35 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
 
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.postgresql',
-#         'NAME': 'neondb',
-#         'USER': 'neondb_owner',
-#         'PASSWORD': 'npg_OAZPrjz8Mp0w',
-#         'HOST': 'ep-floral-resonance-adgcweml-pooler.c-2.us-east-1.aws.neon.tech',
-#         'PORT': '5432',
-#         'OPTIONS': {
-#             'sslmode': 'require',
-#         },
-#         'CONN_MAX_AGE': 600,
-#     }
-# }
-
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('DB_NAME'),
-        'USER': config('DB_USER'),
-        'PASSWORD': config('DB_PASSWORD'),
-        'HOST': config('DB_HOST'),
-        'PORT': config('DB_PORT', cast=int),
+        'NAME': 'neondb',
+        'USER': 'neondb_owner',
+        'PASSWORD': 'npg_OAZPrjz8Mp0w',
+        'HOST': 'ep-floral-resonance-adgcweml-pooler.c-2.us-east-1.aws.neon.tech',
+        'PORT': '5432',
         'OPTIONS': {
             'sslmode': 'require',
         },
         'CONN_MAX_AGE': 600,
     }
 }
+
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': config('DB_NAME'),
+#         'USER': config('DB_USER'),
+#         'PASSWORD': config('DB_PASSWORD'),
+#         'HOST': config('DB_HOST'),
+#         'PORT': config('DB_PORT', cast=int),
+#         'OPTIONS': {
+#             'sslmode': 'require',
+#         },
+#         'CONN_MAX_AGE': 600,
+#     }
+# }
 
 
 # ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv())
@@ -161,13 +161,13 @@ USE_TZ = True
 # EMAIL_USE_TLS = config("EMAIL_USE_TLS", default=True, cast=bool)
 # EMAIL_USE_SSL = config("EMAIL_USE_SSL", default=False, cast=bool) # <-- Ensures no conflict with TLS
 
-# EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-# EMAIL_HOST = 'smtp.gmail.com'
-# EMAIL_PORT = 587
-# EMAIL_USE_TLS = True
-# EMAIL_HOST_USER = 'zecserbusiness@gmail.com'
-# EMAIL_HOST_PASSWORD = 'wlsx ausq sxkm qxhr'
-# DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = 'zecserbusiness@gmail.com'
+EMAIL_HOST_PASSWORD = 'lfqx aljl srkx ttur'
+DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
 # # Email Settings
 # EMAIL_BACKEND = config("EMAIL_BACKEND", default="django.core.mail.backends.smtp.EmailBackend")
@@ -181,17 +181,7 @@ USE_TZ = True
 
 # DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default=EMAIL_HOST_USER)
 # Email Settings (Consolidated and Corrected)
-EMAIL_BACKEND = config("EMAIL_BACKEND", default="django.core.mail.backends.smtp.EmailBackend")
-EMAIL_HOST = config("EMAIL_HOST")
-EMAIL_PORT = config("EMAIL_PORT", default=587, cast=int)
-EMAIL_USE_TLS = config("EMAIL_USE_TLS", default=True, cast=bool)
-EMAIL_USE_SSL = config("EMAIL_USE_SSL", default=False, cast=bool) # <-- Ensures no conflict with TLS
 
-# These pull from Render Env Vars
-EMAIL_HOST_USER = config("EMAIL_HOST_USER") 
-EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD") 
-
-DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default=EMAIL_HOST_USER)
 # EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
 # EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
 # EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))

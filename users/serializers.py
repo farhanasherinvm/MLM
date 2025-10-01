@@ -50,11 +50,11 @@ class RegistrationSerializer(serializers.Serializer):
         if not CustomUser.objects.filter(user_id=sponsor_id).exists():
             raise serializers.ValidationError({"sponsor_id": "Sponsor ID does not exist in the system."})
         
-        # ✅ Email must have been verified via OTP before registering
-        email = data.get("email", "").strip().lower()
-        verified = EmailVerification.objects.filter(email__iexact=email, is_verified=True).exists()
-        if not verified:
-            raise serializers.ValidationError({"email": "Please verify email with OTP before registering."})
+        # # ✅ Email must have been verified via OTP before registering
+        # email = data.get("email", "").strip().lower()
+        # verified = EmailVerification.objects.filter(email__iexact=email, is_verified=True).exists()
+        # if not verified:
+        #     raise serializers.ValidationError({"email": "Please verify email with OTP before registering."})
 
         return data
     

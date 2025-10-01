@@ -34,7 +34,7 @@ from users.utils import generate_next_placementid
 from users.utils import assign_placement_id
 from users.utils import create_and_send_otp
 from users.utils import safe_send_mail
-
+from django.core.mail import send_mail
 logger = logging.getLogger(__name__)
 
 # Attempt to import razorpay lazily; if not available, keep None and handle in views
@@ -122,7 +122,23 @@ class RegistrationView(APIView):
 
     def post(self, request, *args, **kwargs):
         serializer = RegistrationSerializer(data=request.data)
+        
         if serializer.is_valid():
+            user = serializer.save()
+            # Generate 6-digit OTP
+            otp = str(random.randint(100000, 999999))
+            user.otp = otp
+            user.is_active = False  # deactivate user until OTP verified
+            user.save()
+
+            # Send OTP to email
+            send_mail(
+                'Your OTP Code',
+                f'Your OTP is: {otp}',
+                settings.EMAIL_HOST_USER,
+                [user.email],
+                fail_silently=False,
+            )
             payment = serializer.create_payment(serializer.validated_data)
             return Response(
                 {
