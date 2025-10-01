@@ -34,7 +34,7 @@ from users.utils import generate_next_placementid
 from users.utils import assign_placement_id
 from users.utils import create_and_send_otp
 from users.utils import safe_send_mail
-from django.core.mail import send_mail
+
 logger = logging.getLogger(__name__)
 
 # Attempt to import razorpay lazily; if not available, keep None and handle in views
@@ -116,35 +116,46 @@ class VerifyOTPView(APIView):
             ev.attempts += 1
             ev.save(update_fields=["attempts"])
             return Response({"error": "Invalid OTP."}, status=status.HTTP_400_BAD_REQUEST)
-        
+from django.core.mail import send_mail  
 class RegistrationView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request, *args, **kwargs):
         serializer = RegistrationSerializer(data=request.data)
-        
         if serializer.is_valid():
+            # 1. Create the user (password is hashed, user is is_active=False)
+            # This calls RegisterSerializer.create()
             user = serializer.save()
-            # Generate 6-digit OTP
+
+            # 2. Generate and set 6-digit OTP
             otp = str(random.randint(100000, 999999))
             user.otp = otp
-            user.is_active = False  # deactivate user until OTP verified
-            user.save()
+            user.is_active = False  # Deactivate user until OTP verified (redundant but safe)
+            user.save() # Save the OTP to the database
 
-            # Send OTP to email
-            send_mail(
-                'Your OTP Code',
-                f'Your OTP is: {otp}',
-                settings.EMAIL_HOST_USER,
-                [user.email],
-                fail_silently=False,
-            )
+            # 3. Send OTP to email
+            try:
+                send_mail(
+                    'Your Registration OTP Code',
+                    f'Your One-Time Password for account verification is: {otp}',
+                    settings.EMAIL_HOST_USER,
+                    [user.email],
+                    fail_silently=False,
+                )
+            except Exception as e:
+                # Log the error and delete the user to prevent orphaned accounts
+                # In production, use logging.error(f"OTP email failed for {user.email}: {e}")
+                user.delete() 
+                return Response(
+                    {"email": "Registration failed: Could not send verification email."},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE
+                )
             payment = serializer.create_payment(serializer.validated_data)
             return Response(
                 {
                     "registration_token": str(payment.registration_token),
                     "admin_account_details": AdminAccountSerializer(AdminAccountDetails.objects.first()).data if AdminAccountDetails.objects.exists() else {},
-                    "message": "Choose payment method: Pay Now (Razorpay) or upload receipt with this token.",
+                    "message": "A verification OTP has been sent to your email. Please verify before proceeding to payment. Choose payment method: Pay Now (Razorpay) or upload receipt with this token.",
                 },
                 status=status.HTTP_201_CREATED,
             )

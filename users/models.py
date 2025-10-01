@@ -71,7 +71,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     is_active = models.BooleanField(default=False)
     is_staff = models.BooleanField(default=False)
     is_admin_user = models.BooleanField(default=False)
-
+    otp = models.CharField(max_length=6, blank=True, null=True)
     objects = CustomUserManager()
 
     USERNAME_FIELD = "user_id" 
