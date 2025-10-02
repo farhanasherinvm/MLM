@@ -51,18 +51,20 @@ except Exception as e:
     razorpay_client = None
 
 def safe_send_mail(subject, message, recipient_list):
-    """Helper to send email safely without crashing API."""
+    """Send email safely. Never let SMTP errors crash the API."""
     try:
         send_mail(
             subject=subject,
             message=message,
-            from_email=settings.EMAIL_HOST_USER,
+            from_email=getattr(settings, "EMAIL_HOST_USER", None) or "noreply@example.com",
             recipient_list=recipient_list,
-            fail_silently=True,   # ✅ patched: was False
+            fail_silently=False,  # let Django raise inside send_mail
         )
-        logger.info(f"Email attempted to {recipient_list}")
+        logger.info(f"Email successfully attempted to {recipient_list}")
     except Exception as e:
-        logger.error(f"Failed to send email to {recipient_list}: {e}")
+        logger.warning(f"Email sending failed to {recipient_list}: {e}")
+        return False
+    return True
 
 def generate_next_userid():
     while True:
@@ -253,15 +255,11 @@ class RazorpayVerifyView(APIView):
         payment.user = user
         payment.save(update_fields=["user"])
 
-        # Send confirmation email (log failures but do not fail verification)
-        try:
-            safe_send_mail(
-                subject="Your MLM User ID",
-                message=f"Hello {user.first_name},\n\nYour payment is verified. Your User ID is: {user.user_id}",
-                recipient_list=[user.email],
-            )
-        except Exception as e:
-            logger.warning("Failed to send user-id email for user %s: %s", user.user_id, e)
+        safe_send_mail(
+            subject="Your MLM User ID",
+            message=f"Hello {user.first_name},\n\nYour payment is verified. Your User ID is: {user.user_id}",
+            recipient_list=[user.email],
+        )
 
         return Response({
             "message": "Payment verified successfully",

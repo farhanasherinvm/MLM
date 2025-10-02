@@ -9,7 +9,6 @@ from django.http import HttpResponse
 from users.models import CustomUser
 
 import logging
-from django.core.mail import send_mail
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
