@@ -29,10 +29,13 @@ from rest_framework.pagination import PageNumberPagination
 # import admin serializer from profiles
 from profiles.serializers import AdminUserListSerializer, AdminUserDetailSerializer, AdminNetworkUserSerializer
 import logging
-from django.db import IntegrityError, transaction
+import urllib.request
+import json
 from users.utils import generate_next_placementid
 from users.utils import assign_placement_id
 from django.core.mail import send_mail
+import smtplib
+from email.mime.text import MIMEText
 
 logger = logging.getLogger(__name__)
 
@@ -54,40 +57,97 @@ def generate_next_userid():
         if not CustomUser.objects.filter(user_id=user_id).exists():
             return user_id
 class RegisterView(APIView):
-    """Step 1: Register basic details and send OTP (stored in Payment.registration_data)."""
     permission_classes = [AllowAny]
 
-    def post(self, request, *args, **kwargs):
+    def post(self, request):
         serializer = RegistrationSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        validated = dict(serializer.validated_data)
+        if serializer.is_valid():
+            user = serializer.save()
+            
+            # Generate 6-digit OTP
+            otp = str(random.randint(100000, 999999))
+            user.otp = otp
+            user.is_active = False
+            user.save()
 
-        # Generate OTP
-        otp = str(random.randint(100000, 999999))
-        validated["otp"] = otp
-        validated["otp_created_at"] = datetime.utcnow()
+            # --- Safe Email Sending Logic ---
+            subject = "Your OTP Code"
+            message = f"Your OTP is: {otp}"
+            recipient_list = [user.email]
+            from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "no-reply@example.com")
+            email_sent = False
+            errors = []
 
-        try:
-            payment = Payment.objects.create()
-            payment.set_registration_data(validated)
-        except Exception as e:
-            return Response({"error": str(e)}, status=500)
+            # 1. Try SendGrid if API key exists
+            api_key = getattr(settings, "SENDGRID_API_KEY", None)
+            if api_key:
+                try:
+                    url = "https://api.sendgrid.com/v3/mail/send"
+                    data = {
+                        "personalizations": [{"to": [{"email": user.email}]}],
+                        "from": {"email": from_email},
+                        "subject": subject,
+                        "content": [{"type": "text/plain", "value": message}],
+                    }
+                    req = urllib.request.Request(
+                        url, data=json.dumps(data).encode("utf-8"),
+                        headers={
+                            "Content-Type": "application/json",
+                            "Authorization": f"Bearer {api_key}"
+                        }
+                    )
+                    with urllib.request.urlopen(req, timeout=20) as resp:
+                        if 200 <= resp.getcode() < 300:
+                            email_sent = True
+                except Exception as e:
+                    errors.append(f"SendGrid failed: {e}")
 
-        # Send OTP via email
-        subject = "Your Verification OTP"
-        message = f"Your OTP for registration is: {otp}\nIt will expire in {getattr(settings, 'OTP_EXPIRY_MINUTES', 10)} minutes."
-        send_mail(
-            subject="Your Verification OTP",
-            message=f"Your OTP for registration is: {otp}",
-            from_email=settings.EMAIL_HOST_USER,
-            recipient_list=[validated["email"]],
-            fail_silently=False,
-        )
+            # 2. Fallback: Django send_mail
+            if not email_sent:
+                try:
+                    send_mail(subject, message, from_email, recipient_list)
+                    email_sent = True
+                except Exception as e:
+                    errors.append(f"Django send_mail failed: {e}")
 
-        return Response({
-            "message": "Registered successfully. Please verify OTP sent to your email.",
-            "email": validated["email"],
-        }, status=status.HTTP_201_CREATED)
+            # 3. Fallback: smtplib
+            if not email_sent:
+                try:
+                    smtp_host = getattr(settings, "EMAIL_HOST", "smtp.gmail.com")
+                    smtp_port = int(getattr(settings, "EMAIL_PORT", 587))
+                    use_tls = getattr(settings, "EMAIL_USE_TLS", True)
+                    username = getattr(settings, "EMAIL_HOST_USER", None)
+                    password = getattr(settings, "EMAIL_HOST_PASSWORD", None)
+
+                    msg = MIMEText(message)
+                    msg["Subject"] = subject
+                    msg["From"] = from_email
+                    msg["To"] = user.email
+
+                    server = smtplib.SMTP(smtp_host, smtp_port, timeout=20)
+                    if use_tls:
+                        server.starttls()
+                    if username and password:
+                        server.login(username, password)
+                    server.sendmail(from_email, recipient_list, msg.as_string())
+                    server.quit()
+                    email_sent = True
+                except Exception as e:
+                    errors.append(f"smtplib failed: {e}")
+
+            if not email_sent:
+                logger.warning("All email attempts failed for user %s: %s", user.email, errors)
+                return Response(
+                    {"message": "User created but OTP email could not be sent.", "errors": errors},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+            return Response(
+                {"message": "User registered successfully. Please verify OTP sent to your email."},
+                status=status.HTTP_201_CREATED
+            )
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class VerifyOTPView(APIView):
     """Step 2: Verify OTP. Returns registration_token for payment."""
