@@ -10,7 +10,6 @@ class SendOTPSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
 class VerifyOTPSerializer(serializers.Serializer):
-    # unified to accept "otp" (short, easier in API/testing).
     email = serializers.EmailField()
     otp = serializers.CharField()
     
@@ -29,55 +28,42 @@ class RegistrationSerializer(serializers.Serializer):
     confirm_password = serializers.CharField(write_only=True)
 
     def validate(self, data):
-        # ✅ Passwords must match
         if data["password"] != data["confirm_password"]:
             raise serializers.ValidationError({"password": "Passwords do not match."})
-
-        # ✅ Unique email check
         if CustomUser.objects.filter(email=data["email"]).exists():
             raise serializers.ValidationError({"email": "Email already exists."})
-        
-        # ✅ Unique mobile check
         if CustomUser.objects.filter(mobile=data["mobile"]).exists():
             raise serializers.ValidationError({"mobile": "Mobile number already exists."})
-
-        # ✅ Sponsor must be provided
-        sponsor_id = data.get("sponsor_id")
-        if not sponsor_id:
-            raise serializers.ValidationError({"sponsor_id": "Sponsor ID is required."})
-
-        # ✅ Sponsor must exist
-        if not CustomUser.objects.filter(user_id=sponsor_id).exists():
-            raise serializers.ValidationError({"sponsor_id": "Sponsor ID does not exist in the system."})
-        
+        if not CustomUser.objects.filter(user_id=data["sponsor_id"]).exists():
+            raise serializers.ValidationError({"sponsor_id": "Sponsor ID does not exist."})
         return data
     
-    def create_user_instance(self, validated_data, temp_user_id):
-        """
-        Create the inactive user (with OTP stored separately in view).
-        This method creates and returns the CustomUser instance.
-        """
-        data = dict(validated_data)
-        password = data.pop("password")
-        data.pop("confirm_password", None)
-        # Remove fields that are not directly model fields (if any)
-        # Build kwargs for CustomUserManager.create_user
-        kwargs = {
-            # "user_id": temp_user_id,
-            "email": data.get("email"),
-            "first_name": data.get("first_name", ""),
-            "last_name": data.get("last_name", ""),
-            "mobile": data.get("mobile"),
-            "whatsapp_number": data.get("whatsapp_number"),
-            "pincode": data.get("pincode"),
-            "payment_type": data.get("payment_type"),
-            "upi_number": data.get("upi_number", ""),
-            "sponsor_id": data.get("sponsor_id"),
-            "placement_id": data.get("placement_id") or None,
-            "is_active": False,
-        }
-        user = CustomUser.objects.create_user(user_id=temp_user_id, email=data.get("email"), password=password, **kwargs)
-        return user
+    # def create_user_instance(self, validated_data, temp_user_id):
+    #     """
+    #     Create the inactive user (with OTP stored separately in view).
+    #     This method creates and returns the CustomUser instance.
+    #     """
+    #     data = dict(validated_data)
+    #     password = data.pop("password")
+    #     data.pop("confirm_password", None)
+    #     # Remove fields that are not directly model fields (if any)
+    #     # Build kwargs for CustomUserManager.create_user
+    #     kwargs = {
+    #         # "user_id": temp_user_id,
+    #         "email": data.get("email"),
+    #         "first_name": data.get("first_name", ""),
+    #         "last_name": data.get("last_name", ""),
+    #         "mobile": data.get("mobile"),
+    #         "whatsapp_number": data.get("whatsapp_number"),
+    #         "pincode": data.get("pincode"),
+    #         "payment_type": data.get("payment_type"),
+    #         "upi_number": data.get("upi_number", ""),
+    #         "sponsor_id": data.get("sponsor_id"),
+    #         "placement_id": data.get("placement_id") or None,
+    #         "is_active": False,
+    #     }
+    #     user = CustomUser.objects.create_user(user_id=temp_user_id, email=data.get("email"), password=password, **kwargs)
+    #     return user
     
     # def create_payment(self, validated_data):
     #     data_copy = dict(validated_data)
