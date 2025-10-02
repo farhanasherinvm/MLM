@@ -167,13 +167,23 @@ class Payment(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def set_registration_data(self, data: dict):
-        """Safely serialize registration data to JSON."""
+        """Safely serialize registration data to JSON. Convert datetimes to ISO strings."""
         try:
-            self.registration_data = json.dumps(data)
+            def _default(o):
+                if hasattr(o, "isoformat"):  # handles datetime/date
+                    return o.isoformat()
+                return str(o)
+            self.registration_data = json.dumps(data, default=_default)
         except Exception as e:
-            logger.error(f"Failed to serialize registration_data for Payment {self.id}: {e}")
+            logger.error(
+                f"Failed to serialize registration_data for Payment {getattr(self, 'id', None)}: {e}"
+            )
             self.registration_data = "{}"
-        self.save(update_fields=["registration_data"])
+
+        try:
+            self.save(update_fields=["registration_data"])
+        except Exception:
+            self.save()
 
     def get_registration_data(self):
         """
