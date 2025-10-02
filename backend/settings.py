@@ -12,7 +12,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:5173",
     "https://winnersclubx.netlify.app",  # A common alternative for local host
     "https://mlm-pmif.onrender.com",
-    "mlm-oiat.onrender.com",
+    "https://mlm-oiat.onrender.com",
     # Add your deployed frontend URL here when you have one (e.g., "https://your-frontend-domain.com")
 ]
 # Quick-start development settings - unsuitable for production
@@ -25,7 +25,7 @@ SECRET_KEY = 'django-insecure-5*(zbso#o2n0ur6wt1-2ku#r^!ev0m9=ob8y67d1u37522s@rr
 DEBUG = True
 #DEBUG = config('DEBUG', default=False, cast=bool)
 
-ALLOWED_HOSTS = ["mlm-pmif.onrender.com", '127.0.0.1:8000', '127.0.0.1', 'localhost', 'mlm-oiat.onrender.com']
+ALLOWED_HOSTS = ["mlm-pmif.onrender.com", "mlm-oiat.onrender.com", '127.0.0.1:8000', '127.0.0.1', 'localhost']
 
 
 # Application definition
