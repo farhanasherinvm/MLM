@@ -65,16 +65,18 @@ class RegisterView(APIView):
         # Generate OTP
         otp = str(random.randint(100000, 999999))
         validated["otp"] = otp
-        validated["otp_created_at"] = datetime.utcnow().isoformat()
+        validated["otp_created_at"] = datetime.utcnow()
 
-        # Save registration data in Payment (not creating user yet)
-        payment = Payment.objects.create()
-        payment.set_registration_data(validated)
+        try:
+            payment = Payment.objects.create()
+            payment.set_registration_data(validated)
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
 
         # Send OTP via email
         subject = "Your Verification OTP"
         message = f"Your OTP for registration is: {otp}\nIt will expire in {getattr(settings, 'OTP_EXPIRY_MINUTES', 10)} minutes."
-        safe_send_mail(subject=subject, message=message, recipient_list=[validated["email"]])
+        safe_send_mail(subject, message, [validated["email"]])
 
         return Response({
             "message": "Registered successfully. Please verify OTP sent to your email.",
