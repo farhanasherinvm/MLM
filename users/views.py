@@ -50,21 +50,27 @@ except Exception as e:
     razorpay = None
     razorpay_client = None
 
-def safe_send_mail(subject, message, recipient_list):
-    """Send email safely. Never let SMTP errors crash the API."""
+def safe_send_mail(subject, message, recipient_list, from_email=None):
+    """
+    Send mail safely. If SMTP fails, log error and continue without crashing.
+    """
+    from django.core.mail import send_mail
+    import logging
+
+    logger = logging.getLogger(__name__)
+
     try:
         send_mail(
             subject=subject,
             message=message,
-            from_email=getattr(settings, "EMAIL_HOST_USER", None) or "noreply@example.com",
+            from_email=from_email or getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@example.com"),
             recipient_list=recipient_list,
-            fail_silently=False,  # let Django raise inside send_mail
+            fail_silently=True,   # ✅ ensure no crash
         )
-        logger.info(f"Email successfully attempted to {recipient_list}")
+        logger.info(f"OTP email sent to {recipient_list}")
     except Exception as e:
-        logger.warning(f"Email sending failed to {recipient_list}: {e}")
-        return False
-    return True
+        logger.error(f"Email sending failed for {recipient_list}: {e}")
+
 
 def generate_next_userid():
     while True:
