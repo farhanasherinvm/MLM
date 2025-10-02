@@ -492,15 +492,24 @@ class ForgotPasswordView(APIView):
         
 class ResetPasswordView(APIView):
     permission_classes = [AllowAny]
+
     def post(self, request):
+        # Accept token from either query params or request body
         token = request.query_params.get('token') or request.data.get('token')
+        if not token:
+            return Response({"error": "Token is required"}, status=400)
+
+        # Pass token into serializer context
         serializer = ResetPasswordSerializer(data=request.data, context={"token": token})
         serializer.is_valid(raise_exception=True)
         reset_token = serializer.validated_data['reset_token']
         user = reset_token.user
 
+        # Update password
         user.set_password(serializer.validated_data['new_password'])
         user.save()
+
+        # Mark token as used
         reset_token.is_used = True
         reset_token.save()
 
@@ -509,8 +518,9 @@ class ResetPasswordView(APIView):
             message="Your password has been reset. You can now login using your new password.",
             recipient_list=[user.email],
         )
-        return Response({"message": f"Password for {user.user_id} reset successfully."})
-    
+
+        return Response({"message": f"Password for {user.user_id} reset successfully."}, status=200)
+        
 class ChangePasswordView(APIView):
     permission_classes = [IsAuthenticated]
 
