@@ -50,6 +50,19 @@ except Exception as e:
     razorpay = None
     razorpay_client = None
 
+def safe_send_mail(subject, message, recipient_list):
+    """Helper to send email safely without crashing API."""
+    try:
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=settings.EMAIL_HOST_USER,
+            recipient_list=recipient_list,
+            fail_silently=False,
+        )
+    except Exception as e:
+        logger.error(f"Failed to send email to {recipient_list}: {e}")
+
 def generate_next_userid():
     while True:
         random_part = "".join(random.choices(string.digits, k=6))
@@ -57,7 +70,6 @@ def generate_next_userid():
         if not CustomUser.objects.filter(user_id=user_id).exists():
             return user_id
 class RegisterView(APIView):
-    """Step 1: Register basic details and send OTP (stored in Payment.registration_data)."""
     permission_classes = [AllowAny]
 
     def post(self, request, *args, **kwargs):
@@ -65,46 +77,29 @@ class RegisterView(APIView):
         serializer.is_valid(raise_exception=True)
         validated = dict(serializer.validated_data)
 
-        # Generate OTP
         otp = str(random.randint(100000, 999999))
         validated["otp"] = otp
         validated["otp_created_at"] = datetime.utcnow().isoformat()
 
-        # Ensure amount is present
-        amount = validated.get("amount", getattr(settings, "DEFAULT_REGISTRATION_AMOUNT", 100))
         try:
-            payment = Payment.objects.create(amount=amount)
+            payment = Payment.objects.create(amount=validated["amount"])
             payment.set_registration_data(validated)
         except Exception as e:
-            logger.exception("Error creating Payment during registration: %s", e)
-            return Response({"error": "Could not start registration."}, status=500)
+            return Response({"error": str(e)}, status=500)
 
-        # Send OTP via email (don't fail registration if email fails)
-        try:
-            subject = "Your Verification OTP"
-            message = (
-                f"Your OTP for registration is: {otp}\n"
-                f"It will expire in {getattr(settings, 'OTP_EXPIRY_MINUTES', 10)} minutes."
-            )
-            send_mail(
-                subject=subject,
-                message=message,
-                from_email=settings.EMAIL_HOST_USER,
-                recipient_list=[validated["email"]],
-                fail_silently=False,
-            )
-        except Exception as e:
-            logger.warning("Failed to send OTP email for %s: %s", validated.get("email"), e)
+        safe_send_mail(
+            subject="Your Verification OTP",
+            message=f"Your OTP for registration is: {otp}\nIt will expire in {getattr(settings, 'OTP_EXPIRY_MINUTES', 10)} minutes.",
+            recipient_list=[validated["email"]],
+        )
 
         return Response({
             "message": "Registered successfully. Please verify OTP sent to your email.",
             "email": validated["email"],
-            "registration_token": str(payment.registration_token),
             "amount": str(payment.amount),
         }, status=status.HTTP_201_CREATED)
 
 class VerifyOTPView(APIView):
-    """Step 2: Verify OTP. Returns registration_token for payment."""
     permission_classes = [AllowAny]
 
     def post(self, request, *args, **kwargs):
@@ -122,20 +117,14 @@ class VerifyOTPView(APIView):
         if not reg_data or reg_data.get("email").lower() != email:
             return Response({"error": "No matching registration found."}, status=404)
 
-        # Validate OTP
         if reg_data.get("otp") != otp:
             return Response({"error": "Invalid OTP."}, status=400)
 
         expiry_minutes = int(getattr(settings, "OTP_EXPIRY_MINUTES", 10))
-        try:
-            otp_time = datetime.fromisoformat(reg_data.get("otp_created_at"))
-        except Exception:
-            return Response({"error": "Invalid OTP timestamp"}, status=400)
-
+        otp_time = datetime.fromisoformat(reg_data.get("otp_created_at"))
         if otp_time + timedelta(minutes=expiry_minutes) < datetime.utcnow():
             return Response({"error": "OTP expired. Please register again."}, status=400)
 
-        # Clear OTP
         reg_data["otp"] = ""
         payment.set_registration_data(reg_data)
 
@@ -340,12 +329,10 @@ class AdminVerifyPaymentView(APIView):
 
             email = reg_data.get("email")
             if email:
-                send_mail(
-                subject="Payment unsuccessful",
-                message=f"Hello {email},\n\nUnfortunately, your payment has failed. Please try again.",
-                from_email=settings.EMAIL_HOST_USER,
-                recipient_list=[email],
-                fail_silently=False,
+                safe_send_mail(
+                    subject="Payment unsuccessful",
+                    message=f"Hello {email},\n\nUnfortunately, your payment has failed. Please try again.",
+                    recipient_list=[email],
                 )
             return Response({"message": "Payment marked as Failed"}, status=200)
 
@@ -355,8 +342,6 @@ class AdminVerifyPaymentView(APIView):
 
         if not payment.user:
             reg_data = payment.get_registration_data()
-            sponsor_id = reg_data.get("sponsor_id")
-
             user, created = CustomUser.objects.get_or_create(
                 email=reg_data["email"],
                 defaults={
@@ -383,34 +368,21 @@ class AdminVerifyPaymentView(APIView):
             payment.save()
 
             if created:
-                send_mail(
+                safe_send_mail(
                     subject="Your MLM User ID",
                     message=f"Hello {user.user_id},\n\nYour payment has been verified. Your User ID is: {user.user_id}",
-                    from_email=settings.EMAIL_HOST_USER,
                     recipient_list=[user.email],
-                    fail_silently=False,
-                    )
-            return Response({
-                "message": (
-                    f"Payment verified and user created."
-                    f"A mail with the User ID {user.user_id} has been sent to {user.email}"
-                    if created else "Payment verified, user already exists"
-                ),
-                "user_id": user.user_id
-            })
+                )
+            return Response({"message": "Payment verified", "user_id": user.user_id})
 
-        # Ensure user marked active and send email if necessary
         if payment.user and not payment.user.is_active:
             payment.user.is_active = True
             payment.user.save(update_fields=["is_active"])
 
-        # Send user_id email
-        send_mail(
+        safe_send_mail(
             subject="Your MLM User ID",
             message=f"Hello {payment.user.user_id},\n\nYour payment has been verified. Your User ID is: {payment.user.user_id}",
-            from_email=settings.EMAIL_HOST_USER,
             recipient_list=[payment.user.email],
-            fail_silently=False,
         )
 
         return Response({"message": "Payment verified successfully"})
@@ -476,6 +448,7 @@ class LogoutView(APIView):
 
 class ForgotPasswordView(APIView):
     permission_classes = [AllowAny]
+
     def post(self, request):
         serializer = ForgotPasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -484,14 +457,12 @@ class ForgotPasswordView(APIView):
         PasswordResetToken.objects.create(user=user, token=token)
         reset_link = f"https://winnersclubx.netlify.app/api/reset-password/?token={token}"
 
-        send_mail(
+        safe_send_mail(
             subject="Reset Your Password",
             message=f"Click this link to reset your password:\n{reset_link}",
-            from_email=settings.EMAIL_HOST_USER,
             recipient_list=[user.email],
-            fail_silently=False
         )
-        return Response({"message": f"Password reset link send to {user.user_id}'s email", "reset_link": reset_link})
+        return Response({"message": f"Password reset link sent to {user.user_id}'s email"})
         
 class ResetPasswordView(APIView):
     permission_classes = [AllowAny]
@@ -507,12 +478,10 @@ class ResetPasswordView(APIView):
         reset_token.is_used = True
         reset_token.save()
 
-        send_mail(
+        safe_send_mail(
             subject="Password Reset Successful",
             message="Your password has been reset. You can now login using your new password.",
-            from_email=settings.EMAIL_HOST_USER,
             recipient_list=[user.email],
-            fail_silently=False,
         )
         return Response({"message": f"Password for {user.user_id} reset successfully."})
     
@@ -800,13 +769,10 @@ class AdminResetUserPasswordView(APIView):
         user.set_password(new_password)
         user.save()
 
-        # Optional: Send email notification
-        send_mail(
+        safe_send_mail(
             subject="Your Password Has Been Reset",
             message=f"Hello {user.first_name},\n\nYour password has been reset by the admin. Your new password is: {new_password}",
-            from_email=settings.EMAIL_HOST_USER,
             recipient_list=[user.email],
-            fail_silently=False,
         )
         return Response({"message": f"Password reset successfully for {user.user_id}"})
 
