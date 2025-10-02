@@ -481,9 +481,10 @@ class ForgotPasswordView(APIView):
             message=f"Click this link to reset your password:\n{reset_link}",
             recipient_list=[user.email],
         )
-        return Response(
-            {"message": f"Password reset link sent to {user.user_id}'s email{reset_link}"}
-            )
+        return Response({
+            "message": f"Password reset link sent to {user.user_id}'s email",
+            "reset_link": reset_link
+        })
         
 class ResetPasswordView(APIView):
     permission_classes = [AllowAny]
