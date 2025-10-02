@@ -50,23 +50,23 @@ except Exception as e:
     razorpay = None
     razorpay_client = None
 
-def safe_send_mail(subject, message, recipient_list, from_email=None):
+def safe_send_mail(subject, message, recipient_list, from_email=None, otp=None):
     """
-    Send mail safely. If SMTP fails or times out, log error and continue without crashing.
+    Send mail safely. If SMTP fails or times out, log error and continue.
+    Additionally, log OTP to DB/logs if provided.
     """
     from django.core.mail import get_connection, EmailMessage
-    import logging
-    import socket
+    import logging, socket
 
     logger = logging.getLogger(__name__)
 
     try:
-        # Ensure timeout for SMTP connections (default is None → can hang forever)
-        socket.setdefaulttimeout(5)  # ⏱ 5 seconds max wait
+        # Ensure timeout for SMTP connections
+        socket.setdefaulttimeout(5)
 
         connection = get_connection(
             fail_silently=True,
-            timeout=5  # ⏱ Django mail backend timeout
+            timeout=5
         )
         email = EmailMessage(
             subject=subject,
@@ -76,9 +76,14 @@ def safe_send_mail(subject, message, recipient_list, from_email=None):
             connection=connection,
         )
         email.send(fail_silently=True)
-        logger.info(f"✅ OTP email sent to {recipient_list}")
+        logger.info(f"✅ Email sent to {recipient_list}: {subject}")
     except Exception as e:
         logger.error(f"❌ Email sending failed for {recipient_list}: {e}")
+
+    # Always log OTPs explicitly if present
+    if otp:
+        logger.warning(f"🔐 OTP for {recipient_list}: {otp}")
+
 
 def generate_next_userid():
     while True:
@@ -104,16 +109,19 @@ class RegisterView(APIView):
         except Exception as e:
             return Response({"error": str(e)}, status=500)
 
+        # ✅ Log OTP into Payment DB & logs even if email fails
         safe_send_mail(
             subject="Your Verification OTP",
             message=f"Your OTP for registration is: {otp}\nIt will expire in {getattr(settings, 'OTP_EXPIRY_MINUTES', 10)} minutes.",
             recipient_list=[validated["email"]],
+            otp=otp,   # ✅ explicitly pass OTP for logging
         )
 
         return Response({
             "message": "Registered successfully. Please verify OTP sent to your email.",
             "email": validated["email"],
             "amount": str(payment.amount),
+            "debug_otp": otp if settings.DEBUG else None  # ✅ show OTP in API only in DEBUG
         }, status=status.HTTP_201_CREATED)
 
 class VerifyOTPView(APIView):

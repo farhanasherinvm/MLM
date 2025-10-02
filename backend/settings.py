@@ -162,14 +162,29 @@ USE_TZ = True
 # EMAIL_USE_TLS = config("EMAIL_USE_TLS", default=True, cast=bool)
 # EMAIL_USE_SSL = config("EMAIL_USE_SSL", default=False, cast=bool) # <-- Ensures no conflict with TLS
 
-EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = 'smtp.gmail.com'
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
-EMAIL_USE_SSL = False
-EMAIL_HOST_USER = 'zecserbusiness@gmail.com'
-EMAIL_HOST_PASSWORD = 'lfqx aljl srkx ttur'
-DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+# EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+# EMAIL_HOST = 'smtp.gmail.com'
+# EMAIL_PORT = 587
+# EMAIL_USE_TLS = True
+# EMAIL_USE_SSL = False
+# EMAIL_HOST_USER = 'zecserbusiness@gmail.com'
+# EMAIL_HOST_PASSWORD = 'lfqx aljl srkx ttur'
+# DEFAULT_FROM_EMAIL = EMAIL_HOST_USER *****
+
+DEBUG = os.getenv("DEBUG", "True").lower() in ("true", "1")
+
+if not DEBUG:  # ✅ Production (Render, Gmail SMTP)
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    EMAIL_HOST = "smtp.gmail.com"
+    EMAIL_PORT = 587
+    EMAIL_USE_TLS = True
+    EMAIL_USE_SSL = False
+    EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "zecserbusiness@gmail.com")
+    EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+    DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+else:  # ✅ Development (local logs only, no SMTP)
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+    DEFAULT_FROM_EMAIL = "no-reply@example.com"
 
 # # Email Settings
 # EMAIL_BACKEND = config("EMAIL_BACKEND", default="django.core.mail.backends.smtp.EmailBackend")
@@ -257,3 +272,8 @@ RAZORPAY_KEY_SECRET='7rV1tuKez0XP6x6Ue8euXjBs'
 OTP_EXPIRY_MINUTES = 10     # OTP validity in minutes (configurable)
 OTP_LENGTH = 6              # number of digits in OTP
 OTP_MAX_ATTEMPTS = 5        # max verification attempts allowed
+
+import logging
+
+logging.basicConfig(level=logging.DEBUG)
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
