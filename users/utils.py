@@ -6,7 +6,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 from django.http import HttpResponse
 
-from users.models import CustomUser, EmailVerification
+from users.models import CustomUser
 
 import logging
 from django.core.mail import send_mail
@@ -269,72 +269,3 @@ def safe_send_mail_with_info(subject, message, recipient_list, from_email=None, 
     }
     err_msg = "All send attempts failed; see info"
     return False, err_msg, {"transport": "none", "status": "all_failed", "detail": combined}
-
-# ----------------------------
-# OTP helpers
-# ----------------------------
-def generate_numeric_otp(length=None):
-    length = int(length or getattr(settings, "OTP_LENGTH", 6))
-    return "".join(random.choices(string.digits, k=length))
-
-def create_and_send_otp(email):
-    """
-    Create an EmailVerification entry with an OTP and attempt to send it.
-    Returns tuple: (EmailVerification instance, sent_boolean, error_message_or_None, info_dict_or_None)
-    - When running on Render or DEBUG, OTP will be included in info_dict and 'sent' will be forced True for testing.
-    """
-    try:
-        email_clean = email.strip().lower()
-        otp = generate_numeric_otp()
-        expiry_minutes = int(getattr(settings, "OTP_EXPIRY_MINUTES", 10))
-
-        ev = EmailVerification.objects.create(
-            email=email_clean,
-            otp_code=otp,
-            expires_at=timezone.now() + timedelta(minutes=expiry_minutes),
-            is_verified=False,
-            attempts=0,
-        )
-
-        subject = "Your verification code"
-        message = f"Your verification code is: {otp}\n\nThis code expires in {expiry_minutes} minute(s)."
-
-        try:
-            sent, error, info = safe_send_mail_with_info(
-                subject=subject,
-                message=message,
-                recipient_list=[email_clean],
-                from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None),
-            )
-        except Exception as e:
-            sent = False
-            error = str(e)
-            info = {"transport": "exception", "detail": str(e)}
-            logger.warning("Unexpected exception while calling safe_send_mail_with_info: %s", e)
-
-        # Normalize provider info into a dict and add the OTP for testing/debugging (only in debug/render)
-        provider_info = info if isinstance(info, dict) else {"transport": str(info)}
-        provider_info["otp"] = otp
-
-        # If sending succeeded, return that success plus provider info
-        if sent:
-            logger.info("OTP created and sent (or accepted) for %s (ev id=%s) via %s", email_clean, ev.id, provider_info.get("transport"))
-            return ev, True, None, provider_info
-
-        # Sending failed. Decide behavior:
-        run_on_render = bool(os.environ.get("RENDER") or getattr(settings, "DEBUG", False))
-
-        if run_on_render:
-            # For Render/testing, return OTP in provider_info and mark as sent to allow flow testing.
-            logger.info("OTP created but sending failed for %s; returning OTP in response for Render/DEBUG testing. info=%s", email_clean, provider_info)
-            return ev, True, None, provider_info
-
-        # In production-like mode, return failure and provider info
-        logger.warning("OTP created but sending failed for %s (ev id=%s). error=%s info=%s", email_clean, ev.id, error, provider_info)
-        return ev, False, str(error or "send failed"), provider_info
-
-    except Exception as e:
-        tb = traceback.format_exc()
-        logger.exception("Unexpected error in create_and_send_otp: %s", e)
-        # Ensure we return a stable tuple
-        return None, False, str(e), {"traceback": tb}

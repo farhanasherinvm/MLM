@@ -50,33 +50,54 @@ class RegistrationSerializer(serializers.Serializer):
         if not CustomUser.objects.filter(user_id=sponsor_id).exists():
             raise serializers.ValidationError({"sponsor_id": "Sponsor ID does not exist in the system."})
         
-        # # ✅ Email must have been verified via OTP before registering
-        # email = data.get("email", "").strip().lower()
-        # verified = EmailVerification.objects.filter(email__iexact=email, is_verified=True).exists()
-        # if not verified:
-        #     raise serializers.ValidationError({"email": "Please verify email with OTP before registering."})
-
         return data
     
-    def create_payment(self, validated_data):
-        data_copy = dict(validated_data)
-        password = data_copy.pop("password")
-        data_copy.pop("confirm_password", None)   # ✅ don’t store confirm_password
-        if not password:
-            raise serializers.ValidationError({"password": "Password is required."})
-        data_copy["password"] = password
-        payment = Payment.objects.create()
-        payment.set_registration_data(data_copy)
-        return payment
+    def create_user_instance(self, validated_data, temp_user_id):
+        """
+        Create the inactive user (with OTP stored separately in view).
+        This method creates and returns the CustomUser instance.
+        """
+        data = dict(validated_data)
+        password = data.pop("password")
+        data.pop("confirm_password", None)
+        # Remove fields that are not directly model fields (if any)
+        # Build kwargs for CustomUserManager.create_user
+        kwargs = {
+            "user_id": temp_user_id,
+            "email": data.get("email"),
+            "first_name": data.get("first_name", ""),
+            "last_name": data.get("last_name", ""),
+            "mobile": data.get("mobile"),
+            "whatsapp_number": data.get("whatsapp_number"),
+            "pincode": data.get("pincode"),
+            "payment_type": data.get("payment_type"),
+            "upi_number": data.get("upi_number", ""),
+            # sponsor_id and placement_id stored directly
+            "sponsor_id": data.get("sponsor_id"),
+            "placement_id": data.get("placement_id") or None,
+            "is_active": False,
+        }
+        user = CustomUser.objects.create_user(user_id=temp_user_id, email=data.get("email"), password=password, **kwargs)
+        return user
+    
+    # def create_payment(self, validated_data):
+    #     data_copy = dict(validated_data)
+    #     password = data_copy.pop("password")
+    #     data_copy.pop("confirm_password", None)   # ✅ don’t store confirm_password
+    #     if not password:
+    #         raise serializers.ValidationError({"password": "Password is required."})
+    #     data_copy["password"] = password
+    #     payment = Payment.objects.create()
+    #     payment.set_registration_data(data_copy)
+    #     return payment
     
 class RazorpayOrderSerializer(serializers.Serializer):
     registration_token = serializers.UUIDField()
-    
-class RazorpayVerifySerializer(serializers.Serializer):
-    razorpay_order_id = serializers.CharField()
-    razorpay_payment_id = serializers.CharField()
-    razorpay_signature = serializers.CharField()
 
+class RazorpayVerifySerializer(serializers.Serializer):
+    razorpay_order_id = serializers.CharField(required=True)
+    razorpay_payment_id = serializers.CharField(required=True)
+    razorpay_signature = serializers.CharField(required=True)
 
 class UploadReceiptSerializer(serializers.ModelSerializer):
     registration_token = serializers.UUIDField(write_only=True)

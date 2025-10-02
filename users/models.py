@@ -68,9 +68,11 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     date_of_joining = models.DateTimeField(auto_now_add=True)
 
     user_id = models.CharField(max_length=20, unique=True)
-    is_active = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=False)
     is_staff = models.BooleanField(default=False)
     is_admin_user = models.BooleanField(default=False)
+    
+    otp = models.CharField(max_length=6, blank=True, null=True)
 
     objects = CustomUserManager()
 
@@ -221,35 +223,3 @@ class UserAccountDetails(models.Model):
 
     def __str__(self):
         return f"AccountDetails({self.user.user_id})"
-
-class EmailVerification(models.Model):
-    """
-    Stores OTP for an email address. Used for verifying email BEFORE registration.
-    """
-    email = models.EmailField(db_index=True)
-    otp_code = models.CharField(max_length=10)
-    token = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
-    is_verified = models.BooleanField(default=False)
-    attempts = models.PositiveSmallIntegerField(default=0)
-    created_at = models.DateTimeField(auto_now_add=True)
-    expires_at = models.DateTimeField(blank=True, null=True)
-
-    class Meta:
-        verbose_name = "Email Verification"
-        verbose_name_plural = "Email Verifications"
-        ordering = ["-created_at"]
-
-    def save(self, *args, **kwargs):
-        # Ensure expires_at is set if not provided
-        if not self.expires_at:
-            minutes = getattr(settings, "OTP_EXPIRY_MINUTES", 10)
-            self.expires_at = timezone.now() + timedelta(minutes=minutes)
-        super().save(*args, **kwargs)
-
-    def is_expired(self):
-        if not self.expires_at:
-            return False
-        return timezone.now() > self.expires_at
-
-    def __str__(self):
-        return f"EmailVerification({self.email} - verified={self.is_verified})"
