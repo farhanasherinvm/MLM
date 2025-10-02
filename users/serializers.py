@@ -38,33 +38,6 @@ class RegistrationSerializer(serializers.Serializer):
             raise serializers.ValidationError({"sponsor_id": "Sponsor ID does not exist."})
         return data
     
-    # def create_user_instance(self, validated_data, temp_user_id):
-    #     """
-    #     Create the inactive user (with OTP stored separately in view).
-    #     This method creates and returns the CustomUser instance.
-    #     """
-    #     data = dict(validated_data)
-    #     password = data.pop("password")
-    #     data.pop("confirm_password", None)
-    #     # Remove fields that are not directly model fields (if any)
-    #     # Build kwargs for CustomUserManager.create_user
-    #     kwargs = {
-    #         # "user_id": temp_user_id,
-    #         "email": data.get("email"),
-    #         "first_name": data.get("first_name", ""),
-    #         "last_name": data.get("last_name", ""),
-    #         "mobile": data.get("mobile"),
-    #         "whatsapp_number": data.get("whatsapp_number"),
-    #         "pincode": data.get("pincode"),
-    #         "payment_type": data.get("payment_type"),
-    #         "upi_number": data.get("upi_number", ""),
-    #         "sponsor_id": data.get("sponsor_id"),
-    #         "placement_id": data.get("placement_id") or None,
-    #         "is_active": False,
-    #     }
-    #     user = CustomUser.objects.create_user(user_id=temp_user_id, email=data.get("email"), password=password, **kwargs)
-    #     return user
-    
     # def create_payment(self, validated_data):
     #     data_copy = dict(validated_data)
     #     password = data_copy.pop("password")

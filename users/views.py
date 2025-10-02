@@ -57,10 +57,6 @@ class RegisterView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request, *args, **kwargs):
-        """
-        Accept registration data, generate OTP and store data in Payment.registration_data.
-        Do not create a CustomUser yet.
-        """
         serializer = RegistrationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         validated = dict(serializer.validated_data)
@@ -70,18 +66,17 @@ class RegisterView(APIView):
         validated["otp"] = otp
         validated["otp_created_at"] = datetime.utcnow().isoformat()
 
-        # Create Payment placeholder with registration_data
+        # Save in Payment.registration_data (not creating user yet)
         payment = Payment.objects.create()
         payment.set_registration_data(validated)
 
         # Send OTP
         subject = "Your Verification OTP"
         message = f"Your OTP for registration is: {otp}\nIt will expire in {getattr(settings, 'OTP_EXPIRY_MINUTES', 10)} minutes."
-        sent = safe_send_mail(subject=subject, message=message, recipient_list=[validated["email"]])
+        safe_send_mail(subject=subject, message=message, recipient_list=[validated["email"]])
 
         return Response({
             "message": "Registered successfully. Please verify OTP sent to your email.",
-            "sent": bool(sent),
             "email": validated["email"],
         }, status=status.HTTP_201_CREATED)
 
