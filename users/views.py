@@ -10,6 +10,7 @@ from django.db.models import Q
 from datetime import datetime
 from reportlab.lib.pagesizes import A4
 from django.http import FileResponse
+from datetime import datetime, timedelta
 from django.shortcuts import get_object_or_404
 from .models import *
 from .serializers import (
@@ -29,20 +30,23 @@ from rest_framework.pagination import PageNumberPagination
 # import admin serializer from profiles
 from profiles.serializers import AdminUserListSerializer, AdminUserDetailSerializer, AdminNetworkUserSerializer
 import logging
+from django.db import IntegrityError, transaction
 from users.utils import generate_next_placementid
 from users.utils import assign_placement_id
 from django.core.mail import send_mail
 
 logger = logging.getLogger(__name__)
 
-# Razorpay client
+# Safe Razorpay client initialization (only once)
 try:
-    import razorpay
+    import razorpay as _razorpay
     if getattr(settings, "RAZORPAY_KEY_ID", None) and getattr(settings, "RAZORPAY_KEY_SECRET", None):
-        razorpay_client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+        razorpay_client = _razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
     else:
         razorpay_client = None
+    razorpay = _razorpay
 except Exception as e:
+    logger.warning("Razorpay not available: %s", e)
     razorpay = None
     razorpay_client = None
 
@@ -53,10 +57,7 @@ def generate_next_userid():
         if not CustomUser.objects.filter(user_id=user_id).exists():
             return user_id
 class RegisterView(APIView):
-    """
-    Step 1: Register basic details and send OTP 
-    (stored in Payment.registration_data).
-    """
+    """Step 1: Register basic details and send OTP (stored in Payment.registration_data)."""
     permission_classes = [AllowAny]
 
     def post(self, request, *args, **kwargs):
@@ -69,32 +70,37 @@ class RegisterView(APIView):
         validated["otp"] = otp
         validated["otp_created_at"] = datetime.utcnow().isoformat()
 
-        # Save validated registration data into Payment
+        # Ensure amount is present
+        amount = validated.get("amount", getattr(settings, "DEFAULT_REGISTRATION_AMOUNT", 100))
         try:
-            payment = Payment.objects.create()
+            payment = Payment.objects.create(amount=amount)
             payment.set_registration_data(validated)
         except Exception as e:
-            logger.error(f"Error creating Payment: {e}")
+            logger.exception("Error creating Payment during registration: %s", e)
             return Response({"error": "Could not start registration."}, status=500)
 
-        # Send OTP via email
+        # Send OTP via email (don't fail registration if email fails)
         try:
+            subject = "Your Verification OTP"
+            message = (
+                f"Your OTP for registration is: {otp}\n"
+                f"It will expire in {getattr(settings, 'OTP_EXPIRY_MINUTES', 10)} minutes."
+            )
             send_mail(
-                subject="Your Verification OTP",
-                message=f"Your OTP for registration is: {otp}\n"
-                        f"It will expire in {getattr(settings, 'OTP_EXPIRY_MINUTES', 10)} minutes.",
+                subject=subject,
+                message=message,
                 from_email=settings.EMAIL_HOST_USER,
                 recipient_list=[validated["email"]],
                 fail_silently=False,
             )
         except Exception as e:
-            logger.error(f"Failed to send OTP email: {e}")
-            return Response({"error": "Failed to send OTP email."}, status=500)
+            logger.warning("Failed to send OTP email for %s: %s", validated.get("email"), e)
 
         return Response({
             "message": "Registered successfully. Please verify OTP sent to your email.",
             "email": validated["email"],
             "registration_token": str(payment.registration_token),
+            "amount": str(payment.amount),
         }, status=status.HTTP_201_CREATED)
 
 class VerifyOTPView(APIView):
@@ -121,7 +127,11 @@ class VerifyOTPView(APIView):
             return Response({"error": "Invalid OTP."}, status=400)
 
         expiry_minutes = int(getattr(settings, "OTP_EXPIRY_MINUTES", 10))
-        otp_time = datetime.fromisoformat(reg_data.get("otp_created_at"))
+        try:
+            otp_time = datetime.fromisoformat(reg_data.get("otp_created_at"))
+        except Exception:
+            return Response({"error": "Invalid OTP timestamp"}, status=400)
+
         if otp_time + timedelta(minutes=expiry_minutes) < datetime.utcnow():
             return Response({"error": "OTP expired. Please register again."}, status=400)
 
@@ -135,39 +145,6 @@ class VerifyOTPView(APIView):
             "amount": str(payment.amount),
         }, status=200)
                
-# class RegistrationView(APIView):
-#     permission_classes = [AllowAny]
-
-#     def post(self, request, *args, **kwargs):
-#         serializer = RegistrationSerializer(data=request.data)
-#         if serializer.is_valid():
-#             data_copy = dict(serializer.validated_data)
-#             password = data_copy.pop("password")
-#             data_copy.pop("confirm_password", None)
-#             if password:
-#                 data_copy["password"] = password
-#             payment = Payment.objects.create()
-#             payment.set_registration_data(data_copy)
-#             return Response(
-#                 {
-#                     "registration_token": str(payment.registration_token),
-#                     "admin_account_details": AdminAccountSerializer(AdminAccountDetails.objects.first()).data if AdminAccountDetails.objects.exists() else {},
-#                     "message": "Choose payment method: Pay Now (Razorpay) or upload receipt with this token.",
-#                 },
-#                 status=status.HTTP_201_CREATED,
-#             )
-#         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-razorpay_client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
-# razorpay_client = None
-try:
-    import razorpay
-    if getattr(settings, "RAZORPAY_KEY_ID", None) and getattr(settings, "RAZORPAY_KEY_SECRET", None):
-        razorpay_client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
-except Exception:
-    razorpay = None
-    razorpay_client = None
-
 class RazorpayOrderView(APIView):
     permission_classes = [AllowAny]
 
@@ -177,31 +154,44 @@ class RazorpayOrderView(APIView):
 
         serializer = RazorpayOrderSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        reg_token = serializer.validated_data["registration_token"]
 
         try:
-            payment = Payment.objects.get(
-                registration_token=serializer.validated_data["registration_token"],
-                status="Pending"
-            )
+            payment = Payment.objects.get(registration_token=reg_token, status="Pending")
         except Payment.DoesNotExist:
             return Response({"error": "Invalid or expired registration token."}, status=400)
 
-        order = razorpay_client.order.create({
-            "amount": int(float(payment.amount) * 100),
-            "currency": "INR",
-            "payment_capture": 1,
-        })
+        # Ensure amount exists and is numeric
+        if payment.amount is None:
+            logger.error("Payment %s has no amount set", payment.id)
+            return Response({"error": "Payment amount not set"}, status=400)
 
-        payment.razorpay_order_id = order["id"]
+        amount_paisa = int(float(payment.amount) * 100)
+
+        try:
+            order = razorpay_client.order.create({
+                "amount": amount_paisa,
+                "currency": "INR",
+                "payment_capture": 1,
+            })
+        except Exception as e:
+            logger.error("Razorpay order creation failed for Payment %s: %s", payment.id, e)
+            payment.status = "Failed"
+            payment.save(update_fields=["status"])
+            return Response({"error": "Failed to create payment order"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        payment.razorpay_order_id = order.get("id")
         payment.save(update_fields=["razorpay_order_id"])
+
+        logger.info("Razorpay order %s created for Payment %s", order.get("id"), payment.id)
 
         return Response({
             "registration_token": str(payment.registration_token),
-            "order_id": order["id"],
+            "order_id": order.get("id"),
             "amount": str(payment.amount),
             "currency": "INR",
             "razorpay_key": settings.RAZORPAY_KEY_ID,
-        }, status=200)
+        }, status=status.HTTP_201_CREATED)
 
 
 class RazorpayVerifyView(APIView):
@@ -213,60 +203,77 @@ class RazorpayVerifyView(APIView):
         data = serializer.validated_data
 
         try:
-            payment = Payment.objects.get(
-                razorpay_order_id=data["razorpay_order_id"],
-                status="Pending"
-            )
+            payment = Payment.objects.get(razorpay_order_id=data["razorpay_order_id"], status="Pending")
         except Payment.DoesNotExist:
             return Response({"error": "Payment not found or already processed"}, status=404)
 
-        if not getattr(settings, "RAZORPAY_TEST_MODE", True):
+        # Verify signature (unless test mode)
+        verification_ok = False
+        if getattr(settings, "RAZORPAY_TEST_MODE", True):
+            verification_ok = True
+        else:
             try:
-                params_dict = {
+                razorpay_client.utility.verify_payment_signature({
                     "razorpay_order_id": data["razorpay_order_id"],
                     "razorpay_payment_id": data["razorpay_payment_id"],
                     "razorpay_signature": data["razorpay_signature"],
-                }
-                razorpay_client.utility.verify_payment_signature(params_dict)
-            except Exception:
-                payment.status = "Failed"
-                payment.save(update_fields=["status"])
-                return Response({"error": "Signature verification failed"}, status=400)
+                })
+                verification_ok = True
+            except Exception as e:
+                logger.error("Razorpay signature verification failed for Payment %s: %s", payment.id, e)
+                verification_ok = False
 
-        # Mark verified
-        payment.razorpay_payment_id = data["razorpay_payment_id"]
-        payment.razorpay_signature = data["razorpay_signature"]
-        payment.status = "Verified"
-        payment.save()
+        if not verification_ok:
+            payment.status = "Failed"
+            payment.save(update_fields=["status"])
+            return Response({"error": "Signature verification failed"}, status=400)
 
-        # Now create CustomUser
+        # Mark verified and persist razorpay ids atomically
+        with transaction.atomic():
+            payment.razorpay_payment_id = data["razorpay_payment_id"]
+            payment.razorpay_signature = data["razorpay_signature"]
+            payment.status = "Verified"
+            payment.save(update_fields=["razorpay_payment_id", "razorpay_signature", "status"])
+
+        logger.info("Payment %s verified (order %s)", payment.id, data["razorpay_order_id"])
+
+        # Create user from registration data
         reg_data = payment.get_registration_data()
-        user = CustomUser.objects.create_user(
-            user_id=generate_next_userid(),
-            email=reg_data["email"],
-            password=reg_data["password"],
-            first_name=reg_data["first_name"],
-            last_name=reg_data["last_name"],
-            mobile=reg_data["mobile"],
-            whatsapp_number=reg_data.get("whatsapp_number"),
-            pincode=reg_data["pincode"],
-            payment_type=reg_data["payment_type"],
-            upi_number=reg_data.get("upi_number"),
-            sponsor_id=reg_data["sponsor_id"],
-            placement_id=reg_data.get("placement_id"),
-            is_active=True,
-        )
+        try:
+            user = CustomUser.objects.create_user(
+                user_id=generate_next_userid(),
+                email=reg_data["email"],
+                password=reg_data["password"],
+                first_name=reg_data["first_name"],
+                last_name=reg_data["last_name"],
+                mobile=reg_data["mobile"],
+                whatsapp_number=reg_data.get("whatsapp_number"),
+                pincode=reg_data["pincode"],
+                payment_type=reg_data["payment_type"],
+                upi_number=reg_data.get("upi_number"),
+                sponsor_id=reg_data["sponsor_id"],
+                placement_id=reg_data.get("placement_id"),
+                is_active=True,
+            )
+        except Exception as e:
+            logger.exception("Failed to create user for Payment %s: %s", payment.id, e)
+            # Consider rolling back or marking payment failed in extreme cases
+            return Response({"error": "Failed to create user after payment verification"}, status=500)
 
         payment.user = user
         payment.save(update_fields=["user"])
 
-        send_mail(
-            subject="Your MLM User ID",
-            message=f"Hello {user.first_name},\n\nYour payment is verified. Your User ID is: {user.user_id}",
-            from_email=settings.EMAIL_HOST_USER,
-            recipient_list=[user.email],
-            fail_silently=False,
-        )
+        # Send confirmation email (log failures but do not fail verification)
+        try:
+            send_mail(
+                subject="Your MLM User ID",
+                message=f"Hello {user.first_name},\n\nYour payment is verified. Your User ID is: {user.user_id}",
+                from_email=settings.EMAIL_HOST_USER,
+                recipient_list=[user.email],
+                fail_silently=False,
+            )
+        except Exception as e:
+            logger.warning("Failed to send user-id email for user %s: %s", user.user_id, e)
 
         return Response({
             "message": "Payment verified successfully",

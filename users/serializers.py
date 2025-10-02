@@ -26,6 +26,8 @@ class RegistrationSerializer(serializers.Serializer):
     upi_number = serializers.CharField()
     password = serializers.CharField(write_only=True)
     confirm_password = serializers.CharField(write_only=True)
+    amount = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, default=100)
+
 
     def validate(self, data):
         if data["password"] != data["confirm_password"]:
