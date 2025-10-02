@@ -173,18 +173,27 @@ USE_TZ = True
 
 DEBUG = os.getenv("DEBUG", "True").lower() in ("true", "1")
 
-if not DEBUG:  # ✅ Production (Render, Gmail SMTP)
-    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-    EMAIL_HOST = "smtp.gmail.com"
-    EMAIL_PORT = 587
-    EMAIL_USE_TLS = True
-    EMAIL_USE_SSL = False
+# if not DEBUG:  # ✅ Production (Render, Gmail SMTP)
+#     EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+#     EMAIL_HOST = "smtp.gmail.com"
+#     EMAIL_PORT = 587
+#     EMAIL_USE_TLS = True
+#     EMAIL_USE_SSL = False
+#     EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "zecserbusiness@gmail.com")
+#     EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+#     DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+# else:  # ✅ Development (local logs only, no SMTP)
+#     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+#     DEFAULT_FROM_EMAIL = "no-reply@example.com"
+
+if not DEBUG:
+    EMAIL_BACKEND = "users.gmail_backend.GmailAPIBackend"
     EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "zecserbusiness@gmail.com")
-    EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
     DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
-else:  # ✅ Development (local logs only, no SMTP)
+else:
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
     DEFAULT_FROM_EMAIL = "no-reply@example.com"
+
 
 # # Email Settings
 # EMAIL_BACKEND = config("EMAIL_BACKEND", default="django.core.mail.backends.smtp.EmailBackend")
