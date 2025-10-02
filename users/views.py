@@ -18,7 +18,7 @@ from .serializers import (
     ResetPasswordSerializer, ForgotPasswordSerializer, 
     AdminAccountSerializer, UserAccountDetailsSerializer, 
     UploadReceiptSerializer,  UserFullNameSerializer,
-    SendOTPSerializer, VerifyOTPSerializer,
+    VerifyOTPSerializer,
     )
 from .permissions import IsProjectAdmin
 from .utils import validate_sponsor, export_users_csv, export_users_pdf
@@ -29,7 +29,6 @@ from rest_framework.pagination import PageNumberPagination
 # import admin serializer from profiles
 from profiles.serializers import AdminUserListSerializer, AdminUserDetailSerializer, AdminNetworkUserSerializer
 import logging
-from django.db import IntegrityError, transaction
 from users.utils import generate_next_placementid
 from users.utils import assign_placement_id
 from django.core.mail import send_mail
