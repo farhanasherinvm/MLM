@@ -58,8 +58,9 @@ def safe_send_mail(subject, message, recipient_list):
             message=message,
             from_email=settings.EMAIL_HOST_USER,
             recipient_list=recipient_list,
-            fail_silently=False,
+            fail_silently=True,   # ✅ patched: was False
         )
+        logger.info(f"Email attempted to {recipient_list}")
     except Exception as e:
         logger.error(f"Failed to send email to {recipient_list}: {e}")
 
