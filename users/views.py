@@ -54,7 +54,10 @@ def generate_next_userid():
         if not CustomUser.objects.filter(user_id=user_id).exists():
             return user_id
 class RegisterView(APIView):
-    """Step 1: Register basic details and send OTP (stored in Payment.registration_data)."""
+    """
+    Step 1: Register basic details and send OTP 
+    (stored in Payment.registration_data).
+    """
     permission_classes = [AllowAny]
 
     def post(self, request, *args, **kwargs):
@@ -67,27 +70,32 @@ class RegisterView(APIView):
         validated["otp"] = otp
         validated["otp_created_at"] = datetime.utcnow().isoformat()
 
-
+        # Save validated registration data into Payment
         try:
             payment = Payment.objects.create()
             payment.set_registration_data(validated)
         except Exception as e:
-            return Response({"error": str(e)}, status=500)
+            logger.error(f"Error creating Payment: {e}")
+            return Response({"error": "Could not start registration."}, status=500)
 
         # Send OTP via email
-        subject = "Your Verification OTP"
-        message = f"Your OTP for registration is: {otp}\nIt will expire in {getattr(settings, 'OTP_EXPIRY_MINUTES', 10)} minutes."
-        send_mail(
-            subject="Your Verification OTP",
-            message=f"Your OTP for registration is: {otp}",
-            from_email=settings.EMAIL_HOST_USER,
-            recipient_list=[validated["email"]],
-            fail_silently=False,
-        )
+        try:
+            send_mail(
+                subject="Your Verification OTP",
+                message=f"Your OTP for registration is: {otp}\n"
+                        f"It will expire in {getattr(settings, 'OTP_EXPIRY_MINUTES', 10)} minutes.",
+                from_email=settings.EMAIL_HOST_USER,
+                recipient_list=[validated["email"]],
+                fail_silently=False,
+            )
+        except Exception as e:
+            logger.error(f"Failed to send OTP email: {e}")
+            return Response({"error": "Failed to send OTP email."}, status=500)
 
         return Response({
             "message": "Registered successfully. Please verify OTP sent to your email.",
             "email": validated["email"],
+            "registration_token": str(payment.registration_token),
         }, status=status.HTTP_201_CREATED)
 
 class VerifyOTPView(APIView):
