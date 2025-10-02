@@ -24,7 +24,7 @@ SECRET_KEY = 'django-insecure-5*(zbso#o2n0ur6wt1-2ku#r^!ev0m9=ob8y67d1u37522s@rr
 DEBUG = True
 #DEBUG = config('DEBUG', default=False, cast=bool)
 
-ALLOWED_HOSTS = ["mlm-pmif.onrender.com", '127.0.0.1:8000', '127.0.0.1', 'localhost']
+ALLOWED_HOSTS = ["mlm-pmif.onrender.com", '127.0.0.1:8000', '127.0.0.1', 'localhost', 'https://mlm-oiat.onrender.com']
 
 
 # Application definition
