@@ -176,11 +176,11 @@ DEBUG = os.getenv("DEBUG", "True").lower() in ("true", "1")
 if not DEBUG:  # ✅ Production (Render, Gmail SMTP)
     EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
     EMAIL_HOST = "smtp.gmail.com"
-    EMAIL_PORT = 443
+    EMAIL_PORT = 587
     EMAIL_USE_TLS = True
     EMAIL_USE_SSL = False
     EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "zecserbusiness@gmail.com")
-    EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+    EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "lfqx aljl srkx ttur")
     DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 else:  # ✅ Development (local logs only, no SMTP)
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
