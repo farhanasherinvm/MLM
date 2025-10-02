@@ -476,6 +476,9 @@ class ForgotPasswordView(APIView):
         PasswordResetToken.objects.create(user=user, token=token)
         reset_link = f"https://winnersclubx.netlify.app/api/reset-password/?token={token}"
 
+        # Log the reset link for debugging in Render logs
+        logger.info(f"🔑 Password reset link for {user.email} ({user.user_id}): {reset_link}")
+
         safe_send_mail(
             subject="Reset Your Password",
             message=f"Click this link to reset your password:\n{reset_link}",
@@ -483,8 +486,9 @@ class ForgotPasswordView(APIView):
         )
         return Response({
             "message": f"Password reset link sent to {user.user_id}'s email",
-            "reset_link": reset_link
+            "reset_link": reset_link  # Also include in API response
         })
+
         
 class ResetPasswordView(APIView):
     permission_classes = [AllowAny]
