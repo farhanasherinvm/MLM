@@ -54,6 +54,7 @@ def generate_next_userid():
         if not CustomUser.objects.filter(user_id=user_id).exists():
             return user_id
 class RegisterView(APIView):
+    """Step 1: Register basic details and send OTP (stored in Payment.registration_data)."""
     permission_classes = [AllowAny]
 
     def post(self, request, *args, **kwargs):
@@ -66,11 +67,11 @@ class RegisterView(APIView):
         validated["otp"] = otp
         validated["otp_created_at"] = datetime.utcnow().isoformat()
 
-        # Save in Payment.registration_data (not creating user yet)
+        # Save registration data in Payment (not creating user yet)
         payment = Payment.objects.create()
         payment.set_registration_data(validated)
 
-        # Send OTP
+        # Send OTP via email
         subject = "Your Verification OTP"
         message = f"Your OTP for registration is: {otp}\nIt will expire in {getattr(settings, 'OTP_EXPIRY_MINUTES', 10)} minutes."
         safe_send_mail(subject=subject, message=message, recipient_list=[validated["email"]])
@@ -81,13 +82,10 @@ class RegisterView(APIView):
         }, status=status.HTTP_201_CREATED)
 
 class VerifyOTPView(APIView):
+    """Step 2: Verify OTP. Returns registration_token for payment."""
     permission_classes = [AllowAny]
 
     def post(self, request, *args, **kwargs):
-        """
-        Verify OTP from Payment.registration_data.
-        On success, return registration_token for payment.
-        """
         serializer = VerifyOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data["email"].strip().lower()
@@ -96,11 +94,11 @@ class VerifyOTPView(APIView):
         try:
             payment = Payment.objects.filter(status="Pending").latest("created_at")
         except Payment.DoesNotExist:
-            return Response({"error": "No pending registration found for this email."}, status=404)
+            return Response({"error": "No pending registration found."}, status=404)
 
         reg_data = payment.get_registration_data()
         if not reg_data or reg_data.get("email").lower() != email:
-            return Response({"error": "No matching registration found for this email."}, status=404)
+            return Response({"error": "No matching registration found."}, status=404)
 
         # Validate OTP
         if reg_data.get("otp") != otp:
@@ -111,7 +109,7 @@ class VerifyOTPView(APIView):
         if otp_time + timedelta(minutes=expiry_minutes) < datetime.utcnow():
             return Response({"error": "OTP expired. Please register again."}, status=400)
 
-        # OTP valid: clear otp in reg_data
+        # Clear OTP
         reg_data["otp"] = ""
         payment.set_registration_data(reg_data)
 
@@ -119,30 +117,30 @@ class VerifyOTPView(APIView):
             "message": "OTP verified successfully. Proceed to payment.",
             "registration_token": str(payment.registration_token),
             "amount": str(payment.amount),
-        }, status=200) 
+        }, status=200)
                
-class RegistrationView(APIView):
-    permission_classes = [AllowAny]
+# class RegistrationView(APIView):
+#     permission_classes = [AllowAny]
 
-    def post(self, request, *args, **kwargs):
-        serializer = RegistrationSerializer(data=request.data)
-        if serializer.is_valid():
-            data_copy = dict(serializer.validated_data)
-            password = data_copy.pop("password")
-            data_copy.pop("confirm_password", None)
-            if password:
-                data_copy["password"] = password
-            payment = Payment.objects.create()
-            payment.set_registration_data(data_copy)
-            return Response(
-                {
-                    "registration_token": str(payment.registration_token),
-                    "admin_account_details": AdminAccountSerializer(AdminAccountDetails.objects.first()).data if AdminAccountDetails.objects.exists() else {},
-                    "message": "Choose payment method: Pay Now (Razorpay) or upload receipt with this token.",
-                },
-                status=status.HTTP_201_CREATED,
-            )
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+#     def post(self, request, *args, **kwargs):
+#         serializer = RegistrationSerializer(data=request.data)
+#         if serializer.is_valid():
+#             data_copy = dict(serializer.validated_data)
+#             password = data_copy.pop("password")
+#             data_copy.pop("confirm_password", None)
+#             if password:
+#                 data_copy["password"] = password
+#             payment = Payment.objects.create()
+#             payment.set_registration_data(data_copy)
+#             return Response(
+#                 {
+#                     "registration_token": str(payment.registration_token),
+#                     "admin_account_details": AdminAccountSerializer(AdminAccountDetails.objects.first()).data if AdminAccountDetails.objects.exists() else {},
+#                     "message": "Choose payment method: Pay Now (Razorpay) or upload receipt with this token.",
+#                 },
+#                 status=status.HTTP_201_CREATED,
+#             )
+#         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 razorpay_client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
 # razorpay_client = None
