@@ -63,7 +63,7 @@ class RegistrationSerializer(serializers.Serializer):
         # Remove fields that are not directly model fields (if any)
         # Build kwargs for CustomUserManager.create_user
         kwargs = {
-            "user_id": temp_user_id,
+            # "user_id": temp_user_id,
             "email": data.get("email"),
             "first_name": data.get("first_name", ""),
             "last_name": data.get("last_name", ""),
@@ -72,7 +72,6 @@ class RegistrationSerializer(serializers.Serializer):
             "pincode": data.get("pincode"),
             "payment_type": data.get("payment_type"),
             "upi_number": data.get("upi_number", ""),
-            # sponsor_id and placement_id stored directly
             "sponsor_id": data.get("sponsor_id"),
             "placement_id": data.get("placement_id") or None,
             "is_active": False,
