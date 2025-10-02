@@ -255,12 +255,10 @@ class RazorpayVerifyView(APIView):
 
         # Send confirmation email (log failures but do not fail verification)
         try:
-            send_mail(
+            safe_send_mail(
                 subject="Your MLM User ID",
                 message=f"Hello {user.first_name},\n\nYour payment is verified. Your User ID is: {user.user_id}",
-                from_email=settings.EMAIL_HOST_USER,
                 recipient_list=[user.email],
-                fail_silently=False,
             )
         except Exception as e:
             logger.warning("Failed to send user-id email for user %s: %s", user.user_id, e)
