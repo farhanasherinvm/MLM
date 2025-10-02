@@ -52,25 +52,33 @@ except Exception as e:
 
 def safe_send_mail(subject, message, recipient_list, from_email=None):
     """
-    Send mail safely. If SMTP fails, log error and continue without crashing.
+    Send mail safely. If SMTP fails or times out, log error and continue without crashing.
     """
-    from django.core.mail import send_mail
+    from django.core.mail import get_connection, EmailMessage
     import logging
+    import socket
 
     logger = logging.getLogger(__name__)
 
     try:
-        send_mail(
-            subject=subject,
-            message=message,
-            from_email=from_email or getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@example.com"),
-            recipient_list=recipient_list,
-            fail_silently=True,   # ✅ ensure no crash
-        )
-        logger.info(f"OTP email sent to {recipient_list}")
-    except Exception as e:
-        logger.error(f"Email sending failed for {recipient_list}: {e}")
+        # Ensure timeout for SMTP connections (default is None → can hang forever)
+        socket.setdefaulttimeout(5)  # ⏱ 5 seconds max wait
 
+        connection = get_connection(
+            fail_silently=True,
+            timeout=5  # ⏱ Django mail backend timeout
+        )
+        email = EmailMessage(
+            subject=subject,
+            body=message,
+            from_email=from_email or getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@example.com"),
+            to=recipient_list,
+            connection=connection,
+        )
+        email.send(fail_silently=True)
+        logger.info(f"✅ OTP email sent to {recipient_list}")
+    except Exception as e:
+        logger.error(f"❌ Email sending failed for {recipient_list}: {e}")
 
 def generate_next_userid():
     while True:
