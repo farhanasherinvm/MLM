@@ -611,14 +611,21 @@ class AdminUserPagination(PageNumberPagination):
 
 def apply_search_and_filters(queryset, request):
     """Reusable function for search, status, date filters"""
-    # Search
-    search = request.query_params.get("search") or request.data.get("search")
+    params = getattr(request, "query_params", {}) or {}
+    data = getattr(request, "data", {}) or {}
+
+    def get_param(key):
+        return params.get(key) or data.get(key)
+    
+    # --- Search filter ---
+    search = (get_param("search") or "").strip()
     if search:
-        parts = search.strip().split()
+        parts = search.split()
         if len(parts) >= 2:
             queryset = queryset.filter(
                 Q(user_id__icontains=search) |
-                (Q(first_name__icontains=parts[0]) & Q(last_name__icontains=" ".join(parts[1:])))
+                (Q(first_name__icontains=parts[0]) &
+                 Q(last_name__icontains=" ".join(parts[1:])))
             )
         else:
             queryset = queryset.filter(
@@ -626,36 +633,55 @@ def apply_search_and_filters(queryset, request):
                 Q(first_name__icontains=search) |
                 Q(last_name__icontains=search)
             )
-     # Status filter
-    status_filter = request.query_params.get("status") or request.data.get("status")
+    # --- Status filter ---
+    status_filter = (get_param("status") or "").lower()
     if status_filter == "active":
         queryset = queryset.filter(is_active=True)
     elif status_filter == "blocked":
         queryset = queryset.filter(is_active=False)
 
-    # Date filters
-    start_date = request.query_params.get("start_date") or request.data.get("start_date")
-    end_date = request.query_params.get("end_date") or request.data.get("end_date")
+    # --- Date filters ---
     date_format = "%Y-%m-%d"
+    start_date = get_param("start_date")
+    end_date = get_param("end_date")
+
     if start_date:
         try:
             start = datetime.strptime(start_date, date_format)
             queryset = queryset.filter(date_of_joining__gte=start)
-        except ValueError:
+        except (ValueError, TypeError):
             pass
     if end_date:
         try:
             end = datetime.strptime(end_date, date_format)
             queryset = queryset.filter(date_of_joining__lte=end)
-        except ValueError:
+        except (ValueError, TypeError):
             pass
 
-    # Level filter (post-query, but still controlled here)
-    level_filter = request.query_params.get("level") or request.data.get("level")
+    # --- Level filter (kept no-op for now to avoid breaking anything) ---
+    level_filter = get_param("level")
     if level_filter:
         try:
-            level_filter = int(level_filter)
-            queryset = [u for u in queryset if getattr(u, "level", None) == level_filter]
+            target_level = int(level_filter)
+            if target_level > 0:
+                matched_ids = []
+                for user in queryset:  # still a QuerySet iteration
+                    level = 1
+                    visited = set()
+                    current = user
+                    while current.sponsor_id:
+                        if current.sponsor_id in visited:
+                            break
+                        visited.add(current.sponsor_id)
+                        try:
+                            sponsor = CustomUser.objects.get(user_id=current.sponsor_id)
+                            level += 1
+                            current = sponsor
+                        except CustomUser.DoesNotExist:
+                            break
+                    if level == target_level:
+                        matched_ids.append(user.id)
+                queryset = queryset.filter(id__in=matched_ids)
         except (ValueError, TypeError):
             pass
 

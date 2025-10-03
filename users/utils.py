@@ -60,12 +60,13 @@ def export_users_csv(queryset, filename="users.csv"):
     writer.writerow(["Name", "User ID", "Level", "Profile Image", "Status"])
 
     for user in queryset:
-        profile_img = getattr(user.profile, "profile_image", None)
+        profile = getattr(user, "profile", None)
+        profile_img = getattr(profile, "profile_image", None) if profile else None
         profile_url = profile_img.url if profile_img else ""
         if len(profile_url) > 50:
             profile_url = profile_url[:47] + "..."
         full_name = f"{user.first_name} {user.last_name}".strip() or user.user_id
-        writer.writerow([full_name, user.user_id, user.level, profile_url, "Active" if user.is_active else "Blocked"])
+        writer.writerow([full_name, user.user_id, getattr(user, "level", ""), profile_url, "Active" if user.is_active else "Blocked"])
 
     return response
 
@@ -78,13 +79,14 @@ def export_users_pdf(queryset, filename="users.pdf", title="Users Report"):
 
     data = [["Name", "User ID", "Level", "Profile Image", "Status"]]
     for user in queryset:
-        profile_img = getattr(user.profile, "profile_image", None)
+        profile = getattr(user, "profile", None)  # ✅ safe check
+        profile_img = getattr(profile, "profile_image", None) if profile else None
         profile_url = profile_img.url if profile_img else ""
         if len(profile_url) > 50:
             profile_url = profile_url[:47] + "..."
         full_name = f"{user.first_name} {user.last_name}".strip() or user.user_id
         status = "Active" if user.is_active else "Blocked"
-        data.append([full_name, user.user_id, user.level, profile_url, status])
+        data.append([full_name, user.user_id, getattr(user, "level", ""), profile_url, status])
 
     table = Table(data, colWidths=[150, 70, 50, 150, 60])
     table.setStyle(TableStyle([
