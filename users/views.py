@@ -609,6 +609,38 @@ class AdminUserPagination(PageNumberPagination):
     page_size_query_param = "page_size"
     max_page_size = 100
 
+def compute_user_levels():
+    """
+    Precompute levels for all users (based on sponsor chain).
+    Returns a dict {user_id: level}.
+    """
+    users = CustomUser.objects.values("id", "user_id", "sponsor_id")
+    users_map = {u["user_id"]: u for u in users}
+    levels = {}
+
+    def get_level(uid, visited=None):
+        if uid in levels:
+            return levels[uid]
+        if visited is None:
+            visited = set()
+        if uid in visited:
+            return None  # cycle
+        visited.add(uid)
+        user = users_map.get(uid)
+        if not user or not user["sponsor_id"]:
+            levels[uid] = 1
+            return 1
+        sponsor_uid = user["sponsor_id"]
+        sponsor_level = get_level(sponsor_uid, visited)
+        if sponsor_level is None:
+            return None
+        levels[uid] = sponsor_level + 1
+        return levels[uid]
+
+    for u in users:
+        get_level(u["user_id"])
+    return levels
+
 def apply_search_and_filters(queryset, request):
     """Reusable function for search, status, date filters"""
     params = getattr(request, "query_params", {}) or {}
@@ -658,34 +690,22 @@ def apply_search_and_filters(queryset, request):
         except (ValueError, TypeError):
             pass
 
-    # --- Level filter (kept no-op for now to avoid breaking anything) ---
+    # --- Level filter ---
     level_filter = get_param("level")
     if level_filter:
         try:
             target_level = int(level_filter)
             if target_level > 0:
-                matched_ids = []
-                for user in queryset:  # still a QuerySet iteration
-                    level = 1
-                    visited = set()
-                    current = user
-                    while current.sponsor_id:
-                        if current.sponsor_id in visited:
-                            break
-                        visited.add(current.sponsor_id)
-                        try:
-                            sponsor = CustomUser.objects.get(user_id=current.sponsor_id)
-                            level += 1
-                            current = sponsor
-                        except CustomUser.DoesNotExist:
-                            break
-                    if level == target_level:
-                        matched_ids.append(user.id)
-                queryset = queryset.filter(id__in=matched_ids)
+                user_levels = compute_user_levels()
+                valid_ids = [
+                    uid for uid, lvl in user_levels.items() if lvl == target_level
+                ]
+                queryset = queryset.filter(user_id__in=valid_ids)
         except (ValueError, TypeError):
             pass
 
     return queryset
+
 class AdminListUsersView(APIView):
     """List, search, filter, paginate, and export users"""
     permission_classes = [IsAdminUser]
