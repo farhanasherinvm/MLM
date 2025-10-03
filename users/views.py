@@ -862,16 +862,21 @@ class AdminNetworkView(APIView):
     def get(self, request, *args, **kwargs):
         queryset = self.get_queryset(request)
 
-        # Counts before level filtering
-        total_downline = len(queryset)
-        active_count = sum(1 for u in queryset if u.is_active)
-        blocked_count = sum(1 for u in queryset if not u.is_active)
+        # Counts before pagination
+        total_downline = queryset.count()
+        active_count = queryset.filter(is_active=True).count()
+        blocked_count = queryset.filter(is_active=False).count()
 
         export_format = request.query_params.get("export")
         if export_format == "csv":
             return export_users_csv(queryset, filename="network_users.csv")
         if export_format == "pdf":
             return export_users_pdf(queryset, filename="network_users.pdf", title="Network Users Report")
+        
+        # Apply pagination
+        paginator = PageNumberPagination()
+        paginator.page_size = int(request.query_params.get("page_size", 10))  # allow dynamic page_size
+        page = paginator.paginate_queryset(queryset, request)
 
         serializer = AdminNetworkUserSerializer(queryset, many=True, context={"request": request})
         return Response({
