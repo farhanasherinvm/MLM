@@ -29,23 +29,66 @@ from django.db.models.functions import Concat
 logger = logging.getLogger(__name__)
 
 # Existing PaymentReportViewSet (unchanged for now)
+class PaymentReportPagination(PageNumberPagination):
+    page_size = 10
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
 class PaymentReportViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = UserLevel.objects.all().order_by('-requested_date')  
+    # N+1 FIX: Use select_related for speed
+    queryset = UserLevel.objects.all().select_related('user', 'level').order_by('-requested_date') 
     serializer_class = AdminPaymentReportSerializer
     permission_classes = [IsAdminUser]
     filter_backends = [DjangoFilterBackend]
     filterset_class = PaymentFilter
+    
+    pagination_class = PaymentReportPagination 
 
     def list(self, request, *args, **kwargs):
-        queryset = self.filter_queryset(self.get_queryset())
-        pending_qs = queryset.filter(status='pending')
-        approved_qs = queryset.filter(status='paid')
-        serializer_pending = self.get_serializer(pending_qs, many=True)
-        serializer_approved = self.get_serializer(approved_qs, many=True)
+        # Start with the optimized base queryset and apply request filters
+        filtered_qs = self.filter_queryset(self.get_queryset())
+        
+        paginator = self.paginator
+        
+        # Store original param to ensure it's restored after BOTH lists are processed
+        original_page_query_param = paginator.page_query_param
+        
+        # --- A. Paginate Pending List (uses ?p_page=X) ---
+        paginator.page_query_param = 'p_page' # 🌟 NEW: Set param for PENDING
+        
+        pending_qs = filtered_qs.filter(status='pending') 
+        page_pending = paginator.paginate_queryset(pending_qs, request=request, view=self)
+        serializer_pending = self.get_serializer(page_pending, many=True)
+        
+        pending_data = {
+            'count': paginator.page.paginator.count if paginator.page else 0,
+            'next': paginator.get_next_link(), # This link now uses the 'p_page' parameter
+            'previous': paginator.get_previous_link(),
+            'results': serializer_pending.data,
+        }
+
+        # --- B. Paginate Approved List (uses ?a_page=X) ---
+        
+        # Set param for APPROVED
+        paginator.page_query_param = 'a_page' 
+
+        approved_qs = filtered_qs.filter(status='paid') 
+        page_approved = paginator.paginate_queryset(approved_qs, request=request, view=self)
+        serializer_approved = self.get_serializer(page_approved, many=True)
+        
+        approved_data = {
+            'count': paginator.page.paginator.count if paginator.page else 0,
+            'next': paginator.get_next_link(), # This link now uses the 'a_page' parameter
+            'previous': paginator.get_previous_link(),
+            'results': serializer_approved.data,
+        }
+        
+        paginator.page_query_param = original_page_query_param
+
         return Response({
-            'pending': serializer_pending.data,
-            'approved': serializer_approved.data,
-        })
+            'pending': pending_data,
+            'approved': approved_data,
+        }, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['get'], url_path='export-csv')
     def export_csv(self, request):

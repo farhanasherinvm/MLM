@@ -240,6 +240,88 @@ def create_user_levels(sender, instance, created, **kwargs):
             logger.error(f"Failed to create UserLevel records for {instance.user_id}: {str(e)}")
             raise
 
+@receiver(post_save, sender=CustomUser)
+def create_user_levels(sender, instance, created, **kwargs):
+    if created:
+        logger.debug(f"Signal triggered for user {instance.user_id}, created={created}")
+        try:
+            with transaction.atomic():
+                Level.create_default_levels()
+                levels = Level.objects.all().order_by('order')
+                if not levels.exists():
+                    logger.error(f"No Level objects found for user {instance.user_id}")
+                    raise Exception("No Level objects available")
+
+                sponsor_id = instance.sponsor_id
+                logger.debug(f"Sponsor ID: {sponsor_id} for user {instance.user_id}")
+
+                referrer = None
+                if sponsor_id and CustomUser.objects.filter(user_id=sponsor_id).exists():
+                    referrer = CustomUser.objects.get(user_id=sponsor_id)
+                else:
+                    logger.warning(f"No valid sponsor_id for user {instance.user_id}")
+
+                for level in levels:
+                    linked_user_id = None
+                    if referrer and 1 <= level.order <= 6:
+                        depth = level.order 
+                        upline_user = get_upline(instance, depth) 
+                        
+                        if upline_user:
+                            linked_user_id = upline_user.user_id
+
+                    profile = Profile.objects.filter(user=instance).first()
+                    target = level.amount * (Decimal('2') ** level.order)
+                    user_level, created = UserLevel.objects.get_or_create(
+                        user=instance,
+                        level=level,
+                        defaults={
+                            'profile': profile,
+                            'linked_user_id': linked_user_id,
+                            'status': 'not_paid',
+                            'payment_mode': 'Razorpay',
+                            'target': target,
+                            'balance': target,
+                            'received': 0
+                        }
+                    )
+                    if not created:
+                        logger.warning(f"UserLevel already exists for {instance.user_id} - {level.name}, skipping creation")
+                    else:
+                        logger.debug(f"UserLevel created={created} for {instance.user_id} - {level.name}")
+
+                    if referrer and level.name == 'Refer Help':
+                        refer_help_ulevel, _ = UserLevel.objects.get_or_create(
+                            user=referrer,
+                            level=level,
+                            defaults={
+                                'linked_user_id': None,
+                                'status': 'not_paid',
+                                'payment_mode': 'Razorpay',
+                                'target': level.amount,
+                                'balance': level.amount,
+                                'received': 0
+                            }
+                        )
+                        if not refer_help_ulevel.linked_user_id:
+                            refer_help_ulevel.linked_user_id = instance.user_id
+                            refer_help_ulevel.save()
+                            logger.debug(f"Updated Refer Help linked_user_id for {referrer.user_id} to {instance.user_id}")
+
+                if referrer:
+                    profile = Profile.objects.filter(user=referrer).first()
+                    if profile:
+                        user_levels = UserLevel.objects.filter(user=referrer)
+                        if user_levels.filter(status='paid').count() == user_levels.count():
+                            profile.eligible_to_refer = True
+                            profile.save()
+                            logger.debug(f"Set eligible_to_refer=True for {referrer.user_id}")
+
+            logger.info(f"Successfully created UserLevel records for user {instance.user_id}")
+        except Exception as e:
+            logger.error(f"Failed to create UserLevel records for {instance.user_id}: {str(e)}")
+            raise
+
 @receiver(post_save, sender=Level)
 def update_user_levels_on_amount_change(sender, instance, **kwargs):
     if instance.pk and instance.name != 'Refer Help':
@@ -290,19 +372,17 @@ def update_related_user_levels(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender=LevelPayment)
 def update_user_level_on_payment(sender, instance, created, **kwargs):
-    """Update UserLevel status based on LevelPayment verification."""
     if instance.status == "Verified":
         with transaction.atomic():
             user_level = instance.user_level
-            if user_level.status != 'paid':  # Prevent re-processing
+            if user_level.status != 'paid': 
                 user_level.status = 'paid'
                 user_level.payment_mode = 'Razorpay'
                 user_level.approved_at = timezone.now()
                 user_level.transaction_id = instance.razorpay_payment_id
-                user_level.save()  # Triggers UserLevel post_save signal for referrer updates, next level, etc.
+                user_level.save() 
                 logger.info(f"UserLevel {user_level.id} marked as paid due to LevelPayment {instance.id} verification")
                 
-                # Explicitly check and enable referring
                 user_levels = UserLevel.objects.filter(user=user_level.user)
                 if user_levels.filter(status='paid').count() == user_levels.count():
                     try:
