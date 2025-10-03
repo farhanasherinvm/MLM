@@ -876,7 +876,7 @@ class AdminNetworkView(APIView):
             return export_users_csv(queryset, filename="network_users.csv")
         if export_format == "pdf":
             return export_users_pdf(queryset, filename="network_users.pdf", title="Network Users Report")
-        
+
         # Pagination
         paginator = PageNumberPagination()
         paginator.page_size = int(request.query_params.get("page_size", 10))
@@ -884,11 +884,20 @@ class AdminNetworkView(APIView):
 
         serializer = AdminNetworkUserSerializer(page, many=True, context={"request": request})
 
-        return paginator.get_paginated_response({
+        # ✅ Custom paginated response with counts
+        return Response({
             "counts": {
                 "total_downline": total_downline,
                 "active_count": active_count,
                 "blocked_count": blocked_count,
+            },
+            "pagination": {
+                "count": paginator.page.paginator.count,
+                "page": paginator.page.number,
+                "page_size": paginator.page.paginator.per_page,
+                "num_pages": paginator.page.paginator.num_pages,
+                "next": paginator.get_next_link(),
+                "previous": paginator.get_previous_link(),
             },
             "users": serializer.data
         })
