@@ -77,6 +77,10 @@ def export_users_pdf(queryset, filename="users.pdf", title="Users Report"):
     styles = getSampleStyleSheet()
     elements.append(Paragraph(title, styles["Title"]))
 
+    # ✅ Precompute levels for all users
+    from .views import compute_user_levels
+    user_levels = compute_user_levels()
+
     data = [["Name", "User ID", "Level", "Profile Image", "Status"]]
     for user in queryset:
         profile = getattr(user, "profile", None)  # ✅ safe check
@@ -86,7 +90,11 @@ def export_users_pdf(queryset, filename="users.pdf", title="Users Report"):
             profile_url = profile_url[:47] + "..."
         full_name = f"{user.first_name} {user.last_name}".strip() or user.user_id
         status = "Active" if user.is_active else "Blocked"
-        data.append([full_name, user.user_id, getattr(user, "level", ""), profile_url, status])
+
+        # ✅ Inject computed level safely
+        level = user_levels.get(user.user_id, "")
+
+        data.append([full_name, user.user_id, level, profile_url, status])
 
     table = Table(data, colWidths=[150, 70, 50, 150, 60])
     table.setStyle(TableStyle([
@@ -108,3 +116,4 @@ def export_users_pdf(queryset, filename="users.pdf", title="Users Report"):
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     response.write(pdf)
     return response
+
