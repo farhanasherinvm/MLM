@@ -77,25 +77,39 @@ def export_users_pdf(queryset, filename="users.pdf", title="Users Report"):
     styles = getSampleStyleSheet()
     elements.append(Paragraph(title, styles["Title"]))
 
-    # ✅ Precompute levels for all users
-    from .views import compute_user_levels
-    user_levels = compute_user_levels()
+    # ✅ Import safe level calculator
+    try:
+        from .views import compute_user_levels
+        user_levels = compute_user_levels()
+    except Exception:
+        user_levels = {}
 
+    # Table header
     data = [["Name", "User ID", "Level", "Profile Image", "Status"]]
+
     for user in queryset:
-        profile = getattr(user, "profile", None)  # ✅ safe check
-        profile_img = getattr(profile, "profile_image", None) if profile else None
-        profile_url = profile_img.url if profile_img else ""
-        if len(profile_url) > 50:
-            profile_url = profile_url[:47] + "..."
-        full_name = f"{user.first_name} {user.last_name}".strip() or user.user_id
-        status = "Active" if user.is_active else "Blocked"
+        try:
+            # Safe profile access
+            profile = getattr(user, "profile", None)
+            profile_img = getattr(profile, "profile_image", None) if profile else None
+            profile_url = getattr(profile_img, "url", "") if profile_img else ""
 
-        # ✅ Inject computed level safely
-        level = user_levels.get(user.user_id, "")
+            # Trim long URLs for PDF layout
+            if profile_url and len(profile_url) > 50:
+                profile_url = profile_url[:47] + "..."
 
-        data.append([full_name, user.user_id, level, profile_url, status])
+            full_name = (f"{user.first_name} {user.last_name}".strip() or user.user_id)
+            status = "Active" if getattr(user, "is_active", False) else "Blocked"
 
+            # ✅ Use precomputed level (fallback to empty string)
+            level = user_levels.get(user.user_id, "")
+
+            data.append([full_name, user.user_id, str(level), profile_url, status])
+        except Exception as e:
+            # In case any single row breaks, push a safe fallback row
+            data.append([str(user), getattr(user, "user_id", ""), "", "", "ERROR"])
+
+    # Create table
     table = Table(data, colWidths=[150, 70, 50, 150, 60])
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
@@ -116,4 +130,3 @@ def export_users_pdf(queryset, filename="users.pdf", title="Users Report"):
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     response.write(pdf)
     return response
-
