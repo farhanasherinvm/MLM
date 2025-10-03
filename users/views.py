@@ -857,36 +857,42 @@ class AdminNetworkView(APIView):
     permission_classes = [IsProjectAdmin]
 
     def get_queryset(self, request):
-        return apply_search_and_filters(CustomUser.objects.select_related("profile").all(), request)
+        return apply_search_and_filters(
+            CustomUser.objects.select_related("profile").all(),
+            request
+        )
 
     def get(self, request, *args, **kwargs):
         queryset = self.get_queryset(request)
 
-        # Counts before pagination
+        # Counts (before pagination)
         total_downline = queryset.count()
         active_count = queryset.filter(is_active=True).count()
         blocked_count = queryset.filter(is_active=False).count()
 
+        # Export handling
         export_format = request.query_params.get("export")
         if export_format == "csv":
             return export_users_csv(queryset, filename="network_users.csv")
         if export_format == "pdf":
             return export_users_pdf(queryset, filename="network_users.pdf", title="Network Users Report")
         
-        # Apply pagination
+        # Pagination
         paginator = PageNumberPagination()
-        paginator.page_size = int(request.query_params.get("page_size", 10))  # allow dynamic page_size
+        paginator.page_size = int(request.query_params.get("page_size", 10))
         page = paginator.paginate_queryset(queryset, request)
 
-        serializer = AdminNetworkUserSerializer(queryset, many=True, context={"request": request})
-        return Response({
+        serializer = AdminNetworkUserSerializer(page, many=True, context={"request": request})
+
+        return paginator.get_paginated_response({
             "counts": {
                 "total_downline": total_downline,
                 "active_count": active_count,
                 "blocked_count": blocked_count,
             },
             "users": serializer.data
-        })  
+        })
+
 class GetUserFullNameView(APIView):
     permission_classes = [AllowAny]
 
