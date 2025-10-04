@@ -44,6 +44,35 @@ class PaymentReportViewSet(viewsets.ReadOnlyModelViewSet):
     
     pagination_class = PaymentReportPagination 
 
+
+    @action(detail=False, methods=['get'], url_path='pending')
+    def pending_payments(self, request):
+        """
+        List all pending payments with pagination and filtering.
+        Endpoint: /api/payment-report/pending/
+        """
+        queryset = self.filter_queryset(self.get_queryset().filter(status='pending'))
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    @action(detail=False, methods=['get'], url_path='approved')
+    def approved_payments(self, request):
+        """
+        List all approved (paid) payments with pagination and filtering.
+        Endpoint: /api/payment-report/approved/
+        """
+        queryset = self.filter_queryset(self.get_queryset().filter(status='paid'))
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
     def list(self, request, *args, **kwargs):
         # Start with the optimized base queryset and apply request filters
         filtered_qs = self.filter_queryset(self.get_queryset())
