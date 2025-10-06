@@ -38,6 +38,11 @@ class RegistrationSerializer(serializers.Serializer):
             raise serializers.ValidationError({"mobile": "Mobile number already exists."})
         if not CustomUser.objects.filter(user_id=data["sponsor_id"]).exists():
             raise serializers.ValidationError({"sponsor_id": "Sponsor ID does not exist."})
+        
+        placement_id = data.get("placement_id")
+        if placement_id:  # only check if provided
+            if not CustomUser.objects.filter(user_id=placement_id).exists():
+                raise serializers.ValidationError({"placement_id": f"No user with ID {placement_id} exists in the system."})
         return data
     
     # def create_payment(self, validated_data):

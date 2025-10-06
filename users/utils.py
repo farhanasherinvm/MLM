@@ -22,31 +22,31 @@ import traceback
 from django.utils import timezone
 from datetime import timedelta
 
-def assign_placement_id(sponsor):
-    if not sponsor:
-        return None
+# def assign_placement_id(sponsor):
+#     if not sponsor:
+#         return None
 
-    # Get all users already placed under this sponsor
-    placed_children = CustomUser.objects.filter(placement_id=sponsor.user_id).order_by("id")
+#     # Get all users already placed under this sponsor
+#     placed_children = CustomUser.objects.filter(placement_id=sponsor.user_id).order_by("id")
 
-    if placed_children.count() < 2:  # Only first 2 get placement
-        return sponsor.user_id
-    return None  # Others get no placement
+#     if placed_children.count() < 2:  # Only first 2 get placement
+#         return sponsor.user_id
+#     return None  # Others get no placement
 
-def generate_next_placementid():
-    """
-    Generate next placement_id for a new user.
-    For now, it just increments the max existing placement_id by 1.
-    """
+# def generate_next_placementid():
+#     """
+#     Generate next placement_id for a new user.
+#     For now, it just increments the max existing placement_id by 1.
+#     """
     
 
-    last_user = CustomUser.objects.order_by("-placement_id").first()
-    if last_user and last_user.placement_id:
-        try:
-            return int(last_user.placement_id) + 1
-        except ValueError:
-            return 1
-    return 1
+#     last_user = CustomUser.objects.order_by("-placement_id").first()
+#     if last_user and last_user.placement_id:
+#         try:
+#             return int(last_user.placement_id) + 1
+#         except ValueError:
+#             return 1
+#     return 1
 
 
 def validate_sponsor(sponsor_id: str) -> bool:

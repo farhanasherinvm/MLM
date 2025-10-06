@@ -31,8 +31,8 @@ from rest_framework.pagination import PageNumberPagination
 from profiles.serializers import AdminUserListSerializer, AdminUserDetailSerializer, AdminNetworkUserSerializer
 import logging
 from django.db import IntegrityError, transaction
-from users.utils import generate_next_placementid
-from users.utils import assign_placement_id
+# from users.utils import generate_next_placementid
+# from users.utils import assign_placement_id
 from django.core.mail import send_mail
 
 logger = logging.getLogger(__name__)
