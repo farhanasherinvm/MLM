@@ -405,6 +405,7 @@ class RecipientPaymentViewSet(viewsets.GenericViewSet):
     permission_classes = [IsAuthenticated, IsPaymentRecipient]
     queryset = LevelPayment.objects.all()
     serializer_class = RecipientLevelPaymentSerializer
+    lookup_field = 'payment_token' 
     def get_queryset(self):
         # 1. Filter by the current user as the recipient (linked_user_id)
         # 2. Filter for only pending manual payments
@@ -432,7 +433,7 @@ class RecipientPaymentViewSet(viewsets.GenericViewSet):
 
     # Endpoint: POST /api/recipient/payments/{payment_token}/accept/
     @action(detail=True, methods=['post'], url_path='accept')
-    def accept(self, request, pk=None):
+    def accept(self, request, payment_token=None):
         level_payment = self.get_object() # Fetches object and applies IsPaymentRecipient
 
         # Redundant checks as get_queryset filters already, but good for safety/consistency
@@ -451,7 +452,7 @@ class RecipientPaymentViewSet(viewsets.GenericViewSet):
 
     # Endpoint: POST /api/recipient/payments/{payment_token}/reject/
     @action(detail=True, methods=['post'], url_path='reject')
-    def reject(self, request, pk=None):
+    def reject(self, request, payment_token=None):
         level_payment = self.get_object() # Fetches object and applies IsPaymentRecipient
 
         if level_payment.payment_method != "Manual" or level_payment.status != "Pending":
