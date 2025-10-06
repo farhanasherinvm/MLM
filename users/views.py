@@ -286,7 +286,7 @@ class RazorpayVerifyView(APIView):
         return Response({
             "message": "Payment verified successfully",
             "user_id": user.user_id,
-            "placement_id": user.placement_id,
+            # "placement_id": user.placement_id,
         }, status=200)
 
 class UploadReceiptView(APIView):

@@ -137,7 +137,6 @@ class ReferralListSerializer(serializers.ModelSerializer):
             return profile.profile_image.url
         return None
 
-
 class ProfileSerializer(serializers.ModelSerializer):
     # User fields
     user_id = serializers.CharField(source='user.user_id', read_only=True)
@@ -149,9 +148,10 @@ class ProfileSerializer(serializers.ModelSerializer):
         source="user.date_of_joining", format="%Y-%m-%d %H:%M:%S", read_only=True
     )
 
-    # Referral info
-    placements = serializers.SerializerMethodField()
-    referrals = serializers.SerializerMethodField()   # changed name from direct_referrals
+    # Dynamic fields
+    placements = serializers.SerializerMethodField()     # tree users (placement-based)
+    referrals = serializers.SerializerMethodField()      # sponsor-based users
+    
     referred_by_id = serializers.SerializerMethodField()
     referred_by_name = serializers.SerializerMethodField()
     count_out_of_2 = serializers.SerializerMethodField()
@@ -159,7 +159,7 @@ class ProfileSerializer(serializers.ModelSerializer):
     status = serializers.SerializerMethodField()
     placement_id = serializers.CharField(source='user.placement_id', read_only=True)
 
-    # Profile fields (all writable)
+    # Profile fields
     district = serializers.CharField(required=False, allow_blank=True)
     state = serializers.CharField(required=False, allow_blank=True)
     address = serializers.CharField(required=False, allow_blank=True)
@@ -173,33 +173,31 @@ class ProfileSerializer(serializers.ModelSerializer):
         fields = [
             "user_id", "first_name", "last_name", "email", "mobile",
             "status", "date_of_join", "count_out_of_2", "percentage",
-            "referred_by_id", "referred_by_name","placement_id", 
+            "referred_by_id", "referred_by_name", "placement_id",
             "district", "state", "address", "place", "pincode",
             "whatsapp_number", "profile_image",
-            "placements", "referrals",
+             "placements", "referrals",
         ]
 
     # ---------- Update method ----------
     def update(self, instance, validated_data):
-        # Update user fields
         user_data = validated_data.pop('user', {})
         user = instance.user
         for attr, value in user_data.items():
             setattr(user, attr, value)
         user.save()
 
-        # Update profile fields
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
         return instance
 
-    # ---------- SerializerMethodField methods ----------
+    # ---------- Common helpers ----------
     def get_status(self, obj):
         return "Active" if obj.user.is_active else "Inactive"
 
     def get_referred_by_id(self, obj):
-        return obj.user.sponsor_id if obj.user.sponsor_id else None
+        return obj.user.sponsor_id or None
 
     def get_referred_by_name(self, obj):
         return self._get_sponsor_name(obj.user)
@@ -214,95 +212,71 @@ class ProfileSerializer(serializers.ModelSerializer):
         return None
 
     def get_count_out_of_2(self, obj):
-        referred_count = CustomUser.objects.filter(sponsor_id=obj.user.user_id).count()
-        return f"{referred_count}/2"
+        placed_count = CustomUser.objects.filter(placement_id=obj.user.user_id).count()
+        return f"{placed_count}/2"
 
     def get_percentage(self, obj):
-        referred_count = CustomUser.objects.filter(sponsor_id=obj.user.user_id).count()
-        return f"{(referred_count / 2) * 100:.0f}%"
+        placed_count = CustomUser.objects.filter(placement_id=obj.user.user_id).count()
+        return f"{(placed_count / 2) * 100:.0f}%"
 
-    def get_profile_image(self, obj):
-        if obj.profile_image:
-            return obj.profile_image.url
-        return None
+   
 
-    # ---------- Placements (first 2 users only, binary tree) ----------
+    # ---------- Placements Tree (recursive) ----------
     def get_placements(self, obj):
         return self._build_levels(obj.user.user_id)
 
-    # ---------- Referrals (all other users beyond first 2) ----------
-    def get_referrals(self, obj):
-        all_referrals = list(CustomUser.objects.filter(sponsor_id=obj.user.user_id).order_by("id"))
-        extra_referrals = all_referrals[2:]  # after first 2
-
-        referral_list = []
-        for child in extra_referrals:
-            profile = getattr(child, "profile", None)
-            
-            referral_list.append({
-                "user_id": child.user_id,
-                "name": f"{child.first_name} {child.last_name}",
-                "email": child.email,
-                "mobile": child.mobile,
-                "district": profile.district if profile else None,
-                "state": profile.state if profile else None,
-                "address": profile.address if profile else None,
-                "place": profile.place if profile else None,
-                "pincode": profile.pincode if profile else None,
-                "whatsapp_number": profile.whatsapp_number if profile else None,
-                "profile_image": profile.profile_image.url if profile and profile.profile_image else None,
-                "status": "Active" if child.is_active else "Inactive",
-                "date_of_join": child.date_of_joining.strftime("%Y-%m-%d %H:%M:%S"),
-                "count_out_of_2": f"{CustomUser.objects.filter(sponsor_id=child.user_id).count()}/2",
-                "percentage": f"{(CustomUser.objects.filter(sponsor_id=child.user_id).count() / 2) * 100:.0f}%",
-                "referred_by_id": child.sponsor_id,
-               
-                "referred_by_name": self._get_sponsor_name(child),
-                "placements": self._build_levels(child.user_id),  # starts its own tree
-            })
-        return referral_list
-
-    # ---------- Recursive placement tree ----------
     def _build_levels(self, user_id, level=1, max_level=6):
         if level > max_level:
             return {}
-
         slots = [
             {"position": "Left", "status": "Not Available"},
             {"position": "Right", "status": "Not Available"},
         ]
 
-        referrals = list(CustomUser.objects.filter(sponsor_id=user_id).order_by("id")[:2])
-
-        for i, child in enumerate(referrals):
+        children = list(CustomUser.objects.filter(placement_id=user_id).order_by("id")[:2])
+        for i, child in enumerate(children):
             profile = getattr(child, "profile", None)
-            child_count = CustomUser.objects.filter(sponsor_id=child.user_id).count()
-             
+            child_count = CustomUser.objects.filter(placement_id=child.user_id).count()
             slots[i] = {
                 "position": "Left" if i == 0 else "Right",
                 "user_id": child.user_id,
                 "name": f"{child.first_name} {child.last_name}",
                 "email": child.email,
                 "mobile": child.mobile,
-                "district": profile.district if profile else None,
-                "state": profile.state if profile else None,
-                "address": profile.address if profile else None,
-                "place": profile.place if profile else None,
-                "pincode": profile.pincode if profile else None,
-                "whatsapp_number": profile.whatsapp_number if profile else None,
-                "profile_image": profile.profile_image.url if profile and profile.profile_image else None,
                 "status": "Active" if child.is_active else "Inactive",
+                "placement_id": child.placement_id,
+                "placement_status": "Placed",
                 "date_of_join": child.date_of_joining.strftime("%Y-%m-%d %H:%M:%S"),
                 "count_out_of_2": f"{child_count}/2",
                 "percentage": f"{(child_count / 2) * 100:.0f}%",
                 "referred_by_id": child.sponsor_id,
-                "placement_id": child.sponsor_id, 
                 "referred_by_name": self._get_sponsor_name(child),
+                "profile_image": profile.profile_image.url if profile and profile.profile_image else None,
                 "next_level": self._build_levels(child.user_id, level + 1, max_level),
             }
-
         return {f"Level {level}": slots}
 
+    # ---------- Referrals ----------
+    def get_referrals(self, obj):
+        """Show all sponsor-based users (referrals) and whether placed or pending"""
+        referrals = CustomUser.objects.filter(sponsor_id=obj.user.user_id).select_related("profile").order_by("id")
+        data = []
+        for user in referrals:
+            profile = getattr(user, "profile", None)
+            data.append({
+                "user_id": user.user_id,
+                "name": f"{user.first_name} {user.last_name}".strip(),
+                "email": user.email,
+                "mobile": user.mobile,
+                "placement_status": "Placed" if user.placement_id else "Pending Placement",
+                "status": "Active" if user.is_active else "Inactive",
+                "date_of_join": user.date_of_joining.strftime("%Y-%m-%d %H:%M:%S"),
+                "district": profile.district if profile else None,
+                "state": profile.state if profile else None,
+                "place": profile.place if profile else None,
+                "profile_image": profile.profile_image.url if profile and profile.profile_image else None,
+            })
+        return data
 
 
 class KYCSerializer(serializers.ModelSerializer):

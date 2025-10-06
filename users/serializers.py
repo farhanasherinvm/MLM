@@ -30,21 +30,36 @@ class RegistrationSerializer(serializers.Serializer):
 
 
     def validate(self, data):
+    # Check password match
         if data["password"] != data["confirm_password"]:
-            raise serializers.ValidationError({"password": "Passwords do not match."})
+         raise serializers.ValidationError({"password": "Passwords do not match."})
+
+    # Check unique email and mobile
         if CustomUser.objects.filter(email=data["email"]).exists():
-            raise serializers.ValidationError({"email": "Email already exists."})
+         raise serializers.ValidationError({"email": "Email already exists."})
         if CustomUser.objects.filter(mobile=data["mobile"]).exists():
-            raise serializers.ValidationError({"mobile": "Mobile number already exists."})
+          raise serializers.ValidationError({"mobile": "Mobile number already exists."})
+
+    # Check sponsor exists
         if not CustomUser.objects.filter(user_id=data["sponsor_id"]).exists():
-            raise serializers.ValidationError({"sponsor_id": "Sponsor ID does not exist."})
-        
+          raise serializers.ValidationError({"sponsor_id": "Sponsor ID does not exist."})
+
+    # Check placement ID validity and limit
         placement_id = data.get("placement_id")
-        if placement_id:  # only check if provided
-            if not CustomUser.objects.filter(user_id=placement_id).exists():
-                raise serializers.ValidationError({"placement_id": f"No user with ID {placement_id} exists in the system."})
+        if placement_id:  # Only validate if provided
+            placement_user = CustomUser.objects.filter(user_id=placement_id).first()
+            if not placement_user:
+             raise serializers.ValidationError({"placement_id": f"No user with ID {placement_id} exists in the system."})
+
+        # Count users already placed under this placement_id
+            placed_count = CustomUser.objects.filter(placement_id=placement_id).count()
+            if placed_count >= 2:
+             raise serializers.ValidationError({
+                 "placement_id": "Placement limit reached for this user. Please choose another placement or leave it empty."
+             })
+
         return data
-    
+
     # def create_payment(self, validated_data):
     #     data_copy = dict(validated_data)
     #     password = data_copy.pop("password")
