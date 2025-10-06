@@ -40,7 +40,7 @@ class Level(models.Model):
 
 class UserLevel(models.Model):
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
-    level = models.ForeignKey(Level, on_delete=models.CASCADE)
+    level = models.ForeignKey(Level, on_delete=models.CASCADE, null=True , blank=True)
     profile = models.ForeignKey(Profile, on_delete=models.CASCADE, null=True, blank=True)
     linked_user_id = models.CharField(max_length=20, null=True, blank=True, default=None)
     is_active = models.BooleanField(default=True)

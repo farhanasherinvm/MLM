@@ -9,6 +9,7 @@ import random
 import uuid
 from django.db import transaction
 import string
+from django.db.models import Q
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +156,7 @@ class AdminPaymentReportSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = UserLevel
-        fields = [ 'username', 'level_name', 'user_id', 'amount', 'payment_method', 'transaction_id', 
+        fields = [ 'id','username', 'level_name', 'user_id', 'amount', 'payment_method', 'transaction_id', 
                   'status', 'approved_at', 'payment_proof_url', 'created_at', 'requested_date','payment_id']
     
     def get_username(self, obj):
@@ -185,10 +186,9 @@ class AdminPaymentReportSerializer(serializers.ModelSerializer):
 
     def get_payment_id(self, obj):
         """Get the id from the latest LevelPayment for pending payments."""
-        if obj.status == 'pending':
-            latest_payment = getattr(obj, 'payments', []).order_by('-created_at').first()
-            return getattr(latest_payment, 'id', None) if latest_payment else None
-        return None
+        latest_payment = getattr(obj, 'payments', []).order_by('-created_at').first()
+        # Return the primary key (id) of the LevelPayment object
+        return getattr(latest_payment, 'id', None) if latest_payment else None
 
     def get_payment_proof_url(self, obj):
         """Get the payment proof URL from the latest LevelPayment."""
@@ -329,120 +329,159 @@ class RecipientLevelPaymentSerializer(serializers.ModelSerializer):
         read_only_fields = ('id', 'payment_token', 'user_level', 'amount', 'payment_method', 
                             'razorpay_order_id', 'payment_proof_url', 'created_at', 'payment_data')
 
-class DummyUserSerializer(serializers.Serializer):
-    user_id = serializers.CharField(max_length=20)
-    first_name = serializers.CharField(max_length=100)
-    last_name = serializers.CharField(max_length=100)
-    email = serializers.EmailField()
-    mobile = serializers.CharField(max_length=15)
-    sponsor_id = serializers.CharField(max_length=20)
-    level = serializers.CharField(source='user_level.level.name')
-    linked_user_id = serializers.CharField(max_length=20)
+                            
 
+class DummyUserSerializer(serializers.Serializer):
+    user_id = serializers.CharField(max_length=20, source='user.user_id')
+    first_name = serializers.CharField(max_length=100, source='user.first_name')
+    email = serializers.EmailField(source='user.email')
+    pk = serializers.IntegerField(read_only=True)
+    admin_level_linked = serializers.SerializerMethodField()
+    current_status_display = serializers.SerializerMethodField()
+    linked_user_id = serializers.CharField(max_length=20)
+    is_active = serializers.BooleanField()
+    
+    def get_admin_level_linked(self, obj):
+        return obj.level.name if obj.level else "N/A"
+
+    def get_current_status_display(self, obj):
+        if not obj.is_active:
+            return "INACTIVE (Admin Disabled)"
+        if obj.status == 'not_paid':
+            return "ACTIVE (Payment Pending)"
+        return f"ACTIVE ({obj.status.replace('_', ' ').title()})"
+
+
+# --- 2. Serializer for Creating Dummy Users (with Flexible Count & Limit Logic) ---
 class CreateDummyUsersSerializer(serializers.Serializer):
-    count = serializers.IntegerField(default=6, min_value=6, max_value=6)
+    count = serializers.IntegerField(default=1, min_value=1)
+
+    def get_unique_suffix(self, length=4):
+        return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
 
     def create(self, validated_data):
         admin = self.context['request'].user
         count = validated_data.get('count')
         dummy_users_data = []
 
-        existing_fakedata = CustomUser.objects.filter(user_id__startswith='FAKEDATA').order_by('-user_id').first()
-        start_id = 1
-        if existing_fakedata:
+        # --- FIX: Robust ID Generation Logic ---
+        
+        # 1. Filter all users with dummy prefixes ('DUMMY' or 'FAKEDATA')
+        all_dummy_users = CustomUser.objects.filter(
+            Q(user_id__startswith='DUMMY') | Q(user_id__startswith='FAKEDATA')
+        ).values_list('user_id', flat=True)
+        
+        highest_numeric_id = 0
+        
+        for user_id in all_dummy_users:
             try:
-                id_part = existing_fakedata.user_id.replace('FAKEDATA', '').split('_')[0]
-                start_id = int(id_part) + 1
-            except ValueError:
-                pass
+                # Remove the prefix (DUMMY or FAKEDATA) and any suffix (like _a1c3)
+                if user_id.startswith('DUMMY'):
+                    numeric_part = user_id.replace('DUMMY', '')
+                elif user_id.startswith('FAKEDATA'):
+                    numeric_part = user_id.replace('FAKEDATA', '')
+                else:
+                    continue # Skip if it doesn't match expected prefixes
 
-        existing_user_ids = set(CustomUser.objects.values_list('user_id', flat=True))
-        existing_emails = set(CustomUser.objects.values_list('email', flat=True))
-        existing_mobiles = set(CustomUser.objects.values_list('mobile', flat=True))
+                # Strip off any non-digit characters that might follow the number (e.g., '_')
+                numeric_part = ''.join(filter(str.isdigit, numeric_part))
+                
+                if numeric_part:
+                    current_id = int(numeric_part)
+                    if current_id > highest_numeric_id:
+                        highest_numeric_id = current_id
+            except ValueError:
+                # Ignore non-standard IDs (if any exist)
+                continue
+        
+        # The next ID number is one greater than the highest found
+        start_id = highest_numeric_id + 1
+        # --- END FIX ---
 
         user_ids = []
         emails = []
         mobiles = []
 
         for i in range(count):
-            new_id = f'FAKEDATA{start_id + i:04d}'
-            j = 0
-            while new_id in existing_user_ids:
-                j += 1
-                new_id = f'FAKEDATA{start_id + i:04d}_{j:02d}'
-            user_ids.append(new_id)
-            existing_user_ids.add(new_id)
+            current_id_num = start_id + i
+            suffix = self.get_unique_suffix() 
 
-        for i in range(count):
-            new_email = f'fake_user_{"".join(random.choices(string.ascii_lowercase + string.digits, k=8))}@gmail.com'
-            while new_email in existing_emails:
-                new_email = f'fake_user_{"".join(random.choices(string.ascii_lowercase + string.digits, k=8))}@gmail.com'
-            emails.append(new_email)
-            existing_emails.add(new_email)
+            new_user_id = f'DUMMY{current_id_num:04d}' 
+            user_ids.append(new_user_id)
+            emails.append(f'testuser_{suffix}_{current_id_num}@dummycorp.com')
+            mobiles.append(''.join(random.choices('789', k=1) + random.choices('0123456789', k=9)))
 
-        for i in range(count):
-            new_mobile = ''.join(random.choices('0123456789', k=10))
-            while new_mobile in existing_mobiles:
-                new_mobile = ''.join(random.choices('0123456789', k=10))
-            mobiles.append(new_mobile)
-            existing_mobiles.add(new_mobile)
 
-        admin_user_levels = list(UserLevel.objects.filter(user=admin).exclude(level__name='Refer Help').order_by('level__order'))
+        # Get Admin Levels and Active Slot Counts
+        admin_levels_queryset = UserLevel.objects.filter(user=admin).exclude(level__name='Refer Help').order_by('level__order')
+        admin_user_levels = list(admin_levels_queryset)
+        
+        if not admin_user_levels:
+             raise serializers.ValidationError({"error": "Admin must have existing UserLevels (1-6) to link the dummy users."})
 
+        active_dummy_count = UserLevel.objects.filter(
+            (Q(user__user_id__startswith='DUMMY') | Q(user__user_id__startswith='FAKEDATA')), 
+            is_active=True
+        ).count()
+        slots_available = 6 - active_dummy_count
+        
+        # Determine which of the Admin's levels are currently AVAILABLE (linked_user_id is None/empty)
+        # This will be used to see if we should assign a dummy user's ID back to the admin's slot.
+        available_admin_slots = {
+            ul.level.pk: ul
+            for ul in admin_user_levels
+            if not ul.linked_user_id # Checks for empty/None linked_user_id
+        }
+        
         with transaction.atomic():
+            # Bulk create CustomUser instances (same as before)
             new_users = [
                 CustomUser(
                     user_id=user_ids[i],
-                    first_name=f'FakeFirst{start_id + i}',
-                    last_name=f'FakeLast{start_id + i}',
+                    first_name=f'DummyFirst{current_id_num}',
+                    last_name=f'DummyLast{current_id_num}',
                     email=emails[i],
                     mobile=mobiles[i],
                     sponsor_id=admin.user_id,
                     is_active=True,
                     date_of_joining=timezone.now()
-                ) for i in range(count)
+                ) for i, current_id_num in enumerate(range(start_id, start_id + count))
             ]
-            
+
             CustomUser.objects.bulk_create(new_users)
             created_users = list(CustomUser.objects.filter(user_id__in=user_ids))
 
-            if not created_users:
-                raise serializers.ValidationError("Failed to create any users due to conflicts")
-
             new_user_levels = []
-            existing_user_level_pks = set(UserLevel.objects.filter(user__in=created_users).values_list('user__pk', flat=True))
-            admin_level_to_dummy_map = {}
+            admin_levels_to_link = {}
 
             for i, dummy_user in enumerate(created_users):
-                level_index = i % len(admin_user_levels)
-                assigned_admin_level = admin_user_levels[level_index]
-                assigned_level = assigned_admin_level.level
+                should_be_active = (active_dummy_count + i) < 6
+                
+                assigned_level = None
+                level_name = "Not Assigned"
+                
+                # Assign a level ONLY if a slot is available (should_be_active is True)
+                if should_be_active:
+                    # Circularly assign the active dummy users to the Admin's levels
+                    level_index = (active_dummy_count + i) % len(admin_user_levels)
+                    assigned_admin_level = admin_user_levels[level_index]
+                    assigned_level = assigned_admin_level.level
+                    level_name = assigned_level.name
+                    
+                    # Store the link, but only if the Admin's slot is currently empty/available
+                    if assigned_level.pk in available_admin_slots:
+                         admin_levels_to_link[assigned_level.pk] = dummy_user.user_id
 
-                if dummy_user.pk in existing_user_level_pks:
-                    try:
-                        user_level = UserLevel.objects.get(user=dummy_user, level=assigned_level)
-                    except UserLevel.DoesNotExist:
-                        # Fallback for existing users if UserLevel isn't automatically created
-                        user_level = UserLevel(
-                            user=dummy_user,
-                            level=assigned_level,
-                            linked_user_id=admin.user_id,
-                            is_active=True,
-                            payment_mode='Manual',
-                            status='pending'
-                        )
-                else:
-                    user_level = UserLevel(
-                        user=dummy_user,
-                        level=assigned_level,
-                        linked_user_id=admin.user_id,
-                        is_active=True,
-                        payment_mode='Manual',
-                        status='pending'
-                    )
-                    new_user_levels.append(user_level)
 
-                admin_level_to_dummy_map[assigned_level.pk] = dummy_user.user_id
+                user_level = UserLevel(
+                    user=dummy_user,
+                    level=assigned_level, # This will be None if the 6-user limit is hit
+                    linked_user_id=admin.user_id,
+                    is_active=should_be_active,
+                    payment_mode='Manual',
+                    status='not_paid'
+                )
+                new_user_levels.append(user_level)
 
                 dummy_users_data.append({
                     'user_id': dummy_user.user_id,
@@ -451,23 +490,20 @@ class CreateDummyUsersSerializer(serializers.Serializer):
                     'email': dummy_user.email,
                     'mobile': dummy_user.mobile,
                     'sponsor_id': dummy_user.sponsor_id,
-                    'level': assigned_level.name,
+                    'level': level_name, # Display the name or 'Not Assigned'
                     'linked_user_id': user_level.linked_user_id,
                 })
 
             UserLevel.objects.bulk_create(new_user_levels)
             
-            # Update the Admin's UserLevel records with the linked_user_id
+            # --- Update Admin's linked_user_id ONLY IF THE SLOT IS CURRENTLY EMPTY ---
             updates_for_admin_levels = []
             
-            admin_levels_to_update = list(UserLevel.objects.filter(
-                user=admin
-            ).exclude(level__name='Refer Help').order_by('level__order'))
-
-            for admin_ul in admin_levels_to_update:
-                linked_id = admin_level_to_dummy_map.get(admin_ul.level.pk)
+            for admin_ul in admin_levels_queryset:
+                linked_id = admin_levels_to_link.get(admin_ul.level.pk)
                 
-                if linked_id and admin_ul.linked_user_id != linked_id:
+                # CHECK: Only update if we found a dummy ID to link AND the admin's slot is currently empty
+                if linked_id and not admin_ul.linked_user_id:
                     admin_ul.linked_user_id = linked_id
                     updates_for_admin_levels.append(admin_ul)
 
@@ -478,3 +514,82 @@ class CreateDummyUsersSerializer(serializers.Serializer):
                 )
 
         return {'message': f"{len(dummy_users_data)} fake users created and linked to admin's levels", 'dummy_users': dummy_users_data}
+
+
+# --- 3. Serializer for Admin Control (PATCH Endpoint) ---
+
+class AdminDummyUserUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserLevel
+        fields = ['is_active', 'level', 'linked_user_id']
+        read_only_fields = ['user', 'payment_mode', 'status']
+
+    def validate(self, data):
+        instance = self.instance # The existing UserLevel object being updated
+
+        # --- Rule 1: Validate changing Level only if the slot is active ---
+        # Check if the 'level' field is being updated
+        if 'level' in data:
+            # If the instance is currently NOT active, we forbid changing the level.
+            if not instance.is_active:
+                raise serializers.ValidationError({
+                    "level": "Cannot change the level of an inactive dummy user. Activate the user first."
+                })
+        
+        # --- Rule 2: Validate the 6-slot active limit when activating ---
+        # Check if 'is_active' is present and if the value is changing from False to True
+        if 'is_active' in data and data['is_active'] is True and instance.is_active is False:
+            
+            # Count the total number of currently active dummy users (using Q objects for robustness)
+            active_dummy_count = UserLevel.objects.filter(
+                (Q(user__user_id__startswith='DUMMY') | Q(user__user_id__startswith='FAKEDATA')), 
+                is_active=True
+            ).count()
+            
+            # Since the current instance is NOT included in this count (it's currently false), 
+            # we check if the count is already 6 or more.
+            if active_dummy_count >= 6:
+                raise serializers.ValidationError({
+                    "is_active": f"Activation failed. The maximum limit of 6 active dummy users has been reached (currently {active_dummy_count} active)."
+                })
+
+        return data
+
+    def update(self, instance, validated_data):
+        # 1. Store the original level ID before the update
+        original_level = instance.level 
+        
+        # 2. Get the new level ID from the validated data
+        new_level_id = validated_data.get('level')
+        
+        # Use a transaction to ensure both updates succeed or both fail
+        with transaction.atomic():
+            # First, update the dummy user's UserLevel instance
+            updated_instance = super().update(instance, validated_data)
+            
+            # --- CUSTOM LOGIC TO SYNC ADMIN'S LEVELS ---
+            
+            # Check if the 'level' was actually changed and the user is active
+            if new_level_id is not None and updated_instance.is_active and original_level and original_level.pk != new_level_id:
+                
+                admin = self.context['request'].user
+                dummy_user_id = updated_instance.user.user_id
+                
+                # A. Unlink the dummy user from the Admin's OLD level slot
+                UserLevel.objects.filter(
+                    user=admin,
+                    level=original_level,
+                    linked_user_id=dummy_user_id  # Ensure we only clear the link if it points to this user
+                ).update(linked_user_id=None)
+                
+                # B. Link the dummy user to the Admin's NEW level slot
+                # (This assumes the new slot is either free or can be overwritten, 
+                # which is typical admin behavior)
+                UserLevel.objects.filter(
+                    user=admin,
+                    level_id=new_level_id # Use the new Level ID
+                ).update(linked_user_id=dummy_user_id)
+                
+            # --- END CUSTOM LOGIC ---
+            
+            return updated_instance

@@ -48,10 +48,11 @@ class PaymentReportViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=False, methods=['get'], url_path='pending')
     def pending_payments(self, request):
         """
-        List all pending payments with pagination and filtering.
-        Endpoint: /api/payment-report/pending/
+        List all strictly pending payments (status='pending' on UserLevel).
         """
+        # ONLY filter by status='pending' on the UserLevel
         queryset = self.filter_queryset(self.get_queryset().filter(status='pending'))
+        
         page = self.paginate_queryset(queryset)
         if page is not None:
             serializer = self.get_serializer(page, many=True)

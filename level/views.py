@@ -7,7 +7,7 @@ from .models import Level, UserLevel, LevelPayment, get_referrer_details
 from .serializers import (
     LevelSerializer, UserLevelStatusSerializer, UserLevelFinancialSerializer, 
     UserInfoSerializer, LevelRazorpayOrderSerializer, LevelRazorpayVerifySerializer,
-    LevelPaymentSerializer, AdminPendingPaymentsSerializer, ManualPaymentSerializer,InitiatePaymentSerializer,CreateDummyUsersSerializer, UpdateLinkedUserIdSerializer, RecipientLevelPaymentSerializer
+    LevelPaymentSerializer, AdminPendingPaymentsSerializer, ManualPaymentSerializer,InitiatePaymentSerializer,CreateDummyUsersSerializer, UpdateLinkedUserIdSerializer, RecipientLevelPaymentSerializer,CreateDummyUsersSerializer, DummyUserSerializer, AdminDummyUserUpdateSerializer
 )
 from .permissions import IsAdminOrReadOnly,IsPaymentRecipient
 from profiles.models import Profile
@@ -21,6 +21,8 @@ import razorpay
 from django.conf import settings
 from .utils import check_and_enforce_payment_lock
 from rest_framework.permissions import IsAuthenticated
+from rest_framework import serializers
+from rest_framework import generics
 
 logger = logging.getLogger(__name__)
 
@@ -677,11 +679,94 @@ class UpdateLinkedUserIdView(APIView):
             return Response({"message": "linked_user_id updated successfully", "data": serializer.data})
         return Response(serializer.errors, status=400)
 
+
+
+
 class CreateDummyUsers(APIView):
+    """
+    Handles the creation of a batch of 6 dummy users.
+    Enforces the '6 active user' limit by setting is_active=False for overflow.
+    """
     permission_classes = [IsAdminUser]
 
     def post(self, request):
         serializer = CreateDummyUsersSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
-            return Response(serializer.save(), status=201)
-        return Response(serializer.errors, status=400)
+            # serializer.save() contains all the creation and linking logic
+            try:
+                response_data = serializer.save()
+                return Response(response_data, status=status.HTTP_201_CREATED)
+            except serializers.ValidationError as e:
+                return Response(e.detail, status=status.HTTP_400_BAD_REQUEST)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+# =========================================================================
+# B. Endpoint for Listing All Dummy Users (GET)
+# URL: /api/dummy-users/
+# =========================================================================
+class DummyUserViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Lists and retrieves all UserLevel records belonging to dummy users.
+    """
+    # N+1 Fix: Select_related is good practice here
+    queryset = UserLevel.objects.all().select_related('user', 'level').order_by('-user__date_of_joining')
+    serializer_class = DummyUserSerializer
+    permission_classes = [IsAdminUser]
+
+    def get_queryset(self):
+        # Filter the base queryset to only include UserLevels linked to DUMMY users
+        return super().get_queryset().filter(user__user_id__startswith='DUMMY')
+
+# =========================================================================
+# C. Endpoint for Admin Control (PATCH)
+# URL: /api/dummy-users/control/{user_level_pk}/
+# =========================================================================
+class AdminDummyUserControlView(APIView):
+    """
+    Allows admin to patch is_active status, change the Level, or adjust 
+    linked_user_id on a specific UserLevel record belonging to a dummy user.
+    """
+    permission_classes = [IsAdminUser]
+
+    def patch(self, request, pk):
+        try:
+            # pk is the UserLevel ID (not the CustomUser ID)
+            user_level = UserLevel.objects.get(pk=pk)
+            
+            # Security Check: Ensure admin can only modify dummy users via this tool
+            if not user_level.user.user_id.startswith('DUMMY'):
+                return Response({"error": "Only dummy user levels can be modified via this endpoint."}, status=status.HTTP_403_FORBIDDEN)
+                
+        except UserLevel.DoesNotExist:
+            return Response({"error": "UserLevel not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = AdminDummyUserUpdateSerializer(user_level, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({"message": "Dummy user level updated successfully", "data": serializer.data}, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, pk):
+        try:
+            user_level = UserLevel.objects.get(pk=pk)
+            
+            # Security Check
+            if not user_level.user.user_id.startswith('DUMMY'):
+                return Response({"error": "Only dummy user levels can be deleted via this endpoint."}, status=status.HTTP_403_FORBIDDEN)
+            
+        except UserLevel.DoesNotExist:
+            return Response({"error": "UserLevel not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # 1. Store the user object
+        user_to_delete = user_level.user
+        
+        # 2. Delete the UserLevel object
+        user_level.delete()
+        
+        # 3. Delete the CustomUser object
+        user_to_delete.delete()
+        
+        # Return the success response for deletion
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
