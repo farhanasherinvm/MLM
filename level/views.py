@@ -7,9 +7,9 @@ from .models import Level, UserLevel, LevelPayment, get_referrer_details
 from .serializers import (
     LevelSerializer, UserLevelStatusSerializer, UserLevelFinancialSerializer, 
     UserInfoSerializer, LevelRazorpayOrderSerializer, LevelRazorpayVerifySerializer,
-    LevelPaymentSerializer, AdminPendingPaymentsSerializer, ManualPaymentSerializer,InitiatePaymentSerializer,CreateDummyUsersSerializer, UpdateLinkedUserIdSerializer
+    LevelPaymentSerializer, AdminPendingPaymentsSerializer, ManualPaymentSerializer,InitiatePaymentSerializer,CreateDummyUsersSerializer, UpdateLinkedUserIdSerializer, RecipientLevelPaymentSerializer
 )
-from .permissions import IsAdminOrReadOnly
+from .permissions import IsAdminOrReadOnly,IsPaymentRecipient
 from profiles.models import Profile
 from django.db import transaction
 from django.db.models import F
@@ -20,7 +20,7 @@ import logging
 import razorpay
 from django.conf import settings
 from .utils import check_and_enforce_payment_lock
-
+from rest_framework.permissions import IsAuthenticated
 
 logger = logging.getLogger(__name__)
 
@@ -395,6 +395,80 @@ class LevelPaymentViewSet(viewsets.ModelViewSet):
         return Response({
             "message": "Payment rejected",
             "payment_data": self.get_serializer(level_payment).data
+        })
+
+class RecipientPaymentViewSet(viewsets.GenericViewSet):
+    
+    # Use IsAuthenticated for base access. IsPaymentRecipient handles object-level security.
+    permission_classes = [IsAuthenticated, IsPaymentRecipient]
+    queryset = LevelPayment.objects.all()
+    serializer_class = RecipientLevelPaymentSerializer
+    def get_queryset(self):
+        # 1. Filter by the current user as the recipient (linked_user_id)
+        # 2. Filter for only pending manual payments
+        user_id = str(self.request.user.user_id)
+        
+        # Find all UserLevels where the current user is the linked_user
+        # Then filter LevelPayments based on those UserLevels
+        
+        # A more efficient way (requires a related_name/lookup):
+        # We need to filter LevelPayment based on the linked_user_id of its related UserLevel.
+        return self.queryset.filter(
+            user_level__linked_user_id=user_id,
+            status='Pending',
+            payment_method='Manual'
+        ).order_by('-created_at')
+
+    # Endpoint: GET /api/recipient/payments/
+    def list(self, request):
+        """List all pending manual payments waiting for the current user's verification."""
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        # Note: You must uncomment and configure your serializer_class for this to work
+        serializer = self.get_serializer(queryset, many=True, context={'request': request})
+        return Response(serializer.data)
+
+    # Endpoint: POST /api/recipient/payments/{payment_token}/accept/
+    @action(detail=True, methods=['post'], url_path='accept')
+    def accept(self, request, pk=None):
+        level_payment = self.get_object() # Fetches object and applies IsPaymentRecipient
+
+        # Redundant checks as get_queryset filters already, but good for safety/consistency
+        if level_payment.payment_method != "Manual" or level_payment.status != "Pending":
+            return Response({"error": "Payment is not a pending manual payment."}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            level_payment.status = "Verified"
+            level_payment.save(update_fields=['status']) # Triggers signals
+        
+        logger.info(f"Manual payment accepted for LevelPayment {level_payment.id} by linked user {request.user.user_id}")
+
+        return Response({
+            "message": "Payment accepted and level marked as paid for the payer. Your balance is updated."
+        })
+
+    # Endpoint: POST /api/recipient/payments/{payment_token}/reject/
+    @action(detail=True, methods=['post'], url_path='reject')
+    def reject(self, request, pk=None):
+        level_payment = self.get_object() # Fetches object and applies IsPaymentRecipient
+
+        if level_payment.payment_method != "Manual" or level_payment.status != "Pending":
+            return Response({"error": "Payment is not a pending manual payment."}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            level_payment.status = "Failed"
+            level_payment.save(update_fields=['status']) # Update LevelPayment status
+            
+            # Optionally update the payer's UserLevel to 'rejected' and disable payment
+            user_level = level_payment.user_level
+            user_level.status = 'rejected'
+            user_level.pay_enabled = False
+            user_level.save(update_fields=['status', 'pay_enabled'])
+
+        logger.info(f"Manual payment rejected for LevelPayment {level_payment.id} by linked user {request.user.user_id}")
+
+        return Response({
+            "message": "Payment rejected. Payer's status updated."
         })
 
 

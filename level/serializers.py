@@ -306,7 +306,28 @@ class UpdateLinkedUserIdSerializer(serializers.ModelSerializer):
             
         return value
 
+class LinkedUserLevelSerializer(serializers.ModelSerializer):
+    payer_user_id = serializers.CharField(source='user.user_id')
+    payer_name = serializers.CharField(source='user.get_full_name', read_only=True)
+    level_name = serializers.CharField(source='level.name')
 
+    class Meta:
+        model = UserLevel
+        fields = ('id', 'payer_user_id', 'payer_name', 'level_name', 'requested_date')
+
+
+class RecipientLevelPaymentSerializer(serializers.ModelSerializer):
+    user_level = LinkedUserLevelSerializer(read_only=True)
+    payment_proof_url = serializers.FileField(source='payment_proof', read_only=True)
+    
+    payment_token = serializers.UUIDField(read_only=True) 
+
+    class Meta:
+        model = LevelPayment
+        fields = ('id', 'payment_token', 'user_level', 'amount', 'payment_method', 
+                  'razorpay_order_id', 'payment_proof_url', 'created_at', 'payment_data')
+        read_only_fields = ('id', 'payment_token', 'user_level', 'amount', 'payment_method', 
+                            'razorpay_order_id', 'payment_proof_url', 'created_at', 'payment_data')
 
 class DummyUserSerializer(serializers.Serializer):
     user_id = serializers.CharField(max_length=20)

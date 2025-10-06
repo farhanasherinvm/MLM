@@ -179,99 +179,26 @@ def create_user_levels(sender, instance, created, **kwargs):
 
                 for level in levels:
                     linked_user_id = None
-                    if referrer:
-                        if level.order == 1:
-                            linked_user_id = sponsor_id
-                        elif 2 <= level.order <= 6:
-                            prev_level = Level.objects.get(order=level.order - 1)
-                            referrer_ulevel = UserLevel.objects.filter(user=referrer, level=prev_level).first()
-                            if referrer_ulevel and referrer_ulevel.linked_user_id:
-                                linked_user_id = referrer_ulevel.linked_user_id
-
-                    profile = Profile.objects.filter(user=instance).first()
-                    target = level.amount * (Decimal('2') ** level.order)
-                    user_level, created = UserLevel.objects.get_or_create(
-                        user=instance,
-                        level=level,
-                        defaults={
-                            'profile': profile,
-                            'linked_user_id': linked_user_id,
-                            'status': 'not_paid',
-                            'payment_mode': 'Razorpay',
-                            'target': target,
-                            'balance': target,
-                            'received': 0
-                        }
-                    )
-                    if not created:
-                        logger.warning(f"UserLevel already exists for {instance.user_id} - {level.name}, skipping creation")
-                    else:
-                        logger.debug(f"UserLevel created={created} for {instance.user_id} - {level.name}")
-
-                    if referrer and level.name == 'Refer Help':
-                        refer_help_ulevel, _ = UserLevel.objects.get_or_create(
-                            user=referrer,
-                            level=level,
-                            defaults={
-                                'linked_user_id': None,
-                                'status': 'not_paid',
-                                'payment_mode': 'Razorpay',
-                                'target': level.amount,
-                                'balance': level.amount,
-                                'received': 0
-                            }
-                        )
-                        if not refer_help_ulevel.linked_user_id:
-                            refer_help_ulevel.linked_user_id = instance.user_id
-                            refer_help_ulevel.save()
-                            logger.debug(f"Updated Refer Help linked_user_id for {referrer.user_id} to {instance.user_id}")
-
-                if referrer:
-                    profile = Profile.objects.filter(user=referrer).first()
-                    if profile:
-                        user_levels = UserLevel.objects.filter(user=referrer)
-                        if user_levels.filter(status='paid').count() == user_levels.count():
-                            profile.eligible_to_refer = True
-                            profile.save()
-                            logger.debug(f"Set eligible_to_refer=True for {referrer.user_id}")
-
-            logger.info(f"Successfully created UserLevel records for user {instance.user_id}")
-        except Exception as e:
-            logger.error(f"Failed to create UserLevel records for {instance.user_id}: {str(e)}")
-            raise
-
-@receiver(post_save, sender=CustomUser)
-def create_user_levels(sender, instance, created, **kwargs):
-    if created:
-        logger.debug(f"Signal triggered for user {instance.user_id}, created={created}")
-        try:
-            with transaction.atomic():
-                Level.create_default_levels()
-                levels = Level.objects.all().order_by('order')
-                if not levels.exists():
-                    logger.error(f"No Level objects found for user {instance.user_id}")
-                    raise Exception("No Level objects available")
-
-                sponsor_id = instance.sponsor_id
-                logger.debug(f"Sponsor ID: {sponsor_id} for user {instance.user_id}")
-
-                referrer = None
-                if sponsor_id and CustomUser.objects.filter(user_id=sponsor_id).exists():
-                    referrer = CustomUser.objects.get(user_id=sponsor_id)
-                else:
-                    logger.warning(f"No valid sponsor_id for user {instance.user_id}")
-
-                for level in levels:
-                    linked_user_id = None
+                    # Logic for Levels 1-6 (Nth upline)
                     if referrer and 1 <= level.order <= 6:
-                        depth = level.order 
-                        upline_user = get_upline(instance, depth) 
+                        depth = level.order  
+                        upline_user = get_upline(instance, depth)  
                         
                         if upline_user:
                             linked_user_id = upline_user.user_id
+                    
+                    # Logic for 'Refer Help' (linking to direct sponsor)
+                    elif level.name == 'Refer Help' and referrer:
+                         # In this specific block, we link the NEW user's 'Refer Help' level to their direct sponsor.
+                         # The subsequent logic updates the sponsor's 'Refer Help' level.
+                         linked_user_id = referrer.user_id
 
                     profile = Profile.objects.filter(user=instance).first()
                     target = level.amount * (Decimal('2') ** level.order)
+                    
+                    if level.name == 'Refer Help':
+                         target = level.amount 
+
                     user_level, created = UserLevel.objects.get_or_create(
                         user=instance,
                         level=level,
@@ -290,8 +217,9 @@ def create_user_levels(sender, instance, created, **kwargs):
                     else:
                         logger.debug(f"UserLevel created={created} for {instance.user_id} - {level.name}")
 
+                    # The logic to create/update a 'Refer Help' level for the REFERRER
                     if referrer and level.name == 'Refer Help':
-                        refer_help_ulevel, _ = UserLevel.objects.get_or_create(
+                        refer_help_ulevel, created_referrer_level = UserLevel.objects.get_or_create(
                             user=referrer,
                             level=level,
                             defaults={
@@ -303,6 +231,9 @@ def create_user_levels(sender, instance, created, **kwargs):
                                 'received': 0
                             }
                         )
+                        # This part seems designed to link the REFERRER's Refer Help level to the NEW USER
+                        # if it doesn't already have a linked user. This is an unusual MLM structure.
+                        # I've kept the original logic here.
                         if not refer_help_ulevel.linked_user_id:
                             refer_help_ulevel.linked_user_id = instance.user_id
                             refer_help_ulevel.save()
@@ -312,7 +243,7 @@ def create_user_levels(sender, instance, created, **kwargs):
                     profile = Profile.objects.filter(user=referrer).first()
                     if profile:
                         user_levels = UserLevel.objects.filter(user=referrer)
-                        if user_levels.filter(status='paid').count() == user_levels.count():
+                        if user_levels.exclude(status='paid').count() == 0:
                             profile.eligible_to_refer = True
                             profile.save()
                             logger.debug(f"Set eligible_to_refer=True for {referrer.user_id}")
@@ -321,6 +252,7 @@ def create_user_levels(sender, instance, created, **kwargs):
         except Exception as e:
             logger.error(f"Failed to create UserLevel records for {instance.user_id}: {str(e)}")
             raise
+
 
 @receiver(post_save, sender=Level)
 def update_user_levels_on_amount_change(sender, instance, **kwargs):

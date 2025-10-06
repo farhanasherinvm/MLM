@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from level.views import (
     LevelViewSet, UserLevelViewSet, RazorpayOrderForLevelView,
     RazorpayVerifyForLevelView, ManualPaymentView, LevelPaymentViewSet,
-    LevelCompletionViewSet,InitiatePaymentView, CreateDummyUsers, UpdateLinkedUserIdView
+    LevelCompletionViewSet,InitiatePaymentView, CreateDummyUsers, UpdateLinkedUserIdView, RecipientPaymentViewSet
 )
 
 router = DefaultRouter()
@@ -11,6 +11,7 @@ router.register(r'levels', LevelViewSet,basename='levels')
 router.register(r'user-levels', UserLevelViewSet,basename='user-levels')
 router.register(r'level-payments', LevelPaymentViewSet,basename='level-payments')
 router.register(r'level-completion', LevelCompletionViewSet,basename='level-completion')
+router.register(r'recipient/payments', RecipientPaymentViewSet, basename='recipient-payments') 
 
 urlpatterns = [
     path('', include(router.urls)),
