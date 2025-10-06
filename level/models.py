@@ -26,17 +26,27 @@ class Level(models.Model):
     def create_default_levels(cls):
         levels_data = [
             {'name': 'Level 1', 'amount': 100, 'order': 1},
-            {'name': 'Level 2', 'amount': 200, 'order': 2},
-            {'name': 'Level 3', 'amount': 400, 'order': 3},
-            {'name': 'Level 4', 'amount': 1000, 'order': 4},
-            {'name': 'Level 5', 'amount': 2000, 'order': 5},
-            {'name': 'Level 6', 'amount': 5000, 'order': 6},
-            {'name': 'Refer Help', 'amount': 1000, 'order': 7},
+            {'name': 'Level 2', 'amount': 125, 'order': 2},
+            {'name': 'Level 3', 'amount': 150, 'order': 3},
+            {'name': 'Level 4', 'amount': 175, 'order': 4},
+            {'name': 'Level 5', 'amount': 200, 'order': 5},
+            {'name': 'Level 6', 'amount': 950, 'order': 6},
+            {'name': 'Refer Help', 'amount': 500, 'order': 7},
         ]
         for data in levels_data:
-            level, created = cls.objects.get_or_create(**data)
-            if created:
-                logger.debug(f"Created default level: {data['name']}")
+            # Use 'name' for lookup (the unique identifier)
+            lookup_key = data['name']
+            
+            # Use the other fields for updates/defaults
+            defaults_data = {
+                'amount': data['amount'],
+                'order': data['order']
+            }
+            
+            level, created = cls.objects.update_or_create(
+                name=lookup_key,
+                defaults=defaults_data
+            )
 
 class UserLevel(models.Model):
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
@@ -162,7 +172,6 @@ def create_user_levels(sender, instance, created, **kwargs):
         logger.debug(f"Signal triggered for user {instance.user_id}, created={created}")
         try:
             with transaction.atomic():
-                Level.create_default_levels()
                 levels = Level.objects.all().order_by('order')
                 if not levels.exists():
                     logger.error(f"No Level objects found for user {instance.user_id}")
@@ -198,6 +207,7 @@ def create_user_levels(sender, instance, created, **kwargs):
                     
                     if level.name == 'Refer Help':
                          target = level.amount 
+                         balance = level.amount
 
                     user_level, created = UserLevel.objects.get_or_create(
                         user=instance,
