@@ -285,6 +285,9 @@ def update_user_levels_on_amount_change(sender, instance, **kwargs):
 
 @receiver(post_save, sender=UserLevel)
 def update_related_user_levels(sender, instance, created, **kwargs):
+    if instance.level is None:
+        logger.warning(f"UserLevel {instance.pk} has no assigned level; skipping signal processing.")
+        return
     if not created and instance.status == 'paid' and instance.linked_user_id:
         with transaction.atomic():
             try:

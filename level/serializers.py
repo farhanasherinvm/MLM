@@ -479,6 +479,9 @@ class AdminDummyUserUpdateSerializer(serializers.Serializer):
     user_id = serializers.CharField(source='user.user_id', read_only=True)
     linked_user_id = serializers.CharField(read_only=True)
     pk = serializers.IntegerField(read_only=True)
+    whatsapp_number = serializers.CharField(max_length=15, required=False)
+    pincode = serializers.CharField(max_length=10, required=False)
+    upi_number = serializers.CharField(max_length=50, required=False)
 
     def validate(self, data):
         instance = self.instance
@@ -519,7 +522,7 @@ class AdminDummyUserUpdateSerializer(serializers.Serializer):
         new_level = validated_data.get('level')
         
         user_data_to_update = {}
-        for field in ['first_name', 'last_name', 'email', 'mobile']:
+        for field in ['first_name', 'last_name', 'email', 'mobile', 'whatsapp_number', 'pincode', 'upi_number']:
             if field in validated_data:
                 user_data_to_update[field] = validated_data[field]
         if user_data_to_update:
