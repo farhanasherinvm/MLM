@@ -346,6 +346,11 @@ class DummyUserSerializer(serializers.Serializer):
     is_active = serializers.BooleanField()
     node_type = serializers.SerializerMethodField() 
     total_income = serializers.SerializerMethodField()
+    mobile = serializers.CharField(source='user.mobile', read_only=True)
+    whatsapp_number = serializers.CharField(source='user.whatsapp_number', read_only=True)
+    pincode = serializers.CharField(source='user.pincode', read_only=True)
+    sponsor_id = serializers.CharField(source='user.sponsor_id', read_only=True) 
+    placement_id = serializers.CharField(source='user.placement_id', read_only=True) 
 
     def get_admin_level_linked(self, obj):
         return obj.level.name if obj.level else "N/A"
