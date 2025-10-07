@@ -485,6 +485,7 @@ class ForgotPasswordView(APIView):
             subject="Reset Your Password",
             message=f"Click this link to reset your password: {reset_link}",
             recipient_list=[user.email],
+            html_message=f"<p>Click this link to reset your password: {reset_link}</p>"
         )
         return Response({
             "message": f"Password reset link sent to {user.user_id}'s email",
@@ -519,6 +520,7 @@ class ResetPasswordView(APIView):
             subject="Password Reset Successful",
             message="Your password has been reset. You can now login using your new password.",
             recipient_list=[user.email],
+            html_message=f"<p><strong>Your password has been reset. You can now login using your new password.</strong>.</p>"
         )
 
         return Response({"message": f"Password for {user.user_id} reset successfully."}, status=200)
@@ -857,6 +859,7 @@ class AdminResetUserPasswordView(APIView):
             subject="Your Password Has Been Reset",
             message=f"Hello {user.first_name},\n\nYour password has been reset by the admin. Your new password is: {new_password}",
             recipient_list=[user.email],
+            html_message=f"<p>Your password has been reset by the admin.</strong>,</p><p>Your new password is: {new_password}.</p>"
         )
         return Response({"message": f"Password reset successfully for {user.user_id}"})
 
