@@ -9,7 +9,7 @@ from users.models import CustomUser
 from .models import AdminNotification
 from .serializers import (
     AUCReportSerializer,
-    AdminNotificationsSerializer,
+    AdminNotificationSerializer,
     AdminSendRequestReportSerializer,
     AdminPaymentSerializer,
 ) # Only import the specific serializers
@@ -22,6 +22,8 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.pagesizes import A4
 from openpyxl import Workbook
 import logging
+from rest_framework.generics import ListAPIView
+
 
 logger = logging.getLogger(__name__)
 
@@ -459,10 +461,9 @@ class AdminPaymentReportView(APIView):
         response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.xlsx"'
         return response
 
-class AdminNotificationsView(APIView):
+class AdminNotificationsView(ListAPIView):
+    queryset = AdminNotification.objects.all().order_by('-timestamp')
+    # Use the individual model serializer here
+    serializer_class = AdminNotificationSerializer 
     permission_classes = [IsAdminUser]
-
-    def get(self, request):
-        notifications = AdminNotification.objects.all().order_by('-timestamp')
-        serializer = AdminNotificationsSerializer({'notifications': notifications})
-        return Response(serializer.data)
+    pagination_class = PageNumberPagination
