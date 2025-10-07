@@ -36,6 +36,8 @@ from django.db import IntegrityError, transaction
 from django.core.mail import send_mail
 from django.core.mail import get_connection, EmailMultiAlternatives
 import logging, socket
+import sib_api_v3_sdk
+from sib_api_v3_sdk.rest import ApiException
 
 logger = logging.getLogger(__name__)
 
@@ -52,35 +54,32 @@ except Exception as e:
     razorpay = None
     razorpay_client = None
 
+# ----------------------------- Universal Safe Mail Sender (Brevo API) -----------------------------
 def safe_send_mail(subject, message, recipient_list, from_email=None, otp=None, html_message=None):
     """
-    Reliable email sender:
-    - uses EmailMultiAlternatives (supports HTML alt)
-    - logs number of messages sent and exceptions (no silent failures)
+    Sends email using Brevo (Sendinblue) transactional API via Anymail config.
+    Uses HTTPS (port 443) — works perfectly on Render.
     """
-    logger = logging.getLogger(__name__)
-    from_email = from_email or getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@example.com")
+    from_email = from_email or getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@winnersclubx.com")
+    api_key = getattr(settings, "ANYMAIL", {}).get("SENDINBLUE_API_KEY")
+
+    configuration = sib_api_v3_sdk.Configuration()
+    configuration.api_key['api-key'] = api_key
+    api_instance = sib_api_v3_sdk.TransactionalEmailsApi(sib_api_v3_sdk.ApiClient(configuration))
+
+    send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
+        to=[{"email": recipient_list[0]}],
+        sender={"email": from_email, "name": "Winners Club"},
+        subject=subject,
+        html_content=html_message or f"<p>{message}</p>",
+        text_content=message,
+    )
 
     try:
-        # Do NOT change global socket default timeout; pass timeout to connection.
-        connection = get_connection(fail_silently=False, timeout=getattr(settings, "EMAIL_TIMEOUT", 15))
-
-        email_obj = EmailMultiAlternatives(
-            subject=subject,
-            body=message,
-            from_email=from_email,
-            to=recipient_list,
-            connection=connection
-        )
-
-        if html_message:
-            email_obj.attach_alternative(html_message, "text/html")
-
-        sent_count = email_obj.send(fail_silently=False)
-        logger.info(f"✅ Email sent to {recipient_list}: {subject} (sent={sent_count}) from={from_email}")
-
-    except Exception as e:
-        logger.exception(f"❌ Email sending failed for {recipient_list}: {e}")
+        response = api_instance.send_transac_email(send_smtp_email)
+        logger.info(f"✅ Brevo email sent to {recipient_list}: {subject}")
+    except ApiException as e:
+        logger.exception(f"❌ Brevo API failed for {recipient_list}: {e}")
 
     if otp:
         logger.warning(f"🔐 OTP for {recipient_list}: {otp}")
@@ -278,10 +277,12 @@ class RazorpayVerifyView(APIView):
         payment.user = user
         payment.save(update_fields=["user"])
 
+        # ✅ Send confirmation via Brevo
         safe_send_mail(
             subject="Your MLM User ID",
-            message=f"Hello {user.first_name},\n\nYour payment is verified. Your User ID is: {user.user_id}",
+            message=f"Hello {user.first_name},\nYour payment is verified. Your User ID is: {user.user_id}",
             recipient_list=[user.email],
+            html_message=f"<p>Hello <strong>{user.first_name}</strong>,</p><p>Your payment is verified. Your User ID is: <strong>{user.user_id}</strong>.</p>"
         )
 
         return Response({
@@ -482,7 +483,7 @@ class ForgotPasswordView(APIView):
 
         safe_send_mail(
             subject="Reset Your Password",
-            message=f"Click this link to reset your password:\n{reset_link}",
+            message=f"Click this link to reset your password: {reset_link}",
             recipient_list=[user.email],
         )
         return Response({
