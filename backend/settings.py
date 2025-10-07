@@ -171,20 +171,51 @@ USE_TZ = True
 # EMAIL_HOST_PASSWORD = 'lfqx aljl srkx ttur'
 # DEFAULT_FROM_EMAIL = EMAIL_HOST_USER *****
 
+# DEBUG = os.getenv("DEBUG", "True").lower() in ("true", "1")
+
+# if not DEBUG:  # ✅ Production (Render, Gmail SMTP)
+#     EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+#     EMAIL_HOST = "smtp.gmail.com"
+#     EMAIL_PORT = 587
+#     EMAIL_USE_TLS = True
+#     EMAIL_USE_SSL = False
+#     EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "zecserbusiness@gmail.com")
+#     EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "lfqx aljl srkx ttur")
+#     DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+# else:  # ✅ Development (local logs only, no SMTP)
+#     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+#     DEFAULT_FROM_EMAIL = "no-reply@example.com"
+
+# ==========================
+# EMAIL CONFIGURATION (Render-Ready)
+# ==========================
+import os
+
+# You already defined DEBUG earlier, reuse it
 DEBUG = os.getenv("DEBUG", "True").lower() in ("true", "1")
 
-if not DEBUG:  # ✅ Production (Render, Gmail SMTP)
-    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-    EMAIL_HOST = "smtp.gmail.com"
-    EMAIL_PORT = 587
-    EMAIL_USE_TLS = True
-    EMAIL_USE_SSL = False
-    EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "zecserbusiness@gmail.com")
-    EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "lfqx aljl srkx ttur")
-    DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
-else:  # ✅ Development (local logs only, no SMTP)
+if DEBUG:
+    # Development: print emails to console/log instead of sending
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
     DEFAULT_FROM_EMAIL = "no-reply@example.com"
+    print("⚙️ DEBUG mode: Using console backend for emails.")
+else:
+    # Production: use dummy Gmail SMTP for actual sending (works on Render)
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+    EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+    EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True").lower() in ("true", "1")
+    EMAIL_USE_SSL = False  # Gmail requires TLS on port 587
+    EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "mlmtestsender@gmail.com")  # dummy sender
+    EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "app-password-here")  # dummy app password
+    DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER)
+    EMAIL_TIMEOUT = 10
+
+# ==========================
+# END EMAIL CONFIGURATION
+# ==========================
+
+
 
 # # Email Settings
 # EMAIL_BACKEND = config("EMAIL_BACKEND", default="django.core.mail.backends.smtp.EmailBackend")
