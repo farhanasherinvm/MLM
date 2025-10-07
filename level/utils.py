@@ -41,6 +41,7 @@ def check_and_enforce_payment_lock(receiving_user, level_amount_to_credit):
                 f"Please pay the '{constants.LOCK_LEVEL_NAME}' level to unlock."
             )
         
+        
         return True, "Payment unlocked via Refer Help."
 
     # 3. Cap not reached. Payment is allowed.
