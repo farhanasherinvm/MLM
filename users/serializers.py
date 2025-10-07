@@ -34,12 +34,6 @@ class RegistrationSerializer(serializers.Serializer):
         if data["password"] != data["confirm_password"]:
          raise serializers.ValidationError({"password": "Passwords do not match."})
 
-    # Check unique email and mobile
-        if CustomUser.objects.filter(email=data["email"]).exists():
-         raise serializers.ValidationError({"email": "Email already exists."})
-        if CustomUser.objects.filter(mobile=data["mobile"]).exists():
-          raise serializers.ValidationError({"mobile": "Mobile number already exists."})
-
     # Check sponsor exists
         if not CustomUser.objects.filter(user_id=data["sponsor_id"]).exists():
           raise serializers.ValidationError({"sponsor_id": "Sponsor ID does not exist."})
