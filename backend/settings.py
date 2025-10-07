@@ -4,8 +4,9 @@ import os
 from datetime import timedelta
 from decouple import config
 import smtplib
+import logging
 
-smtplib.SMTP.debuglevel = 1
+logging.basicConfig(level=logging.DEBUG)
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -248,25 +249,23 @@ USE_TZ = True
 # RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "7rV1tuKez0XP6x6Ue8euXjBs")
 
 # ------------------ EMAIL CONFIGURATION (Brevo / Sendinblue) ------------------
+import os
+
+DEBUG = os.getenv("DEBUG", "False").lower() in ("true", "1")
+
 if DEBUG:
-    # Local development: log emails to console
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
     DEFAULT_FROM_EMAIL = "no-reply@example.com"
     print("⚙️ DEBUG mode: Using console email backend")
 else:
-    EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
     EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp-relay.brevo.com")
     EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
     EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True").lower() in ("true", "1")
-    EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "15"))
-
-    EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")    # e.g. noreply@yourdomain.com (must be verified in Brevo)
+    EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")  # must match verified sender in Brevo
     EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")  # SMTP key from Brevo
-
-    # Ensure there is always a sensible DEFAULT_FROM_EMAIL fallback
+    EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "15"))
     DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL") or EMAIL_HOST_USER or "noreply@example.com"
-
-
 
 # Cloudinary Settings
 CLOUDINARY_CLOUD_NAME = "dunlntdy3"
@@ -330,10 +329,7 @@ OTP_EXPIRY_MINUTES = 10     # OTP validity in minutes (configurable)
 OTP_LENGTH = 6              # number of digits in OTP
 OTP_MAX_ATTEMPTS = 5        # max verification attempts allowed
 
-import logging
 
-logging.basicConfig(level=logging.DEBUG)
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 
 # ------------------ LOGGING ------------------
 LOGGING = {
