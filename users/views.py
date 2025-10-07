@@ -34,6 +34,8 @@ from django.db import IntegrityError, transaction
 # from users.utils import generate_next_placementid
 # from users.utils import assign_placement_id
 from django.core.mail import send_mail
+from django.core.mail import get_connection, EmailMultiAlternatives
+import logging, socket
 
 logger = logging.getLogger(__name__)
 
@@ -50,40 +52,38 @@ except Exception as e:
     razorpay = None
     razorpay_client = None
 
-def safe_send_mail(subject, message, recipient_list, from_email=None, otp=None):
+def safe_send_mail(subject, message, recipient_list, from_email=None, otp=None, html_message=None):
     """
-    Send mail safely. If SMTP fails or times out, log error and continue.
-    Additionally, log OTP to DB/logs if provided.
+    Reliable email sender:
+    - uses EmailMultiAlternatives (supports HTML alt)
+    - logs number of messages sent and exceptions (no silent failures)
     """
-    from django.core.mail import get_connection, EmailMessage
-    import logging, socket
-
     logger = logging.getLogger(__name__)
+    from_email = from_email or getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@example.com")
 
     try:
-        # Ensure timeout for SMTP connections
-        socket.setdefaulttimeout(5)
+        # Do NOT change global socket default timeout; pass timeout to connection.
+        connection = get_connection(fail_silently=False, timeout=getattr(settings, "EMAIL_TIMEOUT", 15))
 
-        connection = get_connection(
-            fail_silently=True,
-            timeout=5
-        )
-        email = EmailMessage(
+        email_obj = EmailMultiAlternatives(
             subject=subject,
             body=message,
-            from_email=from_email or getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@example.com"),
+            from_email=from_email,
             to=recipient_list,
-            connection=connection,
+            connection=connection
         )
-        email.send(fail_silently=True)
-        logger.info(f"✅ Email sent to {recipient_list}: {subject}")
-    except Exception as e:
-        logger.error(f"❌ Email sending failed for {recipient_list}: {e}")
 
-    # Always log OTPs explicitly if present
+        if html_message:
+            email_obj.attach_alternative(html_message, "text/html")
+
+        sent_count = email_obj.send(fail_silently=False)
+        logger.info(f"✅ Email sent to {recipient_list}: {subject} (sent={sent_count}) from={from_email}")
+
+    except Exception as e:
+        logger.exception(f"❌ Email sending failed for {recipient_list}: {e}")
+
     if otp:
         logger.warning(f"🔐 OTP for {recipient_list}: {otp}")
-
 
 def generate_next_userid():
     while True:
@@ -112,9 +112,10 @@ class RegisterView(APIView):
         # ✅ Log OTP into Payment DB & logs even if email fails
         safe_send_mail(
             subject="Your Verification OTP",
-            message=f"Your OTP for registration is: {otp}\nIt will expire in {getattr(settings, 'OTP_EXPIRY_MINUTES', 10)} minutes.",
+            message=f"Your OTP for registration is: {otp}\nIt will expire in {settings.OTP_EXPIRY_MINUTES} minutes.",
             recipient_list=[validated["email"]],
-            otp=otp,   # ✅ explicitly pass OTP for logging
+            otp=otp,
+            html_message=f"<p>Your OTP for registration is: <strong>{otp}</strong></p><p>It will expire in {getattr(settings, 'OTP_EXPIRY_MINUTES', 10)} minutes.</p>"
         )
 
         return Response({
