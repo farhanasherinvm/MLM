@@ -349,8 +349,11 @@ class DummyUserSerializer(serializers.Serializer):
     mobile = serializers.CharField(source='user.mobile', read_only=True)
     whatsapp_number = serializers.CharField(source='user.whatsapp_number', read_only=True)
     pincode = serializers.CharField(source='user.pincode', read_only=True)
+    upi_number = serializers.CharField(source='user.upi_number', read_only=True)
+
     sponsor_id = serializers.CharField(source='user.sponsor_id', read_only=True) 
     placement_id = serializers.CharField(source='user.placement_id', read_only=True) 
+    
 
     def get_admin_level_linked(self, obj):
         return obj.level.name if obj.level else "N/A"
@@ -437,6 +440,8 @@ class CreateDummyUsersSerializer(serializers.Serializer):
             sponsor_id=validated_data['sponsor_name'], placement_id=validated_data['placement_id'],
             pincode=validated_data['pincode'], 
             is_active=can_be_active,
+            whatsapp_number=validated_data['whatsapp_number'],
+            upi_number=validated_data['upi_number'],
             password=make_password(validated_data['password']), date_of_joining=timezone.now()
         )
 
