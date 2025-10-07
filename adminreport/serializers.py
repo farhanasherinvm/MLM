@@ -212,15 +212,14 @@ class AUCReportSerializer(serializers.Serializer):
             return float(base_amount) * 0.18
         except (TypeError, ValueError):
             return 0
-
+            
 class AdminNotificationSerializer(serializers.ModelSerializer):
-    username = serializers.CharField(source='user.user_id')
+    username = serializers.CharField(source='user.user_id', read_only=True) 
 
     class Meta:
         model = AdminNotification
         fields = ['id', 'username', 'operation_type', 'description', 'amount', 'gic', 'timestamp', 'is_read']
 
 
-
-class AdminNotificationsSerializer(serializers.Serializer):
-    notifications = AdminNotificationSerializer(many=True)
+# class AdminNotificationsSerializer(serializers.Serializer):
+#     notifications = AdminNotificationSerializer(many=True)

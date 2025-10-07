@@ -2,11 +2,12 @@ from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
 from notifications.models import Notification
 from notifications.serializers import NotificationSerializer
+from rest_framework.pagination import PageNumberPagination
 
 class NotificationViewSet(viewsets.ModelViewSet):
     serializer_class = NotificationSerializer
     permission_classes = [IsAuthenticated]
-
+    pagination_class = PageNumberPagination
     def get_queryset(self):
         return Notification.objects.filter(user=self.request.user).order_by('-created_at')
 
