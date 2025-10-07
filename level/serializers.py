@@ -471,22 +471,38 @@ class AdminDummyUserUpdateSerializer(serializers.Serializer):
     pk = serializers.IntegerField(read_only=True)
 
     def validate(self, data):
-        instance = self.instance 
+        instance = self.instance
         admin = self.context['request'].user
-        
+
         if 'level' in data and data['level'] != instance.level and not instance.is_active:
             raise serializers.ValidationError({"level": "Cannot change the level of an inactive dummy user. Activate the user first."})
-        
-        if 'is_active' in data and data['is_active'] is True and instance.is_active is False:
-            occupied_slots_count = UserLevel.objects.filter(user=admin, linked_user_id__isnull=False).exclude(linked_user_id__exact='').count()
-            if occupied_slots_count >= 6:
-                raise serializers.ValidationError({"is_active": "Activation failed. The maximum limit of 6 active dummy users has been reached."})
-                
-        if 'email' in data and data['email'] != instance.user.email:
-             if CustomUser.objects.filter(email=data['email']).exclude(pk=instance.user.pk).exists():
-                 raise serializers.ValidationError({"email": "This email is already in use by another user."})
-        return data
 
+        if 'is_active' in data and data['is_active'] is True and instance.is_active is False:
+            current_user_pk = instance.user.pk
+
+            # Step 1: Get the 'user_id's of all active Master/Dummy users in the system, EXCLUDING the current user.
+            active_master_ids = CustomUser.objects.filter(
+                Q(user_id__startswith='MASTER') | Q(user_id__startswith='DUMMY'),
+                is_active=True
+            ).exclude(
+                pk=current_user_pk
+            ).values_list('user_id', flat=True)
+            
+            # Step 2: Count how many of the Admin's slots are occupied by one of these active IDs.
+            occupied_slots_count = UserLevel.objects.filter(
+                user=admin,                        # Filter 1: Slots belonging to the admin
+                linked_user_id__in=active_master_ids, # Filter 2: Slot is occupied by an active master/dummy user
+                linked_user_id__isnull=False,      # Ensure it's linked
+            ).count()
+
+            if occupied_slots_count >= 6:
+                error_message = f"Activation failed. The maximum limit of 6 active dummy users has been reached. Current active count: {occupied_slots_count}."
+                raise serializers.ValidationError({"is_active": error_message})
+
+        if 'email' in data and data['email'] != instance.user.email:
+            if CustomUser.objects.filter(email=data['email']).exclude(pk=instance.user.pk).exists():
+                raise serializers.ValidationError({"email": "This email is already in use by another user."})
+        return data
     @transaction.atomic
     def update(self, instance, validated_data):
         original_level = instance.level 
