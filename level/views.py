@@ -741,7 +741,7 @@ class AdminDummyUserControlView(APIView):
         except UserLevel.DoesNotExist:
             return Response({"error": "UserLevel not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        serializer = AdminDummyUserUpdateSerializer(user_level, data=request.data, partial=True)
+        serializer = AdminDummyUserUpdateSerializer(user_level, data=request.data, partial=True,context={'request': request})
         if serializer.is_valid():
             serializer.save()
             return Response({"message": "Dummy user level updated successfully", "data": serializer.data}, status=status.HTTP_200_OK)

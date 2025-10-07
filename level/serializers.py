@@ -419,10 +419,11 @@ class CreateDummyUsersSerializer(serializers.Serializer):
         if not admin_user_levels:
              raise serializers.ValidationError({"error": "Admin must have existing UserLevels (1-6) to link the dummy users."})
 
-        active_dummy_count = UserLevel.objects.filter(
-            (Q(user__user_id__startswith='DUMMY') | Q(user__user_id__startswith='FAKEDATA')), 
-            is_active=True
-        ).count()
+        # active_dummy_count = UserLevel.objects.filter(
+        #     (Q(user__user_id__startswith='DUMMY') | Q(user__user_id__startswith='FAKEDATA')), 
+        #     is_active=True
+        # ).count()
+        active_dummy_count = admin_levels_queryset.exclude(linked_user_id__isnull=True).exclude(linked_user_id__exact='').count()
         slots_available = 6 - active_dummy_count
         
         # Determine which of the Admin's levels are currently AVAILABLE (linked_user_id is None/empty)
@@ -525,70 +526,94 @@ class AdminDummyUserUpdateSerializer(serializers.ModelSerializer):
         read_only_fields = ['user', 'payment_mode', 'status']
 
     def validate(self, data):
-        instance = self.instance # The existing UserLevel object being updated
+        instance = self.instance 
+        
+        admin = self.context['request'].user 
 
-        # --- Rule 1: Validate changing Level only if the slot is active ---
         # Check if the 'level' field is being updated
         if 'level' in data:
-            # If the instance is currently NOT active, we forbid changing the level.
             if not instance.is_active:
                 raise serializers.ValidationError({
                     "level": "Cannot change the level of an inactive dummy user. Activate the user first."
                 })
         
-        # --- Rule 2: Validate the 6-slot active limit when activating ---
-        # Check if 'is_active' is present and if the value is changing from False to True
+       
         if 'is_active' in data and data['is_active'] is True and instance.is_active is False:
             
-            # Count the total number of currently active dummy users (using Q objects for robustness)
-            active_dummy_count = UserLevel.objects.filter(
-                (Q(user__user_id__startswith='DUMMY') | Q(user__user_id__startswith='FAKEDATA')), 
-                is_active=True
+            occupied_slots_count = UserLevel.objects.filter(
+                user=admin,  
+                linked_user_id__isnull=False # Ensure linked_user_id is NOT NULL
+            ).exclude(
+                linked_user_id__exact=''    # Ensure linked_user_id is NOT an empty string
             ).count()
             
-            # Since the current instance is NOT included in this count (it's currently false), 
-            # we check if the count is already 6 or more.
-            if active_dummy_count >= 6:
+            # We check if the count is already 6 or more.
+            if occupied_slots_count >= 6:
                 raise serializers.ValidationError({
-                    "is_active": f"Activation failed. The maximum limit of 6 active dummy users has been reached (currently {active_dummy_count} active)."
+                    # 🌟 CORRECTION 3: Use the correct variable name in the error message.
+                    "is_active": f"Activation failed. The maximum limit of 6 active dummy users has been reached (currently {occupied_slots_count} active)."
                 })
 
         return data
 
     def update(self, instance, validated_data):
-        # 1. Store the original level ID before the update
+    # 1. Store the original level ID before the update
         original_level = instance.level 
         
         # 2. Get the new level ID from the validated data
         new_level_id = validated_data.get('level')
         
-        # Use a transaction to ensure both updates succeed or both fail
+        # Use a transaction to ensure all updates succeed or all fail
         with transaction.atomic():
-            # First, update the dummy user's UserLevel instance
+            # First, update the moving dummy user's UserLevel instance (e.g., set new level)
             updated_instance = super().update(instance, validated_data)
             
-            # --- CUSTOM LOGIC TO SYNC ADMIN'S LEVELS ---
+            # --- CUSTOM LOGIC TO SYNC ADMIN'S LEVELS AND HANDLE OVERWRITTEN USER ---
             
-            # Check if the 'level' was actually changed and the user is active
+            # Check if the 'level' was actually changed and the moving user is active
             if new_level_id is not None and updated_instance.is_active and original_level and original_level.pk != new_level_id:
                 
                 admin = self.context['request'].user
-                dummy_user_id = updated_instance.user.user_id
+                moving_dummy_user_id = updated_instance.user.user_id
                 
-                # A. Unlink the dummy user from the Admin's OLD level slot
+                # --- STEP 1: Identify and Deactivate the Overwritten User (if any) ---
+                
+                # Find the admin's UserLevel record for the NEW level.
+                admin_new_level_slot = UserLevel.objects.filter(
+                    user=admin,
+                    level_id=new_level_id 
+                ).first()
+                
+                overwritten_user_id = None
+                if admin_new_level_slot and admin_new_level_slot.linked_user_id:
+                    overwritten_user_id = admin_new_level_slot.linked_user_id
+                
+                if overwritten_user_id:
+                    # Find the overwritten dummy user's UserLevel record
+                    # and remove their level/make them inactive.
+                    UserLevel.objects.filter(
+                        user__user_id=overwritten_user_id
+                    ).update(
+                        level=None, 
+                        is_active=False # The user is now inactive and has no level
+                    )
+
+                # --- STEP 2: Unlink the moving dummy user from the Admin's OLD level slot ---
+                
                 UserLevel.objects.filter(
                     user=admin,
                     level=original_level,
-                    linked_user_id=dummy_user_id  # Ensure we only clear the link if it points to this user
+                    linked_user_id=moving_dummy_user_id
                 ).update(linked_user_id=None)
                 
-                # B. Link the dummy user to the Admin's NEW level slot
-                # (This assumes the new slot is either free or can be overwritten, 
-                # which is typical admin behavior)
+                # --- STEP 3: Link the moving dummy user to the Admin's NEW level slot ---
+                
+                # This query will either replace the 'overwritten_user_id' (if it existed)
+                # or fill an empty slot with the 'moving_dummy_user_id'.
                 UserLevel.objects.filter(
                     user=admin,
-                    level_id=new_level_id # Use the new Level ID
-                ).update(linked_user_id=dummy_user_id)
+                    level_id=new_level_id 
+                ).update(linked_user_id=moving_dummy_user_id)
                 
             # --- END CUSTOM LOGIC ---
             
