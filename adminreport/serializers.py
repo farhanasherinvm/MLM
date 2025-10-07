@@ -212,7 +212,7 @@ class AUCReportSerializer(serializers.Serializer):
             return float(base_amount) * 0.18
         except (TypeError, ValueError):
             return 0
-            
+
 class AdminNotificationSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source='user.user_id', read_only=True) 
 
@@ -223,3 +223,18 @@ class AdminNotificationSerializer(serializers.ModelSerializer):
 
 # class AdminNotificationsSerializer(serializers.Serializer):
 #     notifications = AdminNotificationSerializer(many=True)
+class AdminSummaryAnalyticsSerializer(serializers.Serializer):
+    total_registered_users = serializers.IntegerField()
+    total_active_users = serializers.IntegerField()
+    total_revenue_paid = serializers.DecimalField(max_digits=12, decimal_places=2)
+    total_gic_collected = serializers.DecimalField(max_digits=12, decimal_places=2) # Re-added GIC
+    Completed_users_by_level = serializers.DictField()
+
+class UserAnalyticsSerializer(serializers.Serializer):
+    user_id = serializers.CharField(max_length=50)
+    full_name = serializers.CharField(max_length=255)
+    total_income_generated = serializers.DecimalField(max_digits=12, decimal_places=2)
+    total_referrals = serializers.IntegerField()
+    levels_completed = serializers.IntegerField() 
+    current_level_name = serializers.CharField(max_length=100)
+    total_payments_made = serializers.DecimalField(max_digits=12, decimal_places=2)

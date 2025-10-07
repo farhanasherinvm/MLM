@@ -3,7 +3,8 @@ from .views import (
     AdminAUCReportView,
     AdminSendRequestView,
     AdminPaymentReportView,
-    AdminNotificationsView
+    AdminNotificationsView,
+    AdminAnalyticsView
 )
 
 urlpatterns = [
@@ -11,4 +12,5 @@ urlpatterns = [
     path('send-requests/', AdminSendRequestView.as_view(), name='admin-send-requests'),
     path('payments/', AdminPaymentReportView.as_view(), name='admin-payment-report'),
     path('notifications/', AdminNotificationsView.as_view(), name='admin-notifications'),
+    path('analytics/', AdminAnalyticsView.as_view(), name='admin-analytics-report'),
 ]

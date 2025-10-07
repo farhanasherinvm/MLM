@@ -2,9 +2,9 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAdminUser
-from django.db.models import Q, Sum
+from django.db.models import Q, Sum, Count, F,IntegerField, DecimalField
 from django.utils import timezone
-from level.models import UserLevel, LevelPayment
+from level.models import UserLevel, LevelPayment,Level
 from users.models import CustomUser
 from .models import AdminNotification
 from .serializers import (
@@ -12,6 +12,8 @@ from .serializers import (
     AdminNotificationSerializer,
     AdminSendRequestReportSerializer,
     AdminPaymentSerializer,
+    AdminSummaryAnalyticsSerializer,
+    UserAnalyticsSerializer
 ) # Only import the specific serializers
 from django.http import HttpResponse
 import csv
@@ -23,7 +25,11 @@ from reportlab.lib.pagesizes import A4
 from openpyxl import Workbook
 import logging
 from rest_framework.generics import ListAPIView
-
+from rest_framework import status
+from decimal import Decimal
+from django.db.utils import OperationalError, ProgrammingError
+from django.core.exceptions import FieldError
+from django.db.models.expressions import OuterRef, Subquery 
 
 logger = logging.getLogger(__name__)
 
@@ -467,3 +473,178 @@ class AdminNotificationsView(ListAPIView):
     serializer_class = AdminNotificationSerializer 
     permission_classes = [IsAdminUser]
     pagination_class = PageNumberPagination
+
+
+
+
+
+class AdminAnalyticsView(APIView):
+    permission_classes = [IsAdminUser]
+    
+    def get(self, request):
+        # Default behavior: Return summary or user_stats based on query param
+        report_type = request.query_params.get('report', 'summary').lower()
+        
+        try:
+            if report_type == 'summary':
+                return self._get_summary_analytics(request)
+            elif report_type == 'user_stats':
+                return self._get_user_statistics(request)
+            
+            return Response({"detail": "Invalid report type specified. Use 'summary' or 'user_stats'."}, status=status.HTTP_400_BAD_REQUEST)
+            
+        except Exception as e:
+            print(f"Critical error in AdminAnalyticsView GET: {e}")
+            return Response({"detail": "An unexpected server error occurred during report generation."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+    def _get_summary_analytics(self, request):
+            try:
+                # 1. Total Users
+                total_registered_users = CustomUser.objects.count()
+                total_active_users = CustomUser.objects.filter(is_active=True).count()
+                
+                # 2. Total Revenue & GIC (Aggregating from AdminNotification)
+                notification_stats = AdminNotification.objects.filter(
+                    operation_type='level_payment'
+                ).aggregate(
+                    total_revenue_notified=Sum('amount'),
+                    total_gic_collected=Sum('gic')
+                )
+
+                total_revenue_paid = notification_stats['total_revenue_notified'] or Decimal('0.00')
+                total_gic_collected = notification_stats['total_gic_collected'] or Decimal('0.00')
+
+                # --- 👇 ADD NEW CALCULATION HERE 👇 ---
+                
+                # Calculate Total Income Received from ALL paid UserLevel entries
+                income_stats = UserLevel.objects.filter(
+                    status='paid'
+                ).aggregate(
+                    total_income_received_sum=Sum('received')
+                )
+                total_received_income = income_stats['total_income_received_sum'] or Decimal('0.00')
+
+                # --- 👆 END NEW CALCULATION 👆 ---
+                
+                # 3. Users by Level (UserLevel to Level via FK)
+                users_per_level = UserLevel.objects.filter(
+                    status='paid',
+                    level__isnull=False
+                ).values(
+                    'level__name', 'level__order'
+                ).annotate(
+                    # Count the distinct users associated with these paid level entries
+                    count=Count('user_id', distinct=True) 
+                ).order_by('level__order')
+
+                # Convert the queryset result into a dictionary for easy look-up
+                # This dictionary now correctly maps 'Level Name' to 'Total Unique Users who own it'
+                users_by_level_dict = {
+                    item['level__name']: item['count'] 
+                    for item in users_per_level if item.get('level__name')
+                }
+                
+                data = {
+                    'total_registered_users': total_registered_users,
+                    'total_active_users': total_active_users,
+                    'total_revenue_paid': total_revenue_paid.quantize(Decimal('0.01')),
+                    'total_gic_collected': total_gic_collected.quantize(Decimal('0.01')),
+                    
+                    # --- 👇 ADD TO DATA DICTIONARY HERE 👇 ---
+                    'total_received_income': total_received_income.quantize(Decimal('0.01')),
+                    # --- 👆 END ADDITION 👆 ---
+                    
+                    'Completed_users_by_level': users_by_level_dict,
+                }
+                
+                # FIX: Must explicitly use 'data=' keyword
+                serializer = AdminSummaryAnalyticsSerializer(data=data) 
+                serializer.is_valid(raise_exception=True) 
+                return Response(serializer.data)
+
+            except (FieldError, OperationalError, ProgrammingError) as e:
+                error_msg = "Database/Model configuration error while calculating summary analytics. "
+                print(f"{error_msg} Details: {e}")
+                return Response({"detail": error_msg, "error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            except Exception as e:
+                print(f"Unexpected error in _get_summary_analytics: {e}")
+                return Response({"detail": "An unexpected error occurred in summary calculation."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def _get_user_statistics(self, request):
+        try:
+            # 1. Base Query: All users
+            queryset = CustomUser.objects.all().order_by('user_id')
+            
+            # **FIXED REFERRALS**: Subquery for CharField sponsor_id
+            referral_count_subquery = CustomUser.objects.filter(
+                sponsor_id=OuterRef('user_id')
+            ).values('sponsor_id').annotate(
+                count=Count('id')
+            ).values('count')[:1] 
+            
+            # 2. Add Annotations
+            queryset = queryset.annotate(
+                # FIX: Explicit output_field=models.IntegerField()
+                total_referrals=Subquery(referral_count_subquery, output_field=IntegerField()), 
+                
+                # Income: Aggregating 'received' from UserLevel
+                total_income_generated=Sum(
+                    'userlevel__received', 
+                    filter=Q(userlevel__status='paid'),
+                    output_field=DecimalField(max_digits=12, decimal_places=2)
+                ),
+                
+                # Levels Completed: Counting paid UserLevel records
+                levels_completed=Count(
+                    'userlevel',
+                    filter=Q(userlevel__status='paid'),
+                    distinct=True
+                ),
+                
+                # Payments Made: user -> userlevel -> payments -> amount
+                total_payments_made=Sum(
+                    'userlevel__payments__amount',
+                    output_field=DecimalField(max_digits=12, decimal_places=2)
+                )
+            ).prefetch_related('userlevel_set__level') # Prefetch for the loop
+            
+            # 3. Pagination
+            paginator = PageNumberPagination()
+            paginator.page_size = 50 
+            page = paginator.paginate_queryset(queryset, request)
+            
+            data = []
+            for user in page:
+                # --- SAFE CURRENT LEVEL LOGIC ---
+                active_level_entry = user.userlevel_set.all().filter(
+                    status='paid' 
+                ).order_by('-level__order').first() 
+                
+                current_level_name = "N/A"
+                if active_level_entry and active_level_entry.level: # SAFE ACCESS CHECK
+                    current_level_name = active_level_entry.level.name
+                # --- END SAFE LOGIC ---
+                    
+                data.append({
+                    'user_id': user.user_id,
+                    'full_name': f"{user.first_name} {user.last_name}".strip(),
+                    'total_income_generated': user.total_income_generated or Decimal('0.00'),
+                    'total_referrals': user.total_referrals or 0,
+                    'levels_completed': user.levels_completed or 0,
+                    'current_level_name': current_level_name,
+                    'total_payments_made': user.total_payments_made or Decimal('0.00'),
+                })
+
+            # FIX: Must explicitly use 'data=' keyword
+            serializer = UserAnalyticsSerializer(data=data, many=True)
+            serializer.is_valid(raise_exception=True) 
+            return paginator.get_paginated_response(serializer.data)
+
+        except (FieldError, OperationalError, ProgrammingError) as e:
+            error_msg = "Database/Model configuration error while generating user statistics. Check annotation field names."
+            print(f"{error_msg} Details: {e}")
+            return Response({"detail": error_msg, "error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            error = (f"Unexpected error in _get_user_statistics: {e}")
+            return Response({"detail": error}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

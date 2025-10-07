@@ -5,6 +5,10 @@ from level.models import UserLevel, LevelPayment
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from decimal import Decimal # <--- IMPORT THE DECIMAL CLASS
+from django.contrib.auth import get_user_model
+
+
+User = get_user_model() 
 
 class AdminNotification(models.Model):
     OPERATION_CHOICES = [
@@ -59,4 +63,15 @@ def log_payment_notification(sender, instance, created, **kwargs):
             level_payment=instance,
             # Pass the calculated gic_amount to the defaults
             defaults={'description': description, 'amount': amount, 'gic': gic_amount} 
+        )
+
+@receiver(post_save, sender=User)
+def log_user_creation_notification(sender, instance, created, **kwargs):
+    """Logs an AdminNotification when a new CustomUser is created."""
+    # Check if 'created' is True and ignore dummy/system users if they have a non-USER ID prefix
+    if created and instance.user_id.startswith('USER'):
+        AdminNotification.objects.create(
+            user=instance,
+            operation_type='user_created',
+            description=f"🆕 New User {instance.user_id} ({instance.first_name} {instance.last_name or ''}) has registered."
         )
