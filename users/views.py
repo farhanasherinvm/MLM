@@ -19,7 +19,7 @@ from .serializers import (
     ResetPasswordSerializer, ForgotPasswordSerializer, 
     AdminAccountSerializer, UserAccountDetailsSerializer, 
     UploadReceiptSerializer,  UserFullNameSerializer,
-    VerifyOTPSerializer,
+    # VerifyOTPSerializer,
     )
 from .permissions import IsProjectAdmin
 from .utils import validate_sponsor, export_users_csv, export_users_pdf
@@ -38,6 +38,7 @@ from django.core.mail import get_connection, EmailMultiAlternatives
 import logging, socket
 import sib_api_v3_sdk
 from sib_api_v3_sdk.rest import ApiException
+from django.contrib.auth.hashers import make_password
 
 logger = logging.getLogger(__name__)
 
@@ -98,66 +99,85 @@ class RegisterView(APIView):
         serializer.is_valid(raise_exception=True)
         validated = dict(serializer.validated_data)
 
-        otp = str(random.randint(100000, 999999))
-        validated["otp"] = otp
-        validated["otp_created_at"] = datetime.utcnow().isoformat()
+        # sanitize registration data before storing in Payment (don't store raw passwords)
+        sanitized = {k: v for k, v in validated.items() if k not in ("password", "confirm_password")}
+
+        amount = validated.get("amount", 100)
 
         try:
-            payment = Payment.objects.create(amount=validated["amount"])
-            payment.set_registration_data(validated)
+            with transaction.atomic():
+                payment = Payment.objects.create(amount=amount)
+                # store sanitized registration data in Payment (no raw password)
+                payment.set_registration_data(sanitized)
+
+                # create a separate RegistrationRequest that stores hashed password as required by model
+                reg_req = RegistrationRequest.objects.create(
+                    token=payment.registration_token,
+                    sponsor_id=validated.get("sponsor_id") or None,
+                    placement_id=validated.get("placement_id") or None,
+                    first_name=validated.get("first_name"),
+                    last_name=validated.get("last_name"),
+                    email=validated.get("email"),
+                    mobile=validated.get("mobile"),
+                    whatsapp_number=validated.get("whatsapp_number"),
+                    pincode=validated.get("pincode"),
+                    payment_type=validated.get("payment_type"),
+                    upi_number=validated.get("upi_number"),
+                    password=make_password(validated.get("password")),
+                    amount=int(amount) if isinstance(amount, (int,)) else int(float(amount)),
+                    is_completed=False
+                )
+
         except Exception as e:
-            return Response({"error": str(e)}, status=500)
-
-        # ✅ Log OTP into Payment DB & logs even if email fails
-        safe_send_mail(
-            subject="Your Verification OTP",
-            message=f"Your OTP for registration is: {otp}\nIt will expire in {settings.OTP_EXPIRY_MINUTES} minutes.",
-            recipient_list=[validated["email"]],
-            otp=otp,
-            html_message=f"<p>Your OTP for registration is: <strong>{otp}</strong></p><p>It will expire in {getattr(settings, 'OTP_EXPIRY_MINUTES', 10)} minutes.</p>"
-        )
+            # attempt cleanup
+            try:
+                payment.delete()
+            except Exception:
+                pass
+            return Response({"error": f"Unable to create registration: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         return Response({
-            "message": "Registered successfully. Please verify OTP sent to your email.",
-            "email": validated["email"],
-            "amount": str(payment.amount),
-            "debug_otp": otp if settings.DEBUG else None  # ✅ show OTP in API only in DEBUG
-        }, status=status.HTTP_201_CREATED)
-
-class VerifyOTPView(APIView):
-    permission_classes = [AllowAny]
-
-    def post(self, request, *args, **kwargs):
-        serializer = VerifyOTPSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        email = serializer.validated_data["email"].strip().lower()
-        otp = serializer.validated_data["otp"].strip()
-
-        try:
-            payment = Payment.objects.filter(status="Pending").latest("created_at")
-        except Payment.DoesNotExist:
-            return Response({"error": "No pending registration found."}, status=404)
-
-        reg_data = payment.get_registration_data()
-        if not reg_data or reg_data.get("email").lower() != email:
-            return Response({"error": "No matching registration found."}, status=404)
-
-        if reg_data.get("otp") != otp:
-            return Response({"error": "Invalid OTP."}, status=400)
-
-        expiry_minutes = int(getattr(settings, "OTP_EXPIRY_MINUTES", 10))
-        otp_time = datetime.fromisoformat(reg_data.get("otp_created_at"))
-        if otp_time + timedelta(minutes=expiry_minutes) < datetime.utcnow():
-            return Response({"error": "OTP expired. Please register again."}, status=400)
-
-        reg_data["otp"] = ""
-        payment.set_registration_data(reg_data)
-
-        return Response({
-            "message": "OTP verified successfully. Proceed to payment.",
+            "message": "Registration received. Please complete payment to activate your account.",
+            "payment_id": payment.id,
             "registration_token": str(payment.registration_token),
             "amount": str(payment.amount),
-        }, status=200)
+            "payment_status": payment.status
+        }, status=status.HTTP_201_CREATED)
+
+# class VerifyOTPView(APIView):
+#     permission_classes = [AllowAny]
+
+#     def post(self, request, *args, **kwargs):
+#         serializer = VerifyOTPSerializer(data=request.data)
+#         serializer.is_valid(raise_exception=True)
+#         email = serializer.validated_data["email"].strip().lower()
+#         otp = serializer.validated_data["otp"].strip()
+
+#         try:
+#             payment = Payment.objects.filter(status="Pending").latest("created_at")
+#         except Payment.DoesNotExist:
+#             return Response({"error": "No pending registration found."}, status=404)
+
+#         reg_data = payment.get_registration_data()
+#         if not reg_data or reg_data.get("email").lower() != email:
+#             return Response({"error": "No matching registration found."}, status=404)
+
+#         if reg_data.get("otp") != otp:
+#             return Response({"error": "Invalid OTP."}, status=400)
+
+#         expiry_minutes = int(getattr(settings, "OTP_EXPIRY_MINUTES", 10))
+#         otp_time = datetime.fromisoformat(reg_data.get("otp_created_at"))
+#         if otp_time + timedelta(minutes=expiry_minutes) < datetime.utcnow():
+#             return Response({"error": "OTP expired. Please register again."}, status=400)
+
+#         reg_data["otp"] = ""
+#         payment.set_registration_data(reg_data)
+
+#         return Response({
+#             "message": "OTP verified successfully. Proceed to payment.",
+#             "registration_token": str(payment.registration_token),
+#             "amount": str(payment.amount),
+#         }, status=200)
                
 class RazorpayOrderView(APIView):
     permission_classes = [AllowAny]

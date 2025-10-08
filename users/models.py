@@ -163,7 +163,7 @@ def save(self, *args, **kwargs):
     
 class RegistrationRequest(models.Model):
     token = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
-    sponsor_id = models.CharField(max_length=255)
+    sponsor_id = models.CharField(max_length=255, blank=True, null=True)
     placement_id = models.CharField(max_length=255, blank=True, null=True)
 
     first_name = models.CharField(max_length=50)

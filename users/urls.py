@@ -3,10 +3,7 @@ from .views import *
 from rest_framework_simplejwt.views import TokenRefreshView
 
 urlpatterns = [
-    # path("register/", RegistrationView.as_view(), name="register"),
     path("register/", RegisterView.as_view(), name="register"),
-    path("verify-otp/", VerifyOTPView.as_view(), name="verify-otp"),
-    # path("register/legacy/", RegistrationView.as_view(), name="register-legacy"),
     path("razorpay/order/", RazorpayOrderView.as_view(), name="razorpay-order"),
     path("razorpay/verify/", RazorpayVerifyView.as_view(), name="razorpay-verify"),
     path("upload-receipt/", UploadReceiptView.as_view(), name="upload-receipt"),

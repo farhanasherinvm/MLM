@@ -6,12 +6,12 @@ from .utils import validate_sponsor
 
 User = get_user_model()
 
-class SendOTPSerializer(serializers.Serializer):
-    email = serializers.EmailField()
+# class SendOTPSerializer(serializers.Serializer):
+#     email = serializers.EmailField()
 
-class VerifyOTPSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-    otp = serializers.CharField()
+# class VerifyOTPSerializer(serializers.Serializer):
+#     email = serializers.EmailField()
+#     otp = serializers.CharField()
     
 class RegistrationSerializer(serializers.Serializer):
     sponsor_id = serializers.CharField(required=False, allow_blank=True)
@@ -32,7 +32,7 @@ class RegistrationSerializer(serializers.Serializer):
     def validate(self, data):
     # Check password match
         if data["password"] != data["confirm_password"]:
-         raise serializers.ValidationError({"password": "Passwords do not match."})
+            raise serializers.ValidationError({"password": "Passwords do not match."})
 
     # Check sponsor exists
         sponsor_id = data.get("sponsor_id")
@@ -45,14 +45,14 @@ class RegistrationSerializer(serializers.Serializer):
         if placement_id:
             placement_user = CustomUser.objects.filter(user_id=placement_id).first()
             if not placement_user:
-             raise serializers.ValidationError({"placement_id": f"No user with ID {placement_id} exists in the system."})
+                raise serializers.ValidationError({"placement_id": f"No user with ID {placement_id} exists in the system."})
 
         # Count users already placed under this placement_id
             placed_count = CustomUser.objects.filter(placement_id=placement_id).count()
             if placed_count >= 2:
-             raise serializers.ValidationError({
-                 "placement_id": "Placement limit reached for this user. Please choose another placement or leave it empty."
-             })
+                raise serializers.ValidationError({
+                    "placement_id": "Placement limit reached for this user. Please choose another placement or leave it empty."
+                })
 
         return data
 
