@@ -50,6 +50,8 @@ from datetime import timedelta
 
 
 def validate_sponsor(sponsor_id: str) -> bool:
+    if not sponsor_id:
+        return True
     return CustomUser.objects.filter(user_id=sponsor_id).exists()
 
 def export_users_csv(queryset, filename="users.csv"):

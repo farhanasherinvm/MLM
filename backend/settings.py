@@ -3,6 +3,11 @@ from pathlib import Path
 import os
 from datetime import timedelta
 from decouple import config
+import smtplib
+import logging
+
+logging.basicConfig(level=logging.DEBUG)
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -13,8 +18,8 @@ CORS_ALLOWED_ORIGINS = [
     "https://winnersclubx.netlify.app",  # A common alternative for local host
     "https://mlm-pmif.onrender.com",
     "https://mlm-oiat.onrender.com",
-    "http://winnersclubx.com/",
-    "https://winnersclubx.com/"
+    "http://winnersclubx.com",
+    "https://winnersclubx.com"
     # Add your deployed frontend URL here when you have one (e.g., "https://your-frontend-domain.com")
 ]
 # Quick-start development settings - unsuitable for production
@@ -51,7 +56,8 @@ INSTALLED_APPS = [
     'level',
     'reports',
     'notifications',
-    'adminreport'  
+    'adminreport',
+    'anymail',
 ]
 
 MIDDLEWARE = [
@@ -243,14 +249,34 @@ USE_TZ = True
 # RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "rzp_test_RMYgDd9o5n2SOD")
 # RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "7rV1tuKez0XP6x6Ue8euXjBs")
 
-# Email Configuration (Brevo/Sendinblue)
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = os.environ.get("EMAIL_HOST", "smtp-relay.brevo.com")
-EMAIL_PORT = int(os.environ.get("EMAIL_PORT", 587))
-EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True") == "True"
-EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER")
-EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD")
-DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER)
+
+# # ------------------ EMAIL CONFIGURATION (Brevo / Render) ------------------
+# import os
+# DEBUG = os.getenv("DEBUG", "False").lower() in ("true", "1")
+
+# if DEBUG:
+#     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+#     DEFAULT_FROM_EMAIL = "no-reply@example.com"
+#     print("⚙️ DEBUG mode: Using console backend for emails.")
+# else:
+#     EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+#     EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp-relay.brevo.com")
+#     EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+#     EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True").lower() in ("true", "1")
+#     EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")
+#     EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
+#     EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "20"))
+#     DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "noreply@example.com")
+
+# ------------------ EMAIL CONFIGURATION (✅ Brevo / Sendinblue via Anymail) ------------------
+EMAIL_BACKEND = "anymail.backends.sendinblue.EmailBackend"
+
+ANYMAIL = {
+    "SENDINBLUE_API_KEY": os.getenv("SENDINBLUE_API_KEY"),
+}
+
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "no-reply@winnersclubx.com")
+SERVER_EMAIL = DEFAULT_FROM_EMAIL
 
 
 # Cloudinary Settings
@@ -315,11 +341,9 @@ OTP_EXPIRY_MINUTES = 10     # OTP validity in minutes (configurable)
 OTP_LENGTH = 6              # number of digits in OTP
 OTP_MAX_ATTEMPTS = 5        # max verification attempts allowed
 
-import logging
+ADMIN_USER_ID= 'admin'
 
-logging.basicConfig(level=logging.DEBUG)
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-
+# ------------------ LOGGING ------------------
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,

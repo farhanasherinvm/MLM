@@ -19,7 +19,7 @@ from .serializers import (
     ResetPasswordSerializer, ForgotPasswordSerializer, 
     AdminAccountSerializer, UserAccountDetailsSerializer, 
     UploadReceiptSerializer,  UserFullNameSerializer,
-    VerifyOTPSerializer,
+    # VerifyOTPSerializer,
     )
 from .permissions import IsProjectAdmin
 from .utils import validate_sponsor, export_users_csv, export_users_pdf
@@ -34,6 +34,11 @@ from django.db import IntegrityError, transaction
 # from users.utils import generate_next_placementid
 # from users.utils import assign_placement_id
 from django.core.mail import send_mail
+from django.core.mail import get_connection, EmailMultiAlternatives
+import logging, socket
+import sib_api_v3_sdk
+from sib_api_v3_sdk.rest import ApiException
+from django.contrib.auth.hashers import make_password
 
 logger = logging.getLogger(__name__)
 
@@ -50,40 +55,35 @@ except Exception as e:
     razorpay = None
     razorpay_client = None
 
-def safe_send_mail(subject, message, recipient_list, from_email=None, otp=None):
+# ----------------------------- Universal Safe Mail Sender (Brevo API) -----------------------------
+def safe_send_mail(subject, message, recipient_list, from_email=None, otp=None, html_message=None):
     """
-    Send mail safely. If SMTP fails or times out, log error and continue.
-    Additionally, log OTP to DB/logs if provided.
+    Sends email using Brevo (Sendinblue) transactional API via Anymail config.
+    Uses HTTPS (port 443) — works perfectly on Render.
     """
-    from django.core.mail import get_connection, EmailMessage
-    import logging, socket
+    from_email = from_email or getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@winnersclubx.com")
+    api_key = getattr(settings, "ANYMAIL", {}).get("SENDINBLUE_API_KEY")
 
-    logger = logging.getLogger(__name__)
+    configuration = sib_api_v3_sdk.Configuration()
+    configuration.api_key['api-key'] = api_key
+    api_instance = sib_api_v3_sdk.TransactionalEmailsApi(sib_api_v3_sdk.ApiClient(configuration))
+
+    send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
+        to=[{"email": recipient_list[0]}],
+        sender={"email": from_email, "name": "Winners Club"},
+        subject=subject,
+        html_content=html_message or f"<p>{message}</p>",
+        text_content=message,
+    )
 
     try:
-        # Ensure timeout for SMTP connections
-        socket.setdefaulttimeout(5)
+        response = api_instance.send_transac_email(send_smtp_email)
+        logger.info(f"✅ Brevo email sent to {recipient_list}: {subject}")
+    except ApiException as e:
+        logger.exception(f"❌ Brevo API failed for {recipient_list}: {e}")
 
-        connection = get_connection(
-            fail_silently=True,
-            timeout=5
-        )
-        email = EmailMessage(
-            subject=subject,
-            body=message,
-            from_email=from_email or getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@example.com"),
-            to=recipient_list,
-            connection=connection,
-        )
-        email.send(fail_silently=True)
-        logger.info(f"✅ Email sent to {recipient_list}: {subject}")
-    except Exception as e:
-        logger.error(f"❌ Email sending failed for {recipient_list}: {e}")
-
-    # Always log OTPs explicitly if present
     if otp:
         logger.warning(f"🔐 OTP for {recipient_list}: {otp}")
-
 
 def generate_next_userid():
     while True:
@@ -91,6 +91,7 @@ def generate_next_userid():
         user_id = f"WS{random_part}"
         if not CustomUser.objects.filter(user_id=user_id).exists():
             return user_id
+
 class RegisterView(APIView):
     permission_classes = [AllowAny]
 
@@ -99,65 +100,85 @@ class RegisterView(APIView):
         serializer.is_valid(raise_exception=True)
         validated = dict(serializer.validated_data)
 
-        otp = str(random.randint(100000, 999999))
-        validated["otp"] = otp
-        validated["otp_created_at"] = datetime.utcnow().isoformat()
+        # sanitize registration data before storing in Payment (don't store raw passwords)
+        sanitized = {k: v for k, v in validated.items() if k not in ("password", "confirm_password")}
+
+        amount = validated.get("amount", 100)
 
         try:
-            payment = Payment.objects.create(amount=validated["amount"])
-            payment.set_registration_data(validated)
+            with transaction.atomic():
+                payment = Payment.objects.create(amount=amount)
+                # store sanitized registration data in Payment (no raw password)
+                payment.set_registration_data(sanitized)
+
+                # create a separate RegistrationRequest that stores hashed password as required by model
+                reg_req = RegistrationRequest.objects.create(
+                    token=payment.registration_token,
+                    sponsor_id=validated.get("sponsor_id") or None,
+                    placement_id=validated.get("placement_id") or None,
+                    first_name=validated.get("first_name"),
+                    last_name=validated.get("last_name"),
+                    email=validated.get("email"),
+                    mobile=validated.get("mobile"),
+                    whatsapp_number=validated.get("whatsapp_number"),
+                    pincode=validated.get("pincode"),
+                    payment_type=validated.get("payment_type"),
+                    upi_number=validated.get("upi_number"),
+                    password=make_password(validated.get("password")),
+                    amount=int(amount) if isinstance(amount, (int,)) else int(float(amount)),
+                    is_completed=False
+                )
+
         except Exception as e:
-            return Response({"error": str(e)}, status=500)
-
-        # ✅ Log OTP into Payment DB & logs even if email fails
-        safe_send_mail(
-            subject="Your Verification OTP",
-            message=f"Your OTP for registration is: {otp}\nIt will expire in {getattr(settings, 'OTP_EXPIRY_MINUTES', 10)} minutes.",
-            recipient_list=[validated["email"]],
-            otp=otp,   # ✅ explicitly pass OTP for logging
-        )
+            # attempt cleanup
+            try:
+                payment.delete()
+            except Exception:
+                pass
+            return Response({"error": f"Unable to create registration: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         return Response({
-            "message": "Registered successfully. Please verify OTP sent to your email.",
-            "email": validated["email"],
-            "amount": str(payment.amount),
-            "debug_otp": otp if settings.DEBUG else None  # ✅ show OTP in API only in DEBUG
-        }, status=status.HTTP_201_CREATED)
-
-class VerifyOTPView(APIView):
-    permission_classes = [AllowAny]
-
-    def post(self, request, *args, **kwargs):
-        serializer = VerifyOTPSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        email = serializer.validated_data["email"].strip().lower()
-        otp = serializer.validated_data["otp"].strip()
-
-        try:
-            payment = Payment.objects.filter(status="Pending").latest("created_at")
-        except Payment.DoesNotExist:
-            return Response({"error": "No pending registration found."}, status=404)
-
-        reg_data = payment.get_registration_data()
-        if not reg_data or reg_data.get("email").lower() != email:
-            return Response({"error": "No matching registration found."}, status=404)
-
-        if reg_data.get("otp") != otp:
-            return Response({"error": "Invalid OTP."}, status=400)
-
-        expiry_minutes = int(getattr(settings, "OTP_EXPIRY_MINUTES", 10))
-        otp_time = datetime.fromisoformat(reg_data.get("otp_created_at"))
-        if otp_time + timedelta(minutes=expiry_minutes) < datetime.utcnow():
-            return Response({"error": "OTP expired. Please register again."}, status=400)
-
-        reg_data["otp"] = ""
-        payment.set_registration_data(reg_data)
-
-        return Response({
-            "message": "OTP verified successfully. Proceed to payment.",
+            "message": "Registration received. Please complete payment to activate your account.",
+            "payment_id": payment.id,
             "registration_token": str(payment.registration_token),
             "amount": str(payment.amount),
-        }, status=200)
+            "payment_status": payment.status
+        }, status=status.HTTP_201_CREATED)
+
+# class VerifyOTPView(APIView):
+#     permission_classes = [AllowAny]
+
+#     def post(self, request, *args, **kwargs):
+#         serializer = VerifyOTPSerializer(data=request.data)
+#         serializer.is_valid(raise_exception=True)
+#         email = serializer.validated_data["email"].strip().lower()
+#         otp = serializer.validated_data["otp"].strip()
+
+#         try:
+#             payment = Payment.objects.filter(status="Pending").latest("created_at")
+#         except Payment.DoesNotExist:
+#             return Response({"error": "No pending registration found."}, status=404)
+
+#         reg_data = payment.get_registration_data()
+#         if not reg_data or reg_data.get("email").lower() != email:
+#             return Response({"error": "No matching registration found."}, status=404)
+
+#         if reg_data.get("otp") != otp:
+#             return Response({"error": "Invalid OTP."}, status=400)
+
+#         expiry_minutes = int(getattr(settings, "OTP_EXPIRY_MINUTES", 10))
+#         otp_time = datetime.fromisoformat(reg_data.get("otp_created_at"))
+#         if otp_time + timedelta(minutes=expiry_minutes) < datetime.utcnow():
+#             return Response({"error": "OTP expired. Please register again."}, status=400)
+
+#         reg_data["otp"] = ""
+#         payment.set_registration_data(reg_data)
+
+#         return Response({
+#             "message": "OTP verified successfully. Proceed to payment.",
+#             "registration_token": str(payment.registration_token),
+#             "amount": str(payment.amount),
+#         }, status=200)
                
 class RazorpayOrderView(APIView):
     permission_classes = [AllowAny]
@@ -207,7 +228,6 @@ class RazorpayOrderView(APIView):
             "razorpay_key": settings.RAZORPAY_KEY_ID,
         }, status=status.HTTP_201_CREATED)
 
-
 class RazorpayVerifyView(APIView):
     permission_classes = [AllowAny]
 
@@ -253,22 +273,61 @@ class RazorpayVerifyView(APIView):
 
         # Create user from registration data
         reg_data = payment.get_registration_data()
+
+        # >>> CHANGED: Instead of assuming plaintext password is in reg_data,
+        # fetch the corresponding RegistrationRequest which stores the hashed password.
         try:
-            user = CustomUser.objects.create_user(
-                user_id=generate_next_userid(),
-                email=reg_data["email"],
-                password=reg_data["password"],
-                first_name=reg_data["first_name"],
-                last_name=reg_data["last_name"],
-                mobile=reg_data["mobile"],
-                whatsapp_number=reg_data.get("whatsapp_number"),
-                pincode=reg_data["pincode"],
-                payment_type=reg_data["payment_type"],
-                upi_number=reg_data.get("upi_number"),
-                sponsor_id=reg_data["sponsor_id"],
-                placement_id=reg_data.get("placement_id"),
-                is_active=True,
-            )
+            # Try to get the hashed password from RegistrationRequest
+            reg_req = RegistrationRequest.objects.filter(token=payment.registration_token).first()
+        except Exception:
+            reg_req = None
+
+        try:
+            # If we found a RegistrationRequest, use it (password is already hashed)
+            if reg_req:
+                user = CustomUser(
+                    user_id=generate_next_userid(),
+                    email=reg_data.get("email"),
+                    first_name=reg_data.get("first_name"),
+                    last_name=reg_data.get("last_name"),
+                    mobile=reg_data.get("mobile"),
+                    whatsapp_number=reg_data.get("whatsapp_number"),
+                    pincode=reg_data.get("pincode") or "",
+                    payment_type=reg_data.get("payment_type") or "",
+                    upi_number=reg_data.get("upi_number") or "",
+                    sponsor_id=reg_data.get("sponsor_id"),
+                    placement_id=reg_data.get("placement_id"),
+                    is_active=True,
+                )
+                # assign hashed password directly so we DON'T double-hash
+                if reg_req.password:
+                    user.password = reg_req.password
+                else:
+                    # fallback: if somehow the request didn't store a hashed password but reg_data has raw
+                    if reg_data.get("password"):
+                        user.set_password(reg_data.get("password"))
+                    else:
+                        user.set_unusable_password()
+                user.save()
+            else:
+                # No RegistrationRequest found — fallback to older approach,
+                # but guard against missing raw password.
+                raw_pw = reg_data.get("password")
+                user = CustomUser.objects.create_user(
+                    user_id=generate_next_userid(),
+                    email=reg_data.get("email"),
+                    password=raw_pw,
+                    first_name=reg_data.get("first_name"),
+                    last_name=reg_data.get("last_name"),
+                    mobile=reg_data.get("mobile"),
+                    whatsapp_number=reg_data.get("whatsapp_number"),
+                    pincode=reg_data.get("pincode") or "",
+                    payment_type=reg_data.get("payment_type") or "",
+                    upi_number=reg_data.get("upi_number") or "",
+                    sponsor_id=reg_data.get("sponsor_id"),
+                    placement_id=reg_data.get("placement_id"),
+                    is_active=True,
+                )
         except Exception as e:
             logger.exception("Failed to create user for Payment %s: %s", payment.id, e)
             # Consider rolling back or marking payment failed in extreme cases
@@ -277,10 +336,12 @@ class RazorpayVerifyView(APIView):
         payment.user = user
         payment.save(update_fields=["user"])
 
+        # ✅ Send confirmation via Brevo
         safe_send_mail(
             subject="Your MLM User ID",
-            message=f"Hello {user.first_name},\n\nYour payment is verified. Your User ID is: {user.user_id}",
+            message=f"Hello {user.first_name},\nYour payment is verified. Your User ID is: {user.user_id}",
             recipient_list=[user.email],
+            html_message=f"<p>Hello <strong>{user.first_name}</strong>,</p><p>Your payment is verified. Your User ID is: <strong>{user.user_id}</strong>.</p>"
         )
 
         return Response({
@@ -314,7 +375,7 @@ class AdminVerifyPaymentView(APIView):
         status_filter = request.query_params.get("status")
 
         payments = Payment.objects.all()
-        if status_filter in ["Pending", "Verified", "Failed"]:
+        if status_filter in ["Pending", "Verified", "Failed", "Declined"]:
             payments = payments.filter(status=status_filter)
         data = [
             {
@@ -333,80 +394,139 @@ class AdminVerifyPaymentView(APIView):
             "payments": data
         })
 
-    def post(self, request, payment_id, *args, **kwargs):
-        """Verify or mark payment failed"""
-        payment = get_object_or_404(Payment, id=payment_id)
-        reg_data = payment.get_registration_data()
+    logger = logging.getLogger(__name__)
 
-        status_choice = request.data.get("status")
-        if status_choice not in ["Verified", "Failed"]:
-            return Response({"error": "Invalid status"}, status=400)
+    def post(self, request, payment_id=None):
+        logger.info("AdminVerifyPaymentView called for payment_id=%s by user=%s, data=%s",
+                    payment_id, getattr(request.user, 'id', None), request.data)
+        try:
+            payment = Payment.objects.get(id=payment_id)
+        except Payment.DoesNotExist:
+            return Response({"error": "Payment not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        if status_choice == "Failed":
-            payment.status = "Failed"
-            payment.save()
+        new_status = request.data.get("status")
+        if new_status not in ["Verified", "Declined", "Failed", "Pending"]:
+            return Response({"error": "Invalid status"}, status=status.HTTP_400_BAD_REQUEST)
 
-            email = reg_data.get("email")
-            if email:
-                safe_send_mail(
-                    subject="Payment unsuccessful",
-                    message=f"Hello {email},\n\nUnfortunately, your payment has failed. Please try again.",
-                    recipient_list=[email],
-                )
-            return Response({"message": "Payment marked as Failed"}, status=200)
+        # If admin is verifying, create/link user similar to RazorpayVerifyView
+        if new_status == "Verified":
+            try:
+                with transaction.atomic():
+                    # persist status first
+                    payment.status = "Verified"
+                    payment.save(update_fields=["status"])
 
-        # Verified flow
-        payment.status = "Verified"
-        payment.save()
+                    reg_data = payment.get_registration_data() or {}
+                    email = reg_data.get("email")
 
-        if not payment.user:
-            reg_data = payment.get_registration_data()
-            user, created = CustomUser.objects.get_or_create(
-                email=reg_data["email"],
-                defaults={
-                    "user_id": generate_next_userid(),
-                    "password": reg_data.get("password") or "",
-                    "sponsor_id": reg_data.get("sponsor_id"),
-                    "placement_id": reg_data.get("placement_id"),
-                    "first_name": reg_data["first_name"],
-                    "last_name": reg_data["last_name"],
-                    "mobile": reg_data["mobile"],
-                    "whatsapp_number": reg_data["whatsapp_number"],
-                    "pincode": reg_data["pincode"],
-                    "payment_type": reg_data["payment_type"],
-                    "upi_number": reg_data["upi_number"],
-                }
-            )
-            if created:
-                if reg_data.get("password"):
-                    user.set_password(reg_data["password"])
-                user.is_active = True
-                user.save()
+                    user = None
+                    if email:
+                        user = CustomUser.objects.filter(email=email).first()
 
-            payment.user = user
-            payment.save()
+                    if user:
+                        # link & activate existing user
+                        user.is_active = True
+                        user.save(update_fields=["is_active"])
+                        payment.user = user
+                        payment.save(update_fields=["user"])
+                        RegistrationRequest.objects.filter(token=payment.registration_token).update(is_completed=True)
 
-            if created:
-                safe_send_mail(
-                    subject="Your MLM User ID",
-                    message=f"Hello {user.user_id},\n\nYour payment has been verified. Your User ID is: {user.user_id}",
-                    recipient_list=[user.email],
-                )
-            return Response({"message": "Payment verified", "user_id": user.user_id})
+                        safe_send_mail(
+                            subject="Your MLM User ID",
+                            message=f"Hello {user.first_name},\nYour payment is verified. Your User ID is: {user.user_id}",
+                            recipient_list=[user.email],
+                            html_message=f"<p>Hello <strong>{user.first_name}</strong>,</p><p>Your payment is verified. Your User ID is: <strong>{user.user_id}</strong>.</p>",
+                        )
 
-        if payment.user and not payment.user.is_active:
-            payment.user.is_active = True
-            payment.user.save(update_fields=["is_active"])
+                        return Response({
+                            "message": "Payment verified, UserId is send to your email.",
+                            "user_id": user.user_id
+                        }, status=status.HTTP_200_OK)
 
-        safe_send_mail(
-            subject="Your MLM User ID",
-            message=f"Hello {payment.user.user_id},\n\nYour payment has been verified. Your User ID is: {payment.user.user_id}",
-            recipient_list=[payment.user.email],
-        )
+                    # User does not exist — try creating from RegistrationRequest if present
+                    reg_req = RegistrationRequest.objects.filter(token=payment.registration_token).first()
 
-        return Response({"message": "Payment verified successfully"})
+                    if reg_req:
+                        # create user using reg_req (reg_req.password is already hashed by RegisterView)
+                        user = CustomUser(
+                            user_id=generate_next_userid(),
+                            email=reg_data.get("email") or reg_req.email,
+                            first_name=reg_req.first_name or reg_data.get("first_name"),
+                            last_name=reg_req.last_name or reg_data.get("last_name"),
+                            mobile=reg_req.mobile or reg_data.get("mobile"),
+                            whatsapp_number=reg_req.whatsapp_number or reg_data.get("whatsapp_number"),
+                            pincode=reg_req.pincode or reg_data.get("pincode") or "",
+                            payment_type=reg_req.payment_type or reg_data.get("payment_type") or "",
+                            upi_number=reg_req.upi_number or reg_data.get("upi_number") or "",
+                            sponsor_id=reg_req.sponsor_id or reg_data.get("sponsor_id"),
+                            placement_id=reg_req.placement_id or reg_data.get("placement_id"),
+                            is_active=True,
+                        )
+                        if getattr(reg_req, "password", None):
+                            # password is already hashed, assign directly
+                            user.password = reg_req.password
+                        else:
+                            # fallback: if raw password exists in reg_data (unlikely) set it, else unusable
+                            if reg_data.get("password"):
+                                user.set_password(reg_data.get("password"))
+                            else:
+                                user.set_unusable_password()
+                        user.save()
+                        reg_req.is_completed = True
+                        reg_req.save(update_fields=["is_completed"])
+                    else:
+                        # fallback: try creating from reg_data (rare)
+                        raw_pw = reg_data.get("password")
+                        if not reg_data.get("email"):
+                            # email is required to create user
+                            payment.status = "Pending"
+                            payment.save(update_fields=["status"])
+                            return Response({"error": "Registration data missing email; cannot create user."},
+                                            status=status.HTTP_400_BAD_REQUEST)
 
-    
+                        user = CustomUser.objects.create_user(
+                            user_id=generate_next_userid(),
+                            email=reg_data.get("email"),
+                            password=raw_pw,
+                            first_name=reg_data.get("first_name"),
+                            last_name=reg_data.get("last_name"),
+                            mobile=reg_data.get("mobile"),
+                            whatsapp_number=reg_data.get("whatsapp_number"),
+                            pincode=reg_data.get("pincode") or "",
+                            payment_type=reg_data.get("payment_type") or "",
+                            upi_number=reg_data.get("upi_number") or "",
+                            sponsor_id=reg_data.get("sponsor_id"),
+                            placement_id=reg_data.get("placement_id"),
+                            is_active=True,
+                        )
+
+                    # attach and notify
+                    payment.user = user
+                    payment.save(update_fields=["user"])
+                    safe_send_mail(
+                        subject="Your MLM User ID",
+                        message=f"Hello {user.first_name},\nYour payment is verified. Your User ID is: {user.user_id}",
+                        recipient_list=[user.email],
+                        html_message=f"<p>Hello <strong>{user.first_name}</strong>,</p><p>Your payment is verified. Your User ID is: <strong>{user.user_id}</strong>.</p>",
+                    )
+
+                    return Response({
+                        "message": "Payment verified, UserId is send to your email.",
+                        "user_id": user.user_id
+                    }, status=status.HTTP_200_OK)
+
+            except Exception as exc:
+                logger.exception("Unexpected error in admin verify payment: %s", exc)
+                # revert to pending so admin can retry
+                payment.status = "Pending"
+                payment.save(update_fields=["status"])
+                return Response({"error": "Unexpected error verifying payment"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # For non-Verified statuses just update status
+        payment.status = new_status
+        payment.save(update_fields=["status"])
+        return Response({"message": f"Payment status updated to {new_status}"}, status=status.HTTP_200_OK)
+
 class AdminAccountAPIView(APIView):
     permission_classes = [AllowAny]
     def get_permissions(self):
@@ -481,8 +601,9 @@ class ForgotPasswordView(APIView):
 
         safe_send_mail(
             subject="Reset Your Password",
-            message=f"Click this link to reset your password:\n{reset_link}",
+            message=f"Click this link to reset your password: {reset_link}",
             recipient_list=[user.email],
+            html_message=f"<p>Click this link to reset your password: {reset_link}</p>"
         )
         return Response({
             "message": f"Password reset link sent to {user.user_id}'s email",
@@ -517,6 +638,7 @@ class ResetPasswordView(APIView):
             subject="Password Reset Successful",
             message="Your password has been reset. You can now login using your new password.",
             recipient_list=[user.email],
+            html_message=f"<p><strong>Your password has been reset. You can now login using your new password.</strong>.</p>"
         )
 
         return Response({"message": f"Password for {user.user_id} reset successfully."}, status=200)
@@ -855,6 +977,7 @@ class AdminResetUserPasswordView(APIView):
             subject="Your Password Has Been Reset",
             message=f"Hello {user.first_name},\n\nYour password has been reset by the admin. Your new password is: {new_password}",
             recipient_list=[user.email],
+            html_message=f"<p>Your password has been reset by the admin.</strong>,</p><p>Your new password is: {new_password}.</p>"
         )
         return Response({"message": f"Password reset successfully for {user.user_id}"})
 
@@ -979,3 +1102,86 @@ class GetUserFullNameView(APIView):
     def post(self, request):
         user_id = self.get_user_id(request)
         return self.handle_request(user_id)
+
+
+
+
+
+from .serializers import ChildRegistrationSerializer
+
+class ChildRegistrationView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = ChildRegistrationSerializer(
+            data=request.data, 
+            context={'request': request}
+        )
+        if serializer.is_valid():
+            child = serializer.save()
+            return Response({
+                "message": "Child user created successfully",
+                "user_id": child.user_id,        
+                "parent_user_id": request.user.user_id,
+                
+            }, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class ChildListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        children = CustomUser.objects.filter(parent=request.user)
+        data = [
+            {
+                "user_id": c.user_id,
+                "first_name": c.first_name,
+                "last_name": c.last_name,
+                "email": c.email,
+                "mobile": c.mobile,
+            }
+            for c in children
+        ]
+        return Response({"children": data}, status=status.HTTP_200_OK)
+
+
+class SwitchToChildView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, child_user_id):
+        try:
+            child = CustomUser.objects.get(user_id=child_user_id, parent=request.user)
+        except CustomUser.DoesNotExist:
+            return Response(
+                {"error": "Child not found or not owned by this parent."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        refresh = RefreshToken.for_user(child)
+        refresh["parent_user_id"] = request.user.user_id
+
+        return Response({
+            "message": f"Switched to child account {child.user_id}",
+            "child_user_id": child.user_id,
+            "parent_user_id": request.user.user_id,
+            "refresh": str(refresh),
+            "access": str(refresh.access_token),
+        })
+
+
+class SwitchBackToParentView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not request.user.parent:
+            return Response({"message": "Already in parent account."}, status=status.HTTP_200_OK)
+
+        parent = request.user.parent
+        refresh = RefreshToken.for_user(parent)
+
+        return Response({
+            "message": f"Switched back to parent account {parent.user_id}",
+            "parent_user_id": parent.user_id,
+            "refresh": str(refresh),
+            "access": str(refresh.access_token),
+        })

@@ -1,17 +1,23 @@
-from django.urls import path
+from django.urls import path, re_path
 from .views import *
 from rest_framework_simplejwt.views import TokenRefreshView
 
 urlpatterns = [
-    # path("register/", RegistrationView.as_view(), name="register"),
     path("register/", RegisterView.as_view(), name="register"),
-    path("verify-otp/", VerifyOTPView.as_view(), name="verify-otp"),
-    # path("register/legacy/", RegistrationView.as_view(), name="register-legacy"),
     path("razorpay/order/", RazorpayOrderView.as_view(), name="razorpay-order"),
     path("razorpay/verify/", RazorpayVerifyView.as_view(), name="razorpay-verify"),
     path("upload-receipt/", UploadReceiptView.as_view(), name="upload-receipt"),
-    path("admin/verify-payment/", AdminVerifyPaymentView.as_view(), name="admin-list-pending-payments"),
-    path("admin/verify-payment/<int:payment_id>/", AdminVerifyPaymentView.as_view(), name="admin-verify-payment"),
+    path(
+    "admin/verify-payment/<int:payment_id>/",
+    AdminVerifyPaymentView.as_view(),
+    name="admin-verify-payment",
+    ),
+
+    path(
+    "admin/verify-payment/",
+    AdminVerifyPaymentView.as_view(),
+    name="admin-list-pending-payments",
+    ),
     path("admin-account/", AdminAccountAPIView.as_view(), name="admin-account"),
     path("login/", LoginView.as_view(), name="login"),
     path("change-password/", ChangePasswordView.as_view(), name="change-password"),
@@ -30,4 +36,10 @@ urlpatterns = [
     path("admin/users/<str:user_id>/profile-image/", AdminViewProfileImageView.as_view()),
     path('admin/network/', AdminNetworkView.as_view(), name='admin-network'),
     path("users/fullname/", GetUserFullNameView.as_view(), name="get-user-fullname"),
-]
+
+    # child
+    path('child-register/', ChildRegistrationView.as_view(), name='child-register'),
+    path('child-list/', ChildListView.as_view(), name='child-list'),
+    path('switch-to-child/<str:child_user_id>/', SwitchToChildView.as_view(), name='switch-to-child'),
+    path('switch-back-to-parent/', SwitchBackToParentView.as_view(), name='switch-back-to-parent'),
+] 

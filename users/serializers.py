@@ -3,18 +3,20 @@ from rest_framework import serializers
 from .models import *
 from django.contrib.auth import get_user_model
 from .utils import validate_sponsor
+from django.db.models import Max
+import re
 
 User = get_user_model()
 
-class SendOTPSerializer(serializers.Serializer):
-    email = serializers.EmailField()
+# class SendOTPSerializer(serializers.Serializer):
+#     email = serializers.EmailField()
 
-class VerifyOTPSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-    otp = serializers.CharField()
+# class VerifyOTPSerializer(serializers.Serializer):
+#     email = serializers.EmailField()
+#     otp = serializers.CharField()
     
 class RegistrationSerializer(serializers.Serializer):
-    sponsor_id = serializers.CharField(required=True)
+    sponsor_id = serializers.CharField(required=False, allow_blank=True)
     placement_id = serializers.CharField(required=False, allow_blank=True)
     first_name = serializers.CharField()
     last_name = serializers.CharField()
@@ -32,31 +34,27 @@ class RegistrationSerializer(serializers.Serializer):
     def validate(self, data):
     # Check password match
         if data["password"] != data["confirm_password"]:
-         raise serializers.ValidationError({"password": "Passwords do not match."})
-
-    # Check unique email and mobile
-        if CustomUser.objects.filter(email=data["email"]).exists():
-         raise serializers.ValidationError({"email": "Email already exists."})
-        if CustomUser.objects.filter(mobile=data["mobile"]).exists():
-          raise serializers.ValidationError({"mobile": "Mobile number already exists."})
+            raise serializers.ValidationError({"password": "Passwords do not match."})
 
     # Check sponsor exists
-        if not CustomUser.objects.filter(user_id=data["sponsor_id"]).exists():
-          raise serializers.ValidationError({"sponsor_id": "Sponsor ID does not exist."})
+        sponsor_id = data.get("sponsor_id")
+        if sponsor_id:
+            if not CustomUser.objects.filter(user_id=sponsor_id).exists():
+                raise serializers.ValidationError({"sponsor_id": "Sponsor ID does not exist."})
 
     # Check placement ID validity and limit
         placement_id = data.get("placement_id")
-        if placement_id:  # Only validate if provided
+        if placement_id:
             placement_user = CustomUser.objects.filter(user_id=placement_id).first()
             if not placement_user:
-             raise serializers.ValidationError({"placement_id": f"No user with ID {placement_id} exists in the system."})
+                raise serializers.ValidationError({"placement_id": f"No user with ID {placement_id} exists in the system."})
 
         # Count users already placed under this placement_id
             placed_count = CustomUser.objects.filter(placement_id=placement_id).count()
             if placed_count >= 2:
-             raise serializers.ValidationError({
-                 "placement_id": "Placement limit reached for this user. Please choose another placement or leave it empty."
-             })
+                raise serializers.ValidationError({
+                    "placement_id": "Placement limit reached for this user. Please choose another placement or leave it empty."
+                })
 
         return data
 
@@ -323,3 +321,40 @@ class AdminUserListSerializer(serializers.ModelSerializer):
 class UserFullNameSerializer(serializers.Serializer):
     user_id = serializers.CharField()
     full_name = serializers.CharField()
+
+
+
+
+class ChildRegistrationSerializer(serializers.Serializer):
+    first_name = serializers.CharField()
+    last_name = serializers.CharField()
+    email = serializers.EmailField(required=False, allow_blank=True)
+    mobile = serializers.CharField(required=False, allow_blank=True)
+    whatsapp_number = serializers.CharField(required=False, allow_blank=True)
+    pincode = serializers.CharField(required=False, allow_blank=True)
+
+    def create(self, validated_data):
+        parent = self.context['request'].user
+
+        # UUID based user id
+        child_user = CustomUser.objects.create(
+            parent=parent,
+            sponsor_id=parent.user_id,
+            placement_id=None,
+            first_name=validated_data.get('first_name', ''),
+            last_name=validated_data.get('last_name', ''),
+            email=validated_data.get('email', ''),
+            mobile=validated_data.get('mobile', ''),
+            whatsapp_number=validated_data.get('whatsapp_number', ''),
+            pincode=validated_data.get('pincode', ''),
+            payment_type='Other',     # child doesn’t pay
+            upi_number='',
+            is_active=True,
+            pmf_status=False,
+        )
+
+        # Child has no password
+        child_user.set_unusable_password()
+        child_user.save()
+
+        return child_user

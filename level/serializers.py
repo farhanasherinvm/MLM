@@ -11,7 +11,7 @@ import random
 import uuid
 from django.db import transaction
 import string
-from django.db.models import Q
+from django.db.models import Q, Sum
 from django.contrib.auth.hashers import make_password
 
 
@@ -147,9 +147,9 @@ class UserInfoSerializer(serializers.Serializer):
 
 class AdminPaymentReportSerializer(serializers.ModelSerializer):
     username = serializers.SerializerMethodField()
-    level_name = serializers.CharField(source='level.name')
+    level_name = serializers.SerializerMethodField() 
     user_id = serializers.CharField(source='user.user_id')
-    amount = serializers.DecimalField(source='level.amount', max_digits=10, decimal_places=2)
+    amount = serializers.SerializerMethodField() 
     payment_method = serializers.SerializerMethodField()
     transaction_id = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
@@ -165,6 +165,15 @@ class AdminPaymentReportSerializer(serializers.ModelSerializer):
     
     def get_username(self, obj):
         return f"{obj.user.first_name or ''} {obj.user.last_name or ''}".strip() or obj.user.user_id
+
+    def get_level_name(self, obj):
+        """Safely retrieves the level name."""
+        return obj.level.name if obj.level else "MISSING LEVEL"
+
+    def get_amount(self, obj):
+        
+        # Ensure Decimal is imported at the top of the file
+        return obj.level.amount if obj.level else Decimal('0.00')
 
     def get_payment_method(self, obj):
         """Get the payment method from the latest LevelPayment."""
@@ -335,46 +344,102 @@ class RecipientLevelPaymentSerializer(serializers.ModelSerializer):
 
                             
 
-class DummyUserSerializer(serializers.Serializer):
-    user_id = serializers.CharField(max_length=20, source='user.user_id')
-    first_name = serializers.CharField(max_length=100, source='user.first_name')
-    email = serializers.EmailField(source='user.email')
-    pk = serializers.IntegerField(read_only=True)
+class AdminMasterUserSerializer(serializers.ModelSerializer):
+    # Fields pulled directly from the CustomUser model (the source object)
+    user_id = serializers.CharField(max_length=20, read_only=True)
+    first_name = serializers.CharField(max_length=100, read_only=True)
+    email = serializers.EmailField(read_only=True)
+    mobile = serializers.CharField(read_only=True)
+    whatsapp_number = serializers.CharField(read_only=True)
+    pincode = serializers.CharField(read_only=True)
+    upi_number = serializers.CharField(read_only=True)
+    sponsor_id = serializers.CharField(read_only=True) 
+    placement_id = serializers.CharField(read_only=True)
+    is_active = serializers.BooleanField(read_only=True) # Global CustomUser active status
+    
+    # Custom fields derived by aggregation from the related UserLevel records
     admin_level_linked = serializers.SerializerMethodField()
     current_status_display = serializers.SerializerMethodField()
-    linked_user_id = serializers.CharField(max_length=20)
-    is_active = serializers.BooleanField()
+    linked_user_id = serializers.SerializerMethodField()
     node_type = serializers.SerializerMethodField() 
-    total_income = serializers.SerializerMethodField()
-    mobile = serializers.CharField(source='user.mobile', read_only=True)
-    whatsapp_number = serializers.CharField(source='user.whatsapp_number', read_only=True)
-    pincode = serializers.CharField(source='user.pincode', read_only=True)
-    upi_number = serializers.CharField(source='user.upi_number', read_only=True)
+    total_income = serializers.SerializerMethodField() # Calculated total income
 
-    sponsor_id = serializers.CharField(source='user.sponsor_id', read_only=True) 
-    placement_id = serializers.CharField(source='user.placement_id', read_only=True) 
-    
+    class Meta:
+        model = CustomUser # <--- CRITICAL CHANGE: Base model is CustomUser
+        fields = (
+            'user_id', 'first_name', 'email', 'pk', 'admin_level_linked', 
+            'current_status_display', 'linked_user_id', 'is_active', 'node_type', 
+            'total_income', 'mobile', 'whatsapp_number', 'pincode', 'upi_number', 
+            'sponsor_id', 'placement_id'
+        )
+        read_only_fields = fields
 
-    def get_admin_level_linked(self, obj):
-        return obj.level.name if obj.level else "N/A"
+    # --- Aggregation Logic ---
 
-    def get_current_status_display(self, obj):
-        if not obj.is_active:
+    def get_admin_level_linked(self, user):
+        """
+        Finds which of the Admin's matrix slots (Levels 1-6) this dummy user is linked to.
+        This provides the single Admin level link to display on the user's record.
+        """
+        try:
+            admin = self.context['request'].user
+            # Find the Admin's UserLevel slot that is currently occupied by this 'user'
+            linked_slot = UserLevel.objects.filter(
+                user=admin, 
+                linked_user_id=user.user_id,
+                level__order__lte=6 # Only check matrix levels
+            ).select_related('level').first()
+            
+            return linked_slot.level.name if linked_slot else "Not Linked"
+        except:
+            return "Error/Not Linked"
+
+    def get_current_status_display(self, user):
+        """
+        Checks the global CustomUser status and aggregates the UserLevel payment status.
+        If the user is globally active, but ANY critical level is unpaid/pending, they are "Payment Pending".
+        """
+        if not user.is_active:
             return "INACTIVE (Admin Disabled)"
-        if obj.status == 'not_paid':
+
+        # Check for any unpaid/pending status among the critical matrix levels (1-6)
+        unpaid_levels_exist = user.userlevel_set.filter(
+            level__order__lte=6, 
+            status__in=['not_paid', 'pending']
+        ).exists()
+        
+        if unpaid_levels_exist:
             return "ACTIVE (Payment Pending)"
-        return f"ACTIVE ({obj.status.replace('_', ' ').title()})"
+            
+        # If active and no critical levels are unpaid, assume full payment
+        return "ACTIVE (Paid)" 
         
-    def get_total_income(self, obj):
-        return obj.received
+    def get_total_income(self, user):
+        """
+        Sums up the received income across all UserLevel records for this user.
+        """
+        # Using aggregation to sum the 'received' field from the related manager
+        total = user.userlevel_set.aggregate(total_received=Sum('received'))
+        # Assuming 'received' is the field for total income in the UserLevel model
+        return total['total_received'] if total['total_received'] is not None else 0.0
         
-    def get_node_type(self, obj):
-        user_id = obj.user.user_id
-        if user_id.startswith('MASTER'):
+    def get_node_type(self, user):
+        """
+        Determines the node type based on the CustomUser's user_id.
+        """
+        if user.user_id.startswith('MASTER'):
             return "MASTER Node"
-        elif user_id.startswith('DUMMY'):
-            return "OLD Dummy Data "
+        elif user.user_id.startswith('DUMMY'):
+            return "OLD Dummy Data"
         return "Unknown Node Type"
+
+    def get_linked_user_id(self, user):
+        """
+        Returns the linked_user_id (upline) for the user's primary level (Level 1).
+        This is typically the original placement on the Admin's Master Node chain.
+        """
+        level_one = user.userlevel_set.filter(level__order=1).first()
+        return level_one.linked_user_id if level_one else "N/A"
 
 class CreateDummyUsersSerializer(serializers.Serializer):
     # Form Fields (Input fields REMAIN THE SAME)
@@ -464,87 +529,163 @@ class CreateDummyUsersSerializer(serializers.Serializer):
         return user_level
 
 
+
+
 # --- 3. AdminDummyUserUpdateSerializer (Multi-Model Update/PATCH) ---
-class AdminDummyUserUpdateSerializer(serializers.Serializer):
+class AdminDummyUserUpdateSerializer(serializers.ModelSerializer):
+    # CRITICAL CHANGE: Inherit from ModelSerializer and set model to CustomUser
+    
+    # Fields pulled directly from CustomUser
     first_name = serializers.CharField(max_length=150, required=False)
     last_name = serializers.CharField(max_length=150, required=False)
     email = serializers.EmailField(required=False)
     mobile = serializers.CharField(max_length=15, required=False)
     is_active = serializers.BooleanField(required=False)
-    level = serializers.PrimaryKeyRelatedField(queryset=Level.objects.all(), required=False)
+    whatsapp_number = serializers.CharField(max_length=15, required=False)
+    pincode = serializers.CharField(max_length=10, required=False)
+    upi_number = serializers.CharField(max_length=50, required=False)
+    
+    # Fields that belong to UserLevel, handled manually in update()
+    level = serializers.PrimaryKeyRelatedField(queryset=Level.objects.all(), required=False, write_only=True)
     status = serializers.ChoiceField(
         choices=[('not_paid', 'Not Paid'), ('paid', 'Paid'), ('pending', 'Pending'), ('rejected', 'Rejected')],
-        required=False
+        required=False, write_only=True
     )
-    user_id = serializers.CharField(source='user.user_id', read_only=True)
-    linked_user_id = serializers.CharField(read_only=True)
+    
+    # Read-only fields (from CustomUser)
+    user_id = serializers.CharField(read_only=True)
     pk = serializers.IntegerField(read_only=True)
+    
+    # Read-only fields derived from context/relationships
+    linked_user_id = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = CustomUser # CRITICAL CHANGE
+        fields = (
+            'first_name', 'last_name', 'email', 'mobile', 'is_active', 'whatsapp_number', 
+            'pincode', 'upi_number', 'user_id', 'pk', 'linked_user_id', 'level', 'status'
+        )
+        # Note: 'level' and 'status' are marked write_only, as they belong to UserLevel
+
+    def get_linked_user_id(self, user):
+        # Displays the upline user ID for Level 1 (for context)
+        level_one = user.userlevel_set.filter(level__order=1).first()
+        return level_one.linked_user_id if level_one else None
 
     def validate(self, data):
-        instance = self.instance
-        admin = self.context['request'].user
-
-        if 'level' in data and data['level'] != instance.level and not instance.is_active:
+        instance = self.instance # instance is now CustomUser
+        
+        # 🟢 Logic remains the same, fields are accessed directly on instance
+        if 'level' in data and not instance.is_active: # No need for instance.user.is_active
             raise serializers.ValidationError({"level": "Cannot change the level of an inactive dummy user. Activate the user first."})
 
+        # 2. 6-Slot Activation Check (Simplified)
         if 'is_active' in data and data['is_active'] is True and instance.is_active is False:
-            current_user_pk = instance.user.pk
-
-            # Step 1: Get the 'user_id's of all active Master/Dummy users in the system, EXCLUDING the current user.
-            active_master_ids = CustomUser.objects.filter(
-                Q(user_id__startswith='MASTER') | Q(user_id__startswith='DUMMY'),
+            active_master_count_global = CustomUser.objects.filter(
+                Q(user_id__startswith='MASTER'),
                 is_active=True
-            ).exclude(
-                pk=current_user_pk
-            ).values_list('user_id', flat=True)
-            
-            # Step 2: Count how many of the Admin's slots are occupied by one of these active IDs.
-            occupied_slots_count = UserLevel.objects.filter(
-                user=admin,                        # Filter 1: Slots belonging to the admin
-                linked_user_id__in=active_master_ids, # Filter 2: Slot is occupied by an active master/dummy user
-                linked_user_id__isnull=False,      # Ensure it's linked
             ).count()
-
-            if occupied_slots_count >= 6:
-                error_message = f"Activation failed. The maximum limit of 6 active dummy users has been reached. Current active count: {occupied_slots_count}."
+            
+            new_total_active = active_master_count_global + 1
+            
+            if new_total_active > 6:
+                error_message = f"Activation failed. The maximum limit of 6 active dummy users has been reached. Current active count: {active_master_count_global}."
                 raise serializers.ValidationError({"is_active": error_message})
-
-        if 'email' in data and data['email'] != instance.user.email:
-            if CustomUser.objects.filter(email=data['email']).exclude(pk=instance.user.pk).exists():
+                
+        # 3. Email uniqueness check (Logic remains the same)
+        if 'email' in data and data['email'] != instance.email:
+            if CustomUser.objects.filter(email=data['email']).exclude(pk=instance.pk).exists():
                 raise serializers.ValidationError({"email": "This email is already in use by another user."})
+            
         return data
+
     @transaction.atomic
     def update(self, instance, validated_data):
-        original_level = instance.level 
-        new_level = validated_data.get('level')
-        
-        user_data_to_update = {}
-        for field in ['first_name', 'last_name', 'email', 'mobile']:
-            if field in validated_data:
-                user_data_to_update[field] = validated_data[field]
-        if user_data_to_update:
-            CustomUser.objects.filter(pk=instance.user.pk).update(**user_data_to_update)
-            instance.user.refresh_from_db()
+        # instance is the CustomUser object
+        original_user_active_status = instance.is_active
+        new_active_status = validated_data.get('is_active')
+        new_level = validated_data.pop('level', None)
+        new_status = validated_data.pop('status', None)
+        admin = self.context['request'].user
+        moving_dummy_user_id = instance.user_id
 
-        for field in ['is_active', 'level', 'status']:
-            if field in validated_data:
-                setattr(instance, field, validated_data[field])
-        instance.save() 
-        updated_instance = instance
-        
-        is_level_changed = new_level and original_level and original_level.pk != new_level.pk
-        
-        if is_level_changed and updated_instance.is_active:
-            admin = self.context['request'].user
-            moving_dummy_user_id = updated_instance.user.user_id
-            new_level_id = new_level.pk
-            
-            admin_new_level_slot = UserLevel.objects.filter(user=admin, level_id=new_level_id).first()
-            overwritten_user_id = admin_new_level_slot.linked_user_id if admin_new_level_slot else None
-            if overwritten_user_id:
-                UserLevel.objects.filter(user__user_id=overwritten_user_id, linked_user_id__isnull=True).update(level=None, is_active=False)
+        # --- PART 1: Update CustomUser data (Using ModelSerializer built-in update) ---
+        instance = super().update(instance, validated_data)
 
-            UserLevel.objects.filter(user=admin, level=original_level, linked_user_id=moving_dummy_user_id).update(linked_user_id=None)
-            UserLevel.objects.filter(user=admin, level_id=new_level_id).update(linked_user_id=moving_dummy_user_id)
+        # --- PART 2: Handle UserLevel updates (Level, Status, is_active sync) ---
+        
+        # A. Sync is_active status globally across all UserLevel records
+        if new_active_status is not None:
+            # Propagate the CustomUser's is_active status to all UserLevel records
+            UserLevel.objects.filter(user=instance).update(is_active=new_active_status)
             
-        return updated_instance
+        # B. Propagate status update (CRITICAL FIX for payment issue)
+        if new_status:
+            # 🟢 FIX: Update ALL UserLevel records for this user with the new status
+            UserLevel.objects.filter(user=instance).update(
+                status=new_status,
+                approved_at=timezone.now() if new_status == 'paid' else None
+            )
+
+        # C. Handle Level Change Logic
+        # This only applies to the specific UserLevel instance representing the Admin's slot.
+        if new_level:
+            # Find the current UserLevel entry that corresponds to the Admin's link to this user
+            current_admin_slot = UserLevel.objects.filter(
+                user=admin, linked_user_id=moving_dummy_user_id, level__order__lte=6
+            ).select_related('level').first()
+            
+            original_level = current_admin_slot.level if current_admin_slot else None
+            
+            is_level_changed = original_level and original_level.pk != new_level.pk
+
+            if is_level_changed and instance.is_active: 
+                
+                # 1. Free up the original slot
+                if current_admin_slot:
+                    UserLevel.objects.filter(pk=current_admin_slot.pk).update(linked_user_id=None)
+                
+                # 2. Occupy the new slot (Reusing your previous logic)
+                admin_new_level_slot = UserLevel.objects.filter(user=admin, level=new_level).first()
+                if admin_new_level_slot and admin_new_level_slot.linked_user_id:
+                    # Unlink the overwritten user from all admin slots
+                    overwritten_user_id = admin_new_level_slot.linked_user_id
+                    UserLevel.objects.filter(user=admin, linked_user_id=overwritten_user_id).update(linked_user_id=None)
+                    
+                UserLevel.objects.filter(user=admin, level=new_level).update(linked_user_id=moving_dummy_user_id)
+
+
+        # --- PART 3: Handle Admin Slot Linking/Unlinking (Activation/Deactivation) ---
+        if new_active_status is not None:
+            
+            if new_active_status is True and original_user_active_status is False:
+                # Activation: Link to the next available slot if one exists
+                if not UserLevel.objects.filter(user=admin, level__order__lt=7, linked_user_id=moving_dummy_user_id).exists():
+                    available_slot = UserLevel.objects.filter(
+                        user=admin, level__order__lt=7, linked_user_id__isnull=True
+                    ).order_by('level__order').first()
+                    
+                    if available_slot: 
+                        UserLevel.objects.filter(pk=available_slot.pk).update(linked_user_id=moving_dummy_user_id)
+
+            elif new_active_status is False and original_user_active_status is True:
+                # Deactivation: Unlink this dummy user from the Admin's slot(s)
+                UserLevel.objects.filter(user=admin, linked_user_id=moving_dummy_user_id).update(linked_user_id=None)
+                
+        return instance
+
+
+class PmfOrderSerializer(serializers.Serializer):
+    """Used to initiate a PMF Razorpay order."""
+    pmf_part = serializers.ChoiceField(
+        choices=['part_1', 'part_2'],
+        required=True,
+        error_messages={'invalid_choice': 'Invalid PMF part. Must be "part_1" or "part_2".'}
+    )
+
+class PmfVerifySerializer(serializers.Serializer):
+    """Used to verify PMF payment success."""
+    # These fields are expected from the Razorpay callback/frontend confirmation
+    razorpay_order_id = serializers.CharField(max_length=255, required=True)
+    razorpay_payment_id = serializers.CharField(max_length=255, required=True)
+    razorpay_signature = serializers.CharField(max_length=255, required=True)

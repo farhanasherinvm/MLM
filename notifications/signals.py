@@ -22,6 +22,9 @@ def create_user_notification(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender=UserLevel)
 def create_payment_notification(sender, instance, created, **kwargs):
+    if instance.level is None:
+        logger.warning(f"UserLevel {instance.pk} saved without an assigned Level; skipping payment notification.")
+        return
     if not created and instance.status == 'paid':
         try:
             Notification.objects.create(

@@ -13,7 +13,7 @@ import logging
 from django.utils import timezone
 from django.conf import settings
 logger = logging.getLogger(__name__) 
-
+from level import constants
 
 PAYMENT_CHOICES = [
     ("GPay", "GPay"),
@@ -53,13 +53,29 @@ class CustomUserManager(BaseUserManager):
 
 class CustomUser(AbstractBaseUser, PermissionsMixin):
     PAYMENT_CHOICES = PAYMENT_CHOICES
-    sponsor_id = models.CharField(max_length=255, null=True, blank=True)
+    sponsor_id = models.CharField(max_length=255, blank=True, null=True)
     placement_id = models.CharField(max_length=255, blank=True, null=True)
     first_name = models.CharField(max_length=255)
     last_name = models.CharField(max_length=255)
 
-    email = models.EmailField(unique=True)
-    mobile = models.CharField(max_length=15, unique=True)
+    email = models.EmailField(null=True, blank=True)
+    mobile = models.CharField(max_length=15)
+    pmf_status = models.BooleanField(default=False)
+
+
+
+    parent = models.ForeignKey(
+        'self',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='children'  #  access parent.children.all()
+    )
+    ROLE_CHOICES = (
+        ('parent', 'Parent'),
+        ('child', 'Child'),
+    )
+    role = models.CharField(max_length=10, choices=ROLE_CHOICES, default='parent')
 
     whatsapp_number = models.CharField(max_length=15, null=True, blank=True)
     pincode = models.CharField(max_length=10)
@@ -73,11 +89,36 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     is_admin_user = models.BooleanField(default=False)
     
     otp = models.CharField(max_length=6, blank=True, null=True)
+    PMF_CHOICES = [
+        (constants.PMF_STATUS_NOT_PAID, 'Not Paid'),
+        (constants.PMF_STATUS_PART_1_PAID, 'Part 1 Paid'),
+        (constants.PMF_STATUS_PAID, 'Fully Paid'),
+    ]
+    
+    pmf_status = models.CharField(
+        max_length=20,
+        choices=PMF_CHOICES,
+        default=constants.PMF_STATUS_NOT_PAID,
+        verbose_name='PMF Status'
+    )
 
     objects = CustomUserManager()
 
     USERNAME_FIELD = "user_id" 
     REQUIRED_FIELDS = ["email"]
+
+    def save(self, *args, **kwargs):
+        #  unique user_id
+        if not self.user_id:
+            self.user_id = f"USR{uuid.uuid4().hex[:6].upper()}"
+
+        #  role and level
+        if self.parent:
+            self.role = "child"
+        else:
+            self.role = "parent"
+
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.user_id
@@ -108,7 +149,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     
 class RegistrationRequest(models.Model):
     token = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
-    sponsor_id = models.CharField(max_length=255)
+    sponsor_id = models.CharField(max_length=255, blank=True, null=True)
     placement_id = models.CharField(max_length=255, blank=True, null=True)
 
     first_name = models.CharField(max_length=50)
@@ -144,6 +185,7 @@ class Payment(models.Model):
         ("Pending", "Pending"),
         ("Verified", "Verified"),
         ("Failed", "Failed"),
+        ("Declined", "Declined",),
     ]
 
     registration_token = models.UUIDField(default=uuid.uuid4, unique=True)
@@ -162,7 +204,14 @@ class Payment(models.Model):
     razorpay_signature = models.CharField(max_length=255, blank=True, null=True)
 
     # Link to user once verified
-    user = models.OneToOneField(CustomUser, on_delete=models.SET_NULL, blank=True, null=True)
+    user = models.ForeignKey(
+    CustomUser,
+    on_delete=models.CASCADE,
+    null=True,
+    blank=True,
+    related_name="payments"
+    )
+
 
     created_at = models.DateTimeField(auto_now_add=True)
 
