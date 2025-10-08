@@ -13,7 +13,7 @@ import logging
 from django.utils import timezone
 from django.conf import settings
 logger = logging.getLogger(__name__) 
-
+from level import constants
 
 PAYMENT_CHOICES = [
     ("GPay", "GPay"),
@@ -87,6 +87,18 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     is_admin_user = models.BooleanField(default=False)
     
     otp = models.CharField(max_length=6, blank=True, null=True)
+    PMF_CHOICES = [
+        (constants.PMF_STATUS_NOT_PAID, 'Not Paid'),
+        (constants.PMF_STATUS_PART_1_PAID, 'Part 1 Paid'),
+        (constants.PMF_STATUS_PAID, 'Fully Paid'),
+    ]
+    
+    pmf_status = models.CharField(
+        max_length=20,
+        choices=PMF_CHOICES,
+        default=constants.PMF_STATUS_NOT_PAID,
+        verbose_name='PMF Status'
+    )
 
     objects = CustomUserManager()
 

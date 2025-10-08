@@ -560,3 +560,18 @@ class AdminDummyUserUpdateSerializer(serializers.Serializer):
             UserLevel.objects.filter(user=admin, level_id=new_level_id).update(linked_user_id=moving_dummy_user_id)
             
         return updated_instance
+
+class PmfOrderSerializer(serializers.Serializer):
+    """Used to initiate a PMF Razorpay order."""
+    pmf_part = serializers.ChoiceField(
+        choices=['part_1', 'part_2'],
+        required=True,
+        error_messages={'invalid_choice': 'Invalid PMF part. Must be "part_1" or "part_2".'}
+    )
+
+class PmfVerifySerializer(serializers.Serializer):
+    """Used to verify PMF payment success."""
+    # These fields are expected from the Razorpay callback/frontend confirmation
+    razorpay_order_id = serializers.CharField(max_length=255, required=True)
+    razorpay_payment_id = serializers.CharField(max_length=255, required=True)
+    razorpay_signature = serializers.CharField(max_length=255, required=True)

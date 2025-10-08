@@ -15,7 +15,7 @@ from django.db import transaction
 from django.db.models import F
 from users.models import CustomUser
 from django.utils import timezone
-from django.db.models import Count, Q
+from django.db.models import Count, Q,Sum
 import logging
 import razorpay
 from django.conf import settings
@@ -23,6 +23,15 @@ from .utils import check_and_enforce_payment_lock
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import serializers
 from rest_framework import generics
+from level.models import PmfPayment 
+from level import constants         
+from .serializers import (
+    PmfOrderSerializer, 
+    PmfVerifySerializer, 
+)
+from rest_framework.permissions import AllowAny
+from decimal import Decimal
+
 
 logger = logging.getLogger(__name__)
 
@@ -527,7 +536,7 @@ class InitiatePaymentView(APIView):
                 pay_enabled=True
             )
         except UserLevel.DoesNotExist:
-            return Response({"error": "UserLevel not found, already paid, or payment not enabled"}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"error": "UserLevel not found, already paid, or payment not enabled 123"}, status=status.HTTP_404_NOT_FOUND)
 
         payment_method = serializer.validated_data['payment_method']
 
@@ -761,3 +770,223 @@ class AdminDummyUserControlView(APIView):
         user_to_delete.delete()
         
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class PmfOrderView(APIView):
+    """Creates a PmfPayment record and a Razorpay Order ID for the PMF fee."""
+    permission_classes = [IsAuthenticated] 
+    
+    def post(self, request):
+        if not razorpay_client:
+            return Response({"error": "Payment service not configured."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            
+        serializer = PmfOrderSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        pmf_part = serializer.validated_data.get('pmf_part')
+        
+        # 1. Determine amount and tags
+        if pmf_part == 'part_1':
+            amount = constants.PMF_PART_1_AMOUNT
+            pmf_type_tag = 'PMF_PART_1'
+            # Optional: Check if part 1 is already paid
+            if request.user.pmf_status != constants.PMF_STATUS_NOT_PAID:
+                 return Response({"error": "PMF Part 1 already paid."}, status=status.HTTP_400_BAD_REQUEST)
+        elif pmf_part == 'part_2':
+            amount = constants.PMF_PART_2_AMOUNT
+            pmf_type_tag = 'PMF_PART_2'
+            # Optional: Check if part 2 is already paid or part 1 is unpaid
+            if request.user.pmf_status != constants.PMF_STATUS_PART_1_PAID:
+                 return Response({"error": "PMF Part 2 cannot be paid yet or is already paid."}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            return Response({"error": "Invalid PMF part specified."}, status=status.HTTP_400_BAD_REQUEST)
+
+        amount_float = float(amount)
+        amount_paisa = int(amount_float * 100)
+        
+        # 2. Create PmfPayment record
+        try:
+            pmf_payment = PmfPayment.objects.create(
+                user=request.user, 
+                amount=amount_float,
+                status='Pending',
+                pmf_type=pmf_type_tag,
+            )
+        except Exception as e:
+            logger.error(f"Failed to create PMF payment record for {request.user.user_id}: {e}")
+            return Response({"error": "Failed to initiate payment record."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # 3. Create Razorpay Order
+        try:
+            order = razorpay_client.order.create({ 
+                "amount": amount_paisa,
+                "currency": "INR",
+                "payment_capture": 1,
+            })
+        except Exception as e:
+            logger.error(f"Razorpay PMF order creation failed for payment {pmf_payment.id}: {e}")
+            pmf_payment.status = "Failed"
+            pmf_payment.save(update_fields=["status"])
+            return Response({"error": "Failed to create payment order"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        pmf_payment.razorpay_order_id = order.get("id")
+        pmf_payment.save(update_fields=["razorpay_order_id"])
+
+        # 4. Return Order details
+        return Response({
+            "order_id": order.get("id"),
+            "amount": str(amount_float),
+            "currency": "INR",
+            "razorpay_key": settings.RAZORPAY_KEY_ID,
+            "pmf_payment_id": pmf_payment.id, # Pass new ID to frontend for verification
+        }, status=status.HTTP_201_CREATED)
+
+
+class PmfVerifyView(APIView):
+    """Verifies Razorpay signature and updates the CustomUser's pmf_status for PMF."""
+    permission_classes = [AllowAny] 
+
+    def post(self, request):
+        serializer = PmfVerifySerializer(data=request.data)
+        if not serializer.is_valid():
+             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+             
+        data = serializer.validated_data
+
+        try:
+            # Look up PmfPayment by order ID
+            pmf_payment = PmfPayment.objects.get(
+                razorpay_order_id=data["razorpay_order_id"], status="Pending"
+            )
+        except PmfPayment.DoesNotExist:
+            return Response({"error": "PMF Payment not found or already processed"}, status=status.HTTP_404_NOT_FOUND)
+
+        # 1. Verify signature 
+        verification_ok = False
+        if getattr(settings, "RAZORPAY_TEST_MODE", False): # Assume test mode is False unless explicitly set
+             verification_ok = True
+        else:
+            try:
+                razorpay_client.utility.verify_payment_signature({
+                    "razorpay_order_id": data["razorpay_order_id"],
+                    "razorpay_payment_id": data["razorpay_payment_id"],
+                    "razorpay_signature": data["razorpay_signature"],
+                })
+                verification_ok = True
+            except Exception as e:
+                logger.error(f"Razorpay signature failed for PMF {pmf_payment.id}: {e}")
+                verification_ok = False
+
+        if not verification_ok:
+            pmf_payment.status = "Failed"
+            pmf_payment.save(update_fields=["status"])
+            return Response({"error": "Signature verification failed"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 2. Mark Verified and Update User Status atomically
+        with transaction.atomic():
+            # Update PmfPayment record
+            pmf_payment.razorpay_payment_id = data["razorpay_payment_id"]
+            pmf_payment.razorpay_signature = data["razorpay_signature"]
+            pmf_payment.status = "Verified"
+            pmf_payment.save(update_fields=["razorpay_payment_id", "razorpay_signature", "status"])
+
+            user = pmf_payment.user
+            
+            # Update CustomUser.pmf_status field
+            if pmf_payment.pmf_type == 'PMF_PART_1':
+                user.pmf_status = constants.PMF_STATUS_PART_1_PAID
+            elif pmf_payment.pmf_type == 'PMF_PART_2':
+                user.pmf_status = constants.PMF_STATUS_PAID 
+            
+            user.save(update_fields=['pmf_status'])
+
+        logger.info(f"PMF Payment {pmf_payment.id} verified. User {user.user_id} status updated to {user.pmf_status}.")
+        
+        return Response({
+            "message": f"{pmf_payment.pmf_type} verified successfully. Account unlocked.",
+            "user_id": user.user_id,
+        }, status=status.HTTP_200_OK)
+
+
+class PmfStatusView(APIView):
+    """
+    Returns the current user's PMF payment status, the next PMF part due, 
+    and whether the user is currently locked based on their received amount vs. the cap.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        current_status = user.pmf_status
+        
+        # 1. Calculate Total Received Amount (Excluding Fee Levels)
+        FEE_LEVEL_NAMES = [
+            constants.LOCK_LEVEL_NAME, 
+            constants.PMF_PART_1_NAME, 
+            constants.PMF_PART_2_NAME
+        ]
+        
+        aggregation_result = UserLevel.objects.filter(user=user)\
+            .exclude(level__name__in=FEE_LEVEL_NAMES)\
+            .aggregate(total_received=Sum('received'))
+
+        total_received = aggregation_result['total_received'] or Decimal('0.00')
+
+        # 2. Determine PMF Status and Next Action
+        next_pmf_part = "None"
+        amount_due = Decimal('0.00')
+        current_cap_threshold = None
+        is_locked = False
+        lock_message = "Payment allowed: No cap reached or fully paid."
+        
+        # Determine the current relevant cap and next required payment
+        if current_status == constants.PMF_STATUS_NOT_PAID:
+            current_cap_threshold = constants.CAP_1_AMOUNT
+            next_pmf_part = constants.PMF_PART_1_NAME
+            amount_due = constants.PMF_PART_1_AMOUNT
+            
+        elif current_status == constants.PMF_STATUS_PART_1_PAID:
+            current_cap_threshold = constants.CAP_2_AMOUNT
+            next_pmf_part = constants.PMF_PART_2_NAME
+            amount_due = constants.PMF_PART_2_AMOUNT
+            
+        elif current_status == constants.PMF_STATUS_PAID:
+            # Fully Paid: No cap restriction (other than the base R4700 level, which is handled elsewhere)
+            current_cap_threshold = Decimal('999999999.00') # Effectively unlimited
+            lock_message = "Fully unlocked. All PMF fees paid."
+            
+
+        # 3. Apply Locking Logic (Check if the relevant cap is reached)
+        if current_cap_threshold is not None:
+            if total_received >= current_cap_threshold and current_status != constants.PMF_STATUS_PAID:
+                is_locked = True
+                lock_message = f"R{current_cap_threshold} cap reached. Pay {next_pmf_part} to unlock."
+            
+            # Special case for the base R4700 cap logic (already exists in check_and_enforce_payment_lock)
+            # We explicitly check here only if no PMF cap was hit.
+            elif total_received >= constants.PAYMENT_CAP_AMOUNT and not is_locked:
+                 # Logic for the base R4700 lock (Refer Help Level)
+                 try:
+                    refer_help_level = UserLevel.objects.get(
+                        user=user, 
+                        level__name=constants.LOCK_LEVEL_NAME
+                    )
+                    if refer_help_level.status != 'paid':
+                        is_locked = True
+                        current_cap_threshold = constants.PAYMENT_CAP_AMOUNT
+                        next_pmf_part = constants.LOCK_LEVEL_NAME # Use the old lock name
+                        amount_due = refer_help_level.level.amount
+                        lock_message = f"R{constants.PAYMENT_CAP_AMOUNT} cap reached. Pay the '{constants.LOCK_LEVEL_NAME}' level to unlock."
+                 except UserLevel.DoesNotExist:
+                     pass # Assume admin/system setup handles this if missing
+
+        # 4. Final Response Structure
+        return Response({
+            "user_id": user.user_id,
+            "pmf_status": current_status,
+            "total_received_amount": total_received,
+            "next_pmf_part_due": next_pmf_part,
+            "amount_due": amount_due,
+            "current_payment_cap": current_cap_threshold,
+            "is_payment_locked": is_locked,
+            "lock_details": lock_message # Helpful for debugging/frontend messages
+        }, status=status.HTTP_200_OK)

@@ -11,15 +11,42 @@ logger = logging.getLogger(__name__)
 
 def check_and_enforce_payment_lock(receiving_user, level_amount_to_credit):
     
+    FEE_LEVEL_NAMES = [
+        constants.LOCK_LEVEL_NAME, 
+        constants.PMF_PART_1_NAME, 
+        constants.PMF_PART_2_NAME
+    ]
     # 1. Calculate total received (Always required to check the cap)
     aggregation_result = UserLevel.objects.filter(user=receiving_user)\
-        .exclude(level__name=constants.LOCK_LEVEL_NAME)\
+        .exclude(level__name__in=FEE_LEVEL_NAMES)\
         .aggregate(total_received=Sum('received'))
 
     total_received = aggregation_result['total_received'] or Decimal('0.00')
 
-    # 2. Only proceed with lock logic if the cap is reached
-    if total_received >= constants.PAYMENT_CAP_AMOUNT:
+    # -----------------------------------------------------------------
+    # 2. CHECK CAP 2 (R30,000) - NEW PMF Part 2 Lock
+    # -----------------------------------------------------------------
+    if total_received >= constants.CAP_2_AMOUNT:
+        if receiving_user.pmf_status != constants.PMF_STATUS_PAID:
+            return False, (
+                f"Payment restricted: R{constants.CAP_2_AMOUNT} cap reached. "
+                f"Please pay **{constants.PMF_PART_2_NAME} (R{constants.PMF_PART_2_AMOUNT})** to unlock."
+            )
+
+    # -----------------------------------------------------------------
+    # 3. CHECK CAP 1 (R15,000) - NEW PMF Part 1 Lock
+    # -----------------------------------------------------------------
+    elif total_received >= constants.CAP_1_AMOUNT:
+        if receiving_user.pmf_status == constants.PMF_STATUS_NOT_PAID:
+            return False, (
+                f"Payment restricted: R{constants.CAP_1_AMOUNT} cap reached. "
+                f"Please pay **{constants.PMF_PART_1_NAME} (R{constants.PMF_PART_1_AMOUNT})** to unlock."
+            )
+
+    # -----------------------------------------------------------------
+    # 4. CHECK REFER HELP CAP (R4,700) - EXISTING LOGIC
+    # -----------------------------------------------------------------
+    elif total_received >= constants.PAYMENT_CAP_AMOUNT:
         
         # Cap is reached. Now we MUST check the lock level status.
         try:

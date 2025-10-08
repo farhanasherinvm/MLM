@@ -4,6 +4,7 @@ from level.views import (
     LevelViewSet, UserLevelViewSet, RazorpayOrderForLevelView,
     RazorpayVerifyForLevelView, ManualPaymentView, LevelPaymentViewSet,
     LevelCompletionViewSet,InitiatePaymentView, CreateDummyUsers, UpdateLinkedUserIdView, RecipientPaymentViewSet, DummyUserViewSet , AdminDummyUserControlView
+    , PmfStatusView, PmfOrderView, PmfVerifyView
 )
 
 router = DefaultRouter()
@@ -24,5 +25,7 @@ urlpatterns = [
     path('create-dummy-users/', CreateDummyUsers.as_view(), name='create_dummy_users'),
     path('update-level/<int:pk>/', UpdateLinkedUserIdView.as_view(), name='update_linked_user_id'),
     path('dummy-users/control/<int:pk>/', AdminDummyUserControlView.as_view(), name='dummy-user-control'),
-    
+    path('pmf/status/', PmfStatusView.as_view(), name='pmf-status-check'),
+    path('pmf/order/', PmfOrderView.as_view(), name='pmf-order'),       
+    path('pmf/verify/', PmfVerifyView.as_view(), name='pmf-verify'),
 ]
