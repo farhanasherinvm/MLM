@@ -204,7 +204,14 @@ class Payment(models.Model):
     razorpay_signature = models.CharField(max_length=255, blank=True, null=True)
 
     # Link to user once verified
-    user = models.OneToOneField(CustomUser, on_delete=models.SET_NULL, blank=True, null=True)
+    user = models.ForeignKey(
+    CustomUser,
+    on_delete=models.CASCADE,
+    null=True,
+    blank=True,
+    related_name="payments"
+    )
+
 
     created_at = models.DateTimeField(auto_now_add=True)
 
