@@ -1,4 +1,4 @@
-from django.urls import path
+from django.urls import path, re_path
 from .views import *
 from rest_framework_simplejwt.views import TokenRefreshView
 
@@ -7,8 +7,17 @@ urlpatterns = [
     path("razorpay/order/", RazorpayOrderView.as_view(), name="razorpay-order"),
     path("razorpay/verify/", RazorpayVerifyView.as_view(), name="razorpay-verify"),
     path("upload-receipt/", UploadReceiptView.as_view(), name="upload-receipt"),
-    path("admin/verify-payment/<int:payment_id>/", AdminVerifyPaymentView.as_view(), name="admin-verify-payment"),
-    path("admin/verify-payment/", AdminVerifyPaymentView.as_view(), name="admin-list-pending-payments"),
+    path(
+    "admin/verify-payment/<int:payment_id>/",
+    AdminVerifyPaymentView.as_view(),
+    name="admin-verify-payment",
+    ),
+
+    path(
+    "admin/verify-payment/",
+    AdminVerifyPaymentView.as_view(),
+    name="admin-list-pending-payments",
+    ),
     path("admin-account/", AdminAccountAPIView.as_view(), name="admin-account"),
     path("login/", LoginView.as_view(), name="login"),
     path("change-password/", ChangePasswordView.as_view(), name="change-password"),

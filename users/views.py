@@ -712,132 +712,44 @@ class AdminVerifyPaymentView(APIView):
             "payments": data
         })
 
-    def post(self, request, payment_id=None, *args, **kwargs):
-        """
-        Verify or mark payment failed.
-        NOTE: payment_id is optional in the signature to avoid TypeError in case the wrong URL
-        is hit (no payment id). We explicitly check and return a clear error if payment_id is missing.
-        """
-        # Debug log to help detect redirect-related issues (if POST got converted to GET by a redirect)
-        logger.debug("AdminVerifyPaymentView called: path=%s method=%s payment_id=%s", request.path, request.method, payment_id)
+    def post(self, request, payment_id=None):
+        try:
+            payment = Payment.objects.get(id=payment_id)
+        except Payment.DoesNotExist:
+            return Response({"error": "Payment not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        if payment_id is None:
-            # provide actionable error rather than raising TypeError or returning the listing
-            return Response({
-                "error": "payment_id is required in the URL. Call /admin/verify-payment/<payment_id>/ (or the no-slash variant /admin/verify-payment/<payment_id>)"
-            }, status=400)
+        new_status = request.data.get("status")
+        if new_status not in ["Verified", "Declined", "Failed", "Pending"]:
+            return Response({"error": "Invalid status"}, status=status.HTTP_400_BAD_REQUEST)
 
-        payment = get_object_or_404(Payment, id=payment_id)
-        reg_data = payment.get_registration_data() or {}
+        # Update payment status
+        payment.status = new_status
+        payment.save()
 
-        # Normalize status (case-insensitive)
-        status_choice = str(request.data.get("status", "") or "").strip().title()
-        if status_choice not in ["Verified", "Failed", "Declined"]:
-            return Response({"error": "Invalid status"}, status=400)
-
-        # FAILED flow
-        if status_choice == "Failed":
-            payment.status = "Failed"
-            payment.save(update_fields=["status"])
-
-            email = reg_data.get("email") or (payment.user.email if payment.user and payment.user.email else None)
-            if email:
-                safe_send_mail(
-                    subject="Payment unsuccessful",
-                    message=f"Hello {email},\n\nUnfortunately, your payment has failed. Please try again.",
-                    recipient_list=[email],
-                )
-            return Response({"message": "Payment marked as Failed"}, status=200)
-        
-        # DECLINED FLOW
-        if status_choice == "Declined":
-            payment.status = "Declined"
-            payment.save(update_fields=["status"])
-
-            email = reg_data.get("email") or (payment.user.email if payment.user and payment.user.email else None)
-            if email:
-                safe_send_mail(
-                    subject="Payment Declined",
-                    message=f"Hello {email},\n\nYour payment has been reviewed and declined by the admin. Please try again.",
-                    recipient_list=[email],
-                )
-            return Response({"message": "Payment marked as Declined"}, status=200)
-
-        # VERIFIED flow
-        # Mark payment verified first (atomic block for safety)
-        with transaction.atomic():
-            payment.status = "Verified"
-            payment.save(update_fields=["status"])
-
-            # If there is already an associated user, ensure active
-            if payment.user:
-                if not payment.user.is_active:
-                    payment.user.is_active = True
-                    payment.user.save(update_fields=["is_active"])
-            else:
-                # Create / associate user only after payment verification
-                reg_req = RegistrationRequest.objects.filter(token=payment.registration_token).first()
-                # prefer email from registration_data, fallback to registration request
-                email = reg_data.get("email") or (reg_req.email if reg_req else None)
-                if not email:
-                    # cannot create user without email
-                    return Response({"error": "Registration email missing; cannot create user."}, status=400)
-
-                # try to find existing user by email
-                try:
-                    user = CustomUser.objects.get(email=email)
-                    created = False
-                except CustomUser.DoesNotExist:
-                    created = True
-                    # build a new user from reg_data and reg_req as fallback
-                    user = CustomUser(
-                        user_id=generate_next_userid(),
-                        email=email,
-                        first_name=reg_data.get("first_name") or (reg_req.first_name if reg_req else ""),
-                        last_name=reg_data.get("last_name") or (reg_req.last_name if reg_req else ""),
-                        mobile=reg_data.get("mobile") or (reg_req.mobile if reg_req else ""),
-                        whatsapp_number=reg_data.get("whatsapp_number") or (reg_req.whatsapp_number if reg_req else ""),
-                        pincode=reg_data.get("pincode") or (reg_req.pincode if reg_req else ""),
-                        payment_type=reg_data.get("payment_type") or (reg_req.payment_type if reg_req else ""),
-                        upi_number=reg_data.get("upi_number") or (reg_req.upi_number if reg_req else ""),
-                        sponsor_id=reg_data.get("sponsor_id") or (reg_req.sponsor_id if reg_req else None),
-                        placement_id=reg_data.get("placement_id") or (reg_req.placement_id if reg_req else None),
-                        is_active=True,
-                    )
-
-                    # Apply password: prefer hashed password stored in RegistrationRequest
-                    if reg_req and getattr(reg_req, "password", None):
-                        user.password = reg_req.password  # hashed -> assign to avoid double-hash
-                    elif reg_data.get("password"):
-                        user.set_password(reg_data.get("password"))
-                    else:
-                        user.set_unusable_password()
-
-                    # Save the newly created user
-                    user.save()
-
-                # ensure the user is active after verification
-                if user and not user.is_active:
-                    user.is_active = True
-                    user.save(update_fields=["is_active"])
-
-                # associate payment
+        # Link to user if verified
+        if new_status == "Verified":
+            reg_data = payment.get_registration_data()
+            email = reg_data.get("email")
+            user = CustomUser.objects.filter(email=email).first()
+            if user:
                 payment.user = user
                 payment.save(update_fields=["user"])
+                user.is_active = True
+                user.save(update_fields=["is_active"])
+                return Response(
+                    {
+                        "message": f"Payment verified user_id : {user.user_id}",
+                        "detail": "Payment verified successfully"
+                    },
+                    status=status.HTTP_200_OK
+                )
+            else:
+                return Response(
+                    {"warning": "Payment verified but user not found"},
+                    status=status.HTTP_200_OK
+                )
 
-                # send email only if created (or if you want to inform existing users as well)
-                if created and user.email:
-                    safe_send_mail(
-                        subject="Your MLM User ID",
-                        message=f"Hello {user.first_name},\n\nYour payment has been verified. Your User ID is: {user.user_id}",
-                        recipient_list=[user.email],
-                    )
-
-        # final response
-        if payment.user:
-            return Response({"message": "Payment verified", "user_id": payment.user.user_id})
-        return Response({"message": "Payment verified successfully"})
-
+        return Response({"message": f"Payment status updated to {new_status}"}, status=status.HTTP_200_OK)
 
 class AdminAccountAPIView(APIView):
     permission_classes = [AllowAny]
