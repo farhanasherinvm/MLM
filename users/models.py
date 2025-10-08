@@ -53,7 +53,7 @@ class CustomUserManager(BaseUserManager):
 
 class CustomUser(AbstractBaseUser, PermissionsMixin):
     PAYMENT_CHOICES = PAYMENT_CHOICES
-    sponsor_id = models.CharField(max_length=255, null=True, blank=True)
+    sponsor_id = models.CharField(max_length=255, blank=True, null=True)
     placement_id = models.CharField(max_length=255, blank=True, null=True)
     first_name = models.CharField(max_length=255)
     last_name = models.CharField(max_length=255)

@@ -14,7 +14,7 @@ class VerifyOTPSerializer(serializers.Serializer):
     otp = serializers.CharField()
     
 class RegistrationSerializer(serializers.Serializer):
-    sponsor_id = serializers.CharField(required=True)
+    sponsor_id = serializers.CharField(required=False, allow_blank=True)
     placement_id = serializers.CharField(required=False, allow_blank=True)
     first_name = serializers.CharField()
     last_name = serializers.CharField()
@@ -35,12 +35,14 @@ class RegistrationSerializer(serializers.Serializer):
          raise serializers.ValidationError({"password": "Passwords do not match."})
 
     # Check sponsor exists
-        if not CustomUser.objects.filter(user_id=data["sponsor_id"]).exists():
-          raise serializers.ValidationError({"sponsor_id": "Sponsor ID does not exist."})
+        sponsor_id = data.get("sponsor_id")
+        if sponsor_id:
+            if not CustomUser.objects.filter(user_id=sponsor_id).exists():
+                raise serializers.ValidationError({"sponsor_id": "Sponsor ID does not exist."})
 
     # Check placement ID validity and limit
         placement_id = data.get("placement_id")
-        if placement_id:  # Only validate if provided
+        if placement_id:
             placement_user = CustomUser.objects.filter(user_id=placement_id).first()
             if not placement_user:
              raise serializers.ValidationError({"placement_id": f"No user with ID {placement_id} exists in the system."})
