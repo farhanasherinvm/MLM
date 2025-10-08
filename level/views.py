@@ -7,7 +7,7 @@ from .models import Level, UserLevel, LevelPayment, get_referrer_details
 from .serializers import (
     LevelSerializer, UserLevelStatusSerializer, UserLevelFinancialSerializer, 
     UserInfoSerializer, LevelRazorpayOrderSerializer, LevelRazorpayVerifySerializer,
-    LevelPaymentSerializer, AdminPendingPaymentsSerializer, ManualPaymentSerializer,InitiatePaymentSerializer,CreateDummyUsersSerializer, UpdateLinkedUserIdSerializer, RecipientLevelPaymentSerializer,CreateDummyUsersSerializer, DummyUserSerializer, AdminDummyUserUpdateSerializer
+    LevelPaymentSerializer, AdminPendingPaymentsSerializer, ManualPaymentSerializer,InitiatePaymentSerializer,CreateDummyUsersSerializer, UpdateLinkedUserIdSerializer, RecipientLevelPaymentSerializer,CreateDummyUsersSerializer, AdminMasterUserSerializer, AdminDummyUserUpdateSerializer
 )
 from .permissions import IsAdminOrReadOnly,IsPaymentRecipient
 from profiles.models import Profile
@@ -713,60 +713,66 @@ class CreateDummyUsers(generics.CreateAPIView):
 # URL: /api/dummy-users/
 # =========================================================================
 class DummyUserViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = UserLevel.objects.all().select_related('user', 'level').order_by('-user__date_of_joining')
-    serializer_class = DummyUserSerializer
+    # Set the queryset base to CustomUser model
+    # Use Prefetch to efficiently fetch all related UserLevel data in one query
+    queryset = CustomUser.objects.filter(
+        user_id__startswith='MASTER' # Initial filter for dummy users
+    ).prefetch_related(
+        'userlevel_set' 
+    ).order_by('-date_of_joining') 
+    
+    # Use the new serializer that handles CustomUser objects
+    serializer_class = AdminMasterUserSerializer # <-- REQUIRES NEW SERIALIZER (See below)
     permission_classes = [IsAdminUser]
 
     def get_queryset(self):
-        admin_user_id = self.request.user.user_id
-        queryset = super().get_queryset()
-        
-        return queryset.filter(
-            (Q(user__user_id__startswith='DUMMY') | 
-             Q(user__user_id__startswith='FAKEDATA') |
-             Q(user__user_id__startswith='MASTER')),
-            linked_user_id=admin_user_id
-        )
+        # We handle the main filtering and ordering in the queryset attribute, 
+        # but ensure distinct users if necessary (though prefetch handles efficiency).
+        return super().get_queryset().distinct() 
 
-# =========================================================================
-# C. Endpoint for Admin Control (PATCH)
-# URL: /api/dummy-users/control/{pk}/
-# =========================================================================
 class AdminDummyUserControlView(APIView):
     permission_classes = [IsAdminUser]
 
     def patch(self, request, pk):
         try:
-            user_level = UserLevel.objects.get(pk=pk)
+            # 🟢 CRITICAL FIX 1: Fetch CustomUser instead of UserLevel
+            user_to_update = CustomUser.objects.get(pk=pk)
             
-            if not (user_level.user.user_id.startswith('DUMMY') or user_level.user.user_id.startswith('MASTER') or user_level.user.user_id.startswith('FAKEDATA')):
-                return Response({"error": "Only dummy/master user levels can be modified via this endpoint."}, status=status.HTTP_403_FORBIDDEN)
+            # 🟢 Filter check on CustomUser object
+            if not (user_to_update.user_id.startswith('DUMMY') or user_to_update.user_id.startswith('MASTER') or user_to_update.user_id.startswith('FAKEDATA')):
+                return Response({"error": "Only dummy/master users can be modified via this endpoint."}, status=status.HTTP_403_FORBIDDEN)
                 
-        except UserLevel.DoesNotExist:
-            return Response({"error": "UserLevel not found"}, status=status.HTTP_404_NOT_FOUND)
+        except CustomUser.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        serializer = AdminDummyUserUpdateSerializer(user_level, data=request.data, partial=True,context={'request': request})
+        # 🟢 CRITICAL FIX 2: Pass CustomUser instance to the corrected serializer
+        serializer = AdminDummyUserUpdateSerializer(user_to_update, data=request.data, partial=True, context={'request': request})
         
         if serializer.is_valid():
-            serializer.save()
+            updated_user = serializer.save()
             
-            response_data = DummyUserSerializer(serializer.instance, context={'request': request}).data
+            # 🟢 CRITICAL FIX 3: Use the AdminMasterUserSerializer for the response
+            # (Assuming you use the serializer designed to display one record per user)
+            response_data = AdminMasterUserSerializer(updated_user, context={'request': request}).data
             
-            return Response({"message": "Dummy user level and details updated successfully", "data": response_data}, status=status.HTTP_200_OK)
+            return Response({"message": "Dummy user details updated successfully", "data": response_data}, status=status.HTTP_200_OK)
+        
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request, pk):
         try:
-            user_level = UserLevel.objects.get(pk=pk)
+            # 🟢 CRITICAL FIX 1: Fetch CustomUser instead of UserLevel
+            user_to_delete = CustomUser.objects.get(pk=pk)
             
-            if not (user_level.user.user_id.startswith('DUMMY') or user_level.user.user_id.startswith('MASTER') or user_level.user.user_id.startswith('FAKEDATA')):
-                return Response({"error": "Only dummy/master user levels can be deleted via this endpoint."}, status=status.HTTP_403_FORBIDDEN)
+            # 🟢 Filter check on CustomUser object
+            if not (user_to_delete.user_id.startswith('DUMMY') or user_to_delete.user_id.startswith('MASTER') or user_to_delete.user_id.startswith('FAKEDATA')):
+                return Response({"error": "Only dummy/master users can be deleted via this endpoint."}, status=status.HTTP_403_FORBIDDEN)
                 
-        except UserLevel.DoesNotExist:
-            return Response({"error": "UserLevel not found"}, status=status.HTTP_404_NOT_FOUND)
+        except CustomUser.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        user_to_delete = user_level.user
-        user_level.delete()
+        # Deleting the CustomUser instance will automatically cascade and delete 
+        # all related UserLevel records (assuming you have cascade deletion set up).
         user_to_delete.delete()
         
         return Response(status=status.HTTP_204_NO_CONTENT)
