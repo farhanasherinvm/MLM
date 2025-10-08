@@ -349,6 +349,325 @@ class RazorpayVerifyView(APIView):
             # "placement_id": user.placement_id,
         }, status=200)
 
+import string, random, razorpay, os
+from django.conf import settings
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status, permissions
+from rest_framework.permissions import IsAuthenticated, BasePermission, AllowAny
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.db.models import Q
+from datetime import datetime
+from reportlab.lib.pagesizes import A4
+from django.http import FileResponse
+from datetime import datetime, timedelta
+from django.shortcuts import get_object_or_404
+from .models import *
+from .serializers import (
+    RegistrationSerializer, LoginSerializer,
+    RazorpayVerifySerializer,RazorpayOrderSerializer,
+    ResetPasswordSerializer, ForgotPasswordSerializer, 
+    AdminAccountSerializer, UserAccountDetailsSerializer, 
+    UploadReceiptSerializer,  UserFullNameSerializer,
+    # VerifyOTPSerializer,
+    )
+from .permissions import IsProjectAdmin
+from .utils import validate_sponsor, export_users_csv, export_users_pdf
+from django.utils.crypto import get_random_string
+from rest_framework.permissions import IsAdminUser
+from profiles.models import Profile
+from rest_framework.pagination import PageNumberPagination
+# import admin serializer from profiles
+from profiles.serializers import AdminUserListSerializer, AdminUserDetailSerializer, AdminNetworkUserSerializer
+import logging
+from django.db import IntegrityError, transaction
+# from users.utils import generate_next_placementid
+# from users.utils import assign_placement_id
+from django.core.mail import send_mail
+from django.core.mail import get_connection, EmailMultiAlternatives
+import logging, socket
+import sib_api_v3_sdk
+from sib_api_v3_sdk.rest import ApiException
+from django.contrib.auth.hashers import make_password
+
+logger = logging.getLogger(__name__)
+
+# Safe Razorpay client initialization (only once)
+try:
+    import razorpay as _razorpay
+    if getattr(settings, "RAZORPAY_KEY_ID", None) and getattr(settings, "RAZORPAY_KEY_SECRET", None):
+        razorpay_client = _razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+    else:
+        razorpay_client = None
+    razorpay = _razorpay
+except Exception as e:
+    logger.warning("Razorpay not available: %s", e)
+    razorpay = None
+    razorpay_client = None
+
+# ----------------------------- Universal Safe Mail Sender (Brevo API) -----------------------------
+def safe_send_mail(subject, message, recipient_list, from_email=None, otp=None, html_message=None):
+    """
+    Sends email using Brevo (Sendinblue) transactional API via Anymail config.
+    Uses HTTPS (port 443) — works perfectly on Render.
+    """
+    from_email = from_email or getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@winnersclubx.com")
+    api_key = getattr(settings, "ANYMAIL", {}).get("SENDINBLUE_API_KEY")
+
+    configuration = sib_api_v3_sdk.Configuration()
+    configuration.api_key['api-key'] = api_key
+    api_instance = sib_api_v3_sdk.TransactionalEmailsApi(sib_api_v3_sdk.ApiClient(configuration))
+
+    send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
+        to=[{"email": recipient_list[0]}],
+        sender={"email": from_email, "name": "Winners Club"},
+        subject=subject,
+        html_content=html_message or f"<p>{message}</p>",
+        text_content=message,
+    )
+
+    try:
+        response = api_instance.send_transac_email(send_smtp_email)
+        logger.info(f"✅ Brevo email sent to {recipient_list}: {subject}")
+    except ApiException as e:
+        logger.exception(f"❌ Brevo API failed for {recipient_list}: {e}")
+
+    if otp:
+        logger.warning(f"🔐 OTP for {recipient_list}: {otp}")
+
+def generate_next_userid():
+    while True:
+        random_part = "".join(random.choices(string.digits, k=6))
+        user_id = f"WS{random_part}"
+        if not CustomUser.objects.filter(user_id=user_id).exists():
+            return user_id
+
+class RegisterView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        serializer = RegistrationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        validated = dict(serializer.validated_data)
+
+        # sanitize registration data before storing in Payment (don't store raw passwords)
+        sanitized = {k: v for k, v in validated.items() if k not in ("password", "confirm_password")}
+
+        amount = validated.get("amount", 100)
+
+        try:
+            with transaction.atomic():
+                payment = Payment.objects.create(amount=amount)
+                # store sanitized registration data in Payment (no raw password)
+                payment.set_registration_data(sanitized)
+
+                # create a separate RegistrationRequest that stores hashed password as required by model
+                reg_req = RegistrationRequest.objects.create(
+                    token=payment.registration_token,
+                    sponsor_id=validated.get("sponsor_id") or None,
+                    placement_id=validated.get("placement_id") or None,
+                    first_name=validated.get("first_name"),
+                    last_name=validated.get("last_name"),
+                    email=validated.get("email"),
+                    mobile=validated.get("mobile"),
+                    whatsapp_number=validated.get("whatsapp_number"),
+                    pincode=validated.get("pincode"),
+                    payment_type=validated.get("payment_type"),
+                    upi_number=validated.get("upi_number"),
+                    password=make_password(validated.get("password")),
+                    amount=int(amount) if isinstance(amount, (int,)) else int(float(amount)),
+                    is_completed=False
+                )
+
+        except Exception as e:
+            # attempt cleanup
+            try:
+                payment.delete()
+            except Exception:
+                pass
+            return Response({"error": f"Unable to create registration: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response({
+            "message": "Registration received. Please complete payment to activate your account.",
+            "payment_id": payment.id,
+            "registration_token": str(payment.registration_token),
+            "amount": str(payment.amount),
+            "payment_status": payment.status
+        }, status=status.HTTP_201_CREATED)
+
+# ... (other views remain unchanged) ...
+
+class RazorpayOrderView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        if razorpay_client is None:
+            return Response({"error": "Razorpay not configured."}, status=503)
+
+        serializer = RazorpayOrderSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        reg_token = serializer.validated_data["registration_token"]
+
+        try:
+            payment = Payment.objects.get(registration_token=reg_token, status="Pending")
+        except Payment.DoesNotExist:
+            return Response({"error": "Invalid or expired registration token."}, status=400)
+
+        # Ensure amount exists and is numeric
+        if payment.amount is None:
+            logger.error("Payment %s has no amount set", payment.id)
+            return Response({"error": "Payment amount not set"}, status=400)
+
+        amount_paisa = int(float(payment.amount) * 100)
+
+        try:
+            order = razorpay_client.order.create({
+                "amount": amount_paisa,
+                "currency": "INR",
+                "payment_capture": 1,
+            })
+        except Exception as e:
+            logger.error("Razorpay order creation failed for Payment %s: %s", payment.id, e)
+            payment.status = "Failed"
+            payment.save(update_fields=["status"])
+            return Response({"error": "Failed to create payment order"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        payment.razorpay_order_id = order.get("id")
+        payment.save(update_fields=["razorpay_order_id"])
+
+        logger.info("Razorpay order %s created for Payment %s", order.get("id"), payment.id)
+
+        return Response({
+            "registration_token": str(payment.registration_token),
+            "order_id": order.get("id"),
+            "amount": str(payment.amount),
+            "currency": "INR",
+            "razorpay_key": settings.RAZORPAY_KEY_ID,
+        }, status=status.HTTP_201_CREATED)
+
+class RazorpayVerifyView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = RazorpayVerifySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            payment = Payment.objects.get(razorpay_order_id=data["razorpay_order_id"], status="Pending")
+        except Payment.DoesNotExist:
+            return Response({"error": "Payment not found or already processed"}, status=404)
+
+        # Verify signature (unless test mode)
+        verification_ok = False
+        if getattr(settings, "RAZORPAY_TEST_MODE", True):
+            verification_ok = True
+        else:
+            try:
+                razorpay_client.utility.verify_payment_signature({
+                    "razorpay_order_id": data["razorpay_order_id"],
+                    "razorpay_payment_id": data["razorpay_payment_id"],
+                    "razorpay_signature": data["razorpay_signature"],
+                })
+                verification_ok = True
+            except Exception as e:
+                logger.error("Razorpay signature verification failed for Payment %s: %s", payment.id, e)
+                verification_ok = False
+
+        if not verification_ok:
+            payment.status = "Failed"
+            payment.save(update_fields=["status"])
+            return Response({"error": "Signature verification failed"}, status=400)
+
+        # Mark verified and persist razorpay ids atomically
+        with transaction.atomic():
+            payment.razorpay_payment_id = data["razorpay_payment_id"]
+            payment.razorpay_signature = data["razorpay_signature"]
+            payment.status = "Verified"
+            payment.save(update_fields=["razorpay_payment_id", "razorpay_signature", "status"])
+
+        logger.info("Payment %s verified (order %s)", payment.id, data["razorpay_order_id"])
+
+        # Create user from registration data
+        reg_data = payment.get_registration_data()
+
+        # >>> CHANGED: Instead of assuming plaintext password is in reg_data,
+        # fetch the corresponding RegistrationRequest which stores the hashed password.
+        try:
+            # Try to get the hashed password from RegistrationRequest
+            reg_req = RegistrationRequest.objects.filter(token=payment.registration_token).first()
+        except Exception:
+            reg_req = None
+
+        try:
+            # If we found a RegistrationRequest, use it (password is already hashed)
+            if reg_req:
+                user = CustomUser(
+                    user_id=generate_next_userid(),
+                    email=reg_data.get("email"),
+                    first_name=reg_data.get("first_name"),
+                    last_name=reg_data.get("last_name"),
+                    mobile=reg_data.get("mobile"),
+                    whatsapp_number=reg_data.get("whatsapp_number"),
+                    pincode=reg_data.get("pincode") or "",
+                    payment_type=reg_data.get("payment_type") or "",
+                    upi_number=reg_data.get("upi_number") or "",
+                    sponsor_id=reg_data.get("sponsor_id"),
+                    placement_id=reg_data.get("placement_id"),
+                    is_active=True,
+                )
+                # assign hashed password directly so we DON'T double-hash
+                if reg_req.password:
+                    user.password = reg_req.password
+                else:
+                    # fallback: if somehow the request didn't store a hashed password but reg_data has raw
+                    if reg_data.get("password"):
+                        user.set_password(reg_data.get("password"))
+                    else:
+                        user.set_unusable_password()
+                user.save()
+            else:
+                # No RegistrationRequest found — fallback to older approach,
+                # but guard against missing raw password.
+                raw_pw = reg_data.get("password")
+                user = CustomUser.objects.create_user(
+                    user_id=generate_next_userid(),
+                    email=reg_data.get("email"),
+                    password=raw_pw,
+                    first_name=reg_data.get("first_name"),
+                    last_name=reg_data.get("last_name"),
+                    mobile=reg_data.get("mobile"),
+                    whatsapp_number=reg_data.get("whatsapp_number"),
+                    pincode=reg_data.get("pincode") or "",
+                    payment_type=reg_data.get("payment_type") or "",
+                    upi_number=reg_data.get("upi_number") or "",
+                    sponsor_id=reg_data.get("sponsor_id"),
+                    placement_id=reg_data.get("placement_id"),
+                    is_active=True,
+                )
+        except Exception as e:
+            logger.exception("Failed to create user for Payment %s: %s", payment.id, e)
+            # Consider rolling back or marking payment failed in extreme cases
+            return Response({"error": "Failed to create user after payment verification"}, status=500)
+
+        payment.user = user
+        payment.save(update_fields=["user"])
+
+        # ✅ Send confirmation via Brevo
+        safe_send_mail(
+            subject="Your MLM User ID",
+            message=f"Hello {user.first_name},\nYour payment is verified. Your User ID is: {user.user_id}",
+            recipient_list=[user.email],
+            html_message=f"<p>Hello <strong>{user.first_name}</strong>,</p><p>Your payment is verified. Your User ID is: <strong>{user.user_id}</strong>.</p>"
+        )
+
+        return Response({
+            "message": "Payment verified successfully",
+            "user_id": user.user_id,
+            # "placement_id": user.placement_id,
+        }, status=200)
+
 class UploadReceiptView(APIView):
     permission_classes = [AllowAny]
     parser_classes = [MultiPartParser, FormParser]
@@ -393,8 +712,21 @@ class AdminVerifyPaymentView(APIView):
             "payments": data
         })
 
-    def post(self, request, payment_id, *args, **kwargs):
-        """Verify or mark payment failed"""
+    def post(self, request, payment_id=None, *args, **kwargs):
+        """
+        Verify or mark payment failed.
+        NOTE: payment_id is optional in the signature to avoid TypeError in case the wrong URL
+        is hit (no payment id). We explicitly check and return a clear error if payment_id is missing.
+        """
+        # Debug log to help detect redirect-related issues (if POST got converted to GET by a redirect)
+        logger.debug("AdminVerifyPaymentView called: path=%s method=%s payment_id=%s", request.path, request.method, payment_id)
+
+        if payment_id is None:
+            # provide actionable error rather than raising TypeError or returning the listing
+            return Response({
+                "error": "payment_id is required in the URL. Call /admin/verify-payment/<payment_id>/ (or the no-slash variant /admin/verify-payment/<payment_id>)"
+            }, status=400)
+
         payment = get_object_or_404(Payment, id=payment_id)
         reg_data = payment.get_registration_data() or {}
 
@@ -506,7 +838,7 @@ class AdminVerifyPaymentView(APIView):
             return Response({"message": "Payment verified", "user_id": payment.user.user_id})
         return Response({"message": "Payment verified successfully"})
 
-    
+
 class AdminAccountAPIView(APIView):
     permission_classes = [AllowAny]
     def get_permissions(self):
