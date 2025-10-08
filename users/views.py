@@ -88,7 +88,7 @@ def safe_send_mail(subject, message, recipient_list, from_email=None, otp=None, 
 def generate_next_userid():
     while True:
         random_part = "".join(random.choices(string.digits, k=6))
-        user_id = f"WS{random_part}"
+        user_id = f"WC{random_part}"
         if not CustomUser.objects.filter(user_id=user_id).exists():
             return user_id
 
