@@ -42,12 +42,13 @@ class KYC(models.Model):
     pan_image = models.ImageField(upload_to=upload_to_kyc, default="", storage=MediaCloudinaryStorage(), null=True, blank=True)
 
     # ID details
-    id_number = models.CharField(max_length=50, unique=True)
+    id_number = models.CharField(max_length=50, unique=True, null=True, blank=True)
     id_card_image = models.ImageField(upload_to=upload_to_kyc, default="", storage=MediaCloudinaryStorage(), null=True, blank=True)
 
     # Nominee details
     nominee_name = models.CharField(max_length=100)
     nominee_relation = models.CharField(max_length=50)
+    nominee_dob = models.DateField(null=True, blank=True)
 
     verified = models.BooleanField(default=False)  # Admin can update this
     created_at = models.DateTimeField(auto_now_add=True)

@@ -2,6 +2,8 @@ from rest_framework import serializers
 from .models import Profile,KYC
 from users.models import CustomUser, UserAccountDetails
 from users.serializers import UserAccountDetailsSerializer
+from datetime import date
+
 
 
 def get_all_referrals(user_obj, max_level=6):
@@ -283,7 +285,7 @@ class KYCSerializer(serializers.ModelSerializer):
     # Map nominee fields
     id_number_nominee = serializers.CharField(source='id_number', allow_blank=False)
     id_card_image_nominee = serializers.ImageField(source='id_card_image')
-
+    nominee_dob = serializers.DateField(required=False, allow_null=True)
     class Meta:
         model = KYC
         fields = [
@@ -295,10 +297,22 @@ class KYCSerializer(serializers.ModelSerializer):
             "id_card_image_nominee",
             "nominee_name",
             "nominee_relation",
+            "nominee_dob",
             "verified",
             "created_at",
         ]
         read_only_fields = ["verified", "created_at"]
+
+    def validate_nominee_dob(self, value):
+        today = date.today()
+        # Calculate the date 18 years ago
+        required_age_date = today.replace(year=today.year - 18)
+
+        # Check if the DOB is provided and if the nominee is under 18
+        if value and value > required_age_date:
+            raise serializers.ValidationError("Nominee must be at least 18 years old.")
+        
+        return value
 
     def validate_id_number(self, value):
         user = self.context['request'].user
@@ -413,7 +427,7 @@ class AdminUserDetailSerializer(serializers.ModelSerializer):
             f in request_data for f in
             ["account_number", "pan_number", "pan_image",
              "id_number", "id_card_image",
-             "nominee_name", "nominee_relation", "verified"]
+             "nominee_name", "nominee_relation", "verified", "nominee_dob"]
         ):
             kyc, _ = KYC.objects.get_or_create(user=instance)
             # Handle nested JSON
@@ -424,7 +438,7 @@ class AdminUserDetailSerializer(serializers.ModelSerializer):
             for attr in [
                 "account_number", "pan_number", "pan_image",
                 "id_number", "id_card_image",
-                "nominee_name", "nominee_relation", "verified"
+                "nominee_name", "nominee_relation", "verified", "nominee_dob"
             ]:
                 if attr in request_data:
                     setattr(kyc, attr, request_data.get(attr))
