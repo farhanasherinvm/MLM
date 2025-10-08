@@ -316,7 +316,7 @@ class AdminVerifyPaymentView(APIView):
         status_filter = request.query_params.get("status")
 
         payments = Payment.objects.all()
-        if status_filter in ["Pending", "Verified", "Failed"]:
+        if status_filter in ["Pending", "Verified", "Failed", "Declined"]:
             payments = payments.filter(status=status_filter)
         data = [
             {
@@ -341,7 +341,7 @@ class AdminVerifyPaymentView(APIView):
         reg_data = payment.get_registration_data()
 
         status_choice = request.data.get("status")
-        if status_choice not in ["Verified", "Failed"]:
+        if status_choice not in ["Verified", "Failed", "Declined"]:
             return Response({"error": "Invalid status"}, status=400)
 
         if status_choice == "Failed":
@@ -356,6 +356,21 @@ class AdminVerifyPaymentView(APIView):
                     recipient_list=[email],
                 )
             return Response({"message": "Payment marked as Failed"}, status=200)
+        
+        # DECLINED FLOW
+        if status_choice == "Declined":
+            payment.status = "Declined"
+            payment.save()
+
+            email = reg_data.get("email")
+            if email:
+                safe_send_mail(
+                    subject="Payment Declined",
+                    message=f"Hello {email},\n\nYour payment has been reviewed and declined by the admin. "
+                            f"Please try again",
+                    recipient_list=[email],
+                )
+            return Response({"message": "Payment marked as Declined"}, status=200)
 
         # Verified flow
         payment.status = "Verified"
@@ -391,7 +406,8 @@ class AdminVerifyPaymentView(APIView):
             if created:
                 safe_send_mail(
                     subject="Your MLM User ID",
-                    message=f"Hello {user.user_id},\n\nYour payment has been verified. Your User ID is: {user.user_id}",
+                    message=f"Hello {user.user_id},\n\nYour payment has been verified."
+                            f"Your User ID is: {user.user_id}",
                     recipient_list=[user.email],
                 )
             return Response({"message": "Payment verified", "user_id": user.user_id})
@@ -402,7 +418,8 @@ class AdminVerifyPaymentView(APIView):
 
         safe_send_mail(
             subject="Your MLM User ID",
-            message=f"Hello {payment.user.user_id},\n\nYour payment has been verified. Your User ID is: {payment.user.user_id}",
+            message=f"Hello {payment.user.user_id},\n\nYour payment has been verified. "
+                    f"Your User ID is: {payment.user.user_id}",
             recipient_list=[payment.user.email],
         )
 

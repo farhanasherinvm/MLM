@@ -144,6 +144,7 @@ class Payment(models.Model):
         ("Pending", "Pending"),
         ("Verified", "Verified"),
         ("Failed", "Failed"),
+        ("Declined", "Declined",),
     ]
 
     registration_token = models.UUIDField(default=uuid.uuid4, unique=True)
