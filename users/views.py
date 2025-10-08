@@ -96,17 +96,53 @@ class RegisterView(APIView):
 
     def post(self, request, *args, **kwargs):
         serializer = RegistrationSerializer(data=request.data)
-        if serializer.is_valid():
-            payment = serializer.create_payment(serializer.validated_data)
-            return Response(
-                {
-                    "registration_token": str(payment.registration_token),
-                    "admin_account_details": AdminAccountSerializer(AdminAccountDetails.objects.first()).data if AdminAccountDetails.objects.exists() else {},
-                    "message": "Choose payment method: Pay Now (Razorpay) or upload receipt with this token.",
-                },
-                status=status.HTTP_201_CREATED,
-            )
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
+        validated = dict(serializer.validated_data)
+
+        # sanitize registration data before storing in Payment (don't store raw passwords)
+        sanitized = {k: v for k, v in validated.items() if k not in ("password", "confirm_password")}
+
+        amount = validated.get("amount", 100)
+
+        try:
+            with transaction.atomic():
+                payment = Payment.objects.create(amount=amount)
+                # store sanitized registration data in Payment (no raw password)
+                payment.set_registration_data(sanitized)
+
+                # create a separate RegistrationRequest that stores hashed password as required by model
+                reg_req = RegistrationRequest.objects.create(
+                    token=payment.registration_token,
+                    sponsor_id=validated.get("sponsor_id") or None,
+                    placement_id=validated.get("placement_id") or None,
+                    first_name=validated.get("first_name"),
+                    last_name=validated.get("last_name"),
+                    email=validated.get("email"),
+                    mobile=validated.get("mobile"),
+                    whatsapp_number=validated.get("whatsapp_number"),
+                    pincode=validated.get("pincode"),
+                    payment_type=validated.get("payment_type"),
+                    upi_number=validated.get("upi_number"),
+                    password=make_password(validated.get("password")),
+                    amount=int(amount) if isinstance(amount, (int,)) else int(float(amount)),
+                    is_completed=False
+                )
+
+        except Exception as e:
+            # attempt cleanup
+            try:
+                payment.delete()
+            except Exception:
+                pass
+            return Response({"error": f"Unable to create registration: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response({
+            "message": "Registration received. Please complete payment to activate your account.",
+            "payment_id": payment.id,
+            "registration_token": str(payment.registration_token),
+            "amount": str(payment.amount),
+            "payment_status": payment.status
+        }, status=status.HTTP_201_CREATED)
 
 # class VerifyOTPView(APIView):
 #     permission_classes = [AllowAny]
@@ -191,7 +227,6 @@ class RazorpayOrderView(APIView):
             "razorpay_key": settings.RAZORPAY_KEY_ID,
         }, status=status.HTTP_201_CREATED)
 
-
 class RazorpayVerifyView(APIView):
     permission_classes = [AllowAny]
 
@@ -237,22 +272,61 @@ class RazorpayVerifyView(APIView):
 
         # Create user from registration data
         reg_data = payment.get_registration_data()
+
+        # >>> CHANGED: Instead of assuming plaintext password is in reg_data,
+        # fetch the corresponding RegistrationRequest which stores the hashed password.
         try:
-            user = CustomUser.objects.create_user(
-                user_id=generate_next_userid(),
-                email=reg_data["email"],
-                password=reg_data["password"],
-                first_name=reg_data["first_name"],
-                last_name=reg_data["last_name"],
-                mobile=reg_data["mobile"],
-                whatsapp_number=reg_data.get("whatsapp_number"),
-                pincode=reg_data["pincode"],
-                payment_type=reg_data["payment_type"],
-                upi_number=reg_data.get("upi_number"),
-                sponsor_id=reg_data["sponsor_id"],
-                placement_id=reg_data.get("placement_id"),
-                is_active=True,
-            )
+            # Try to get the hashed password from RegistrationRequest
+            reg_req = RegistrationRequest.objects.filter(token=payment.registration_token).first()
+        except Exception:
+            reg_req = None
+
+        try:
+            # If we found a RegistrationRequest, use it (password is already hashed)
+            if reg_req:
+                user = CustomUser(
+                    user_id=generate_next_userid(),
+                    email=reg_data.get("email"),
+                    first_name=reg_data.get("first_name"),
+                    last_name=reg_data.get("last_name"),
+                    mobile=reg_data.get("mobile"),
+                    whatsapp_number=reg_data.get("whatsapp_number"),
+                    pincode=reg_data.get("pincode") or "",
+                    payment_type=reg_data.get("payment_type") or "",
+                    upi_number=reg_data.get("upi_number") or "",
+                    sponsor_id=reg_data.get("sponsor_id"),
+                    placement_id=reg_data.get("placement_id"),
+                    is_active=True,
+                )
+                # assign hashed password directly so we DON'T double-hash
+                if reg_req.password:
+                    user.password = reg_req.password
+                else:
+                    # fallback: if somehow the request didn't store a hashed password but reg_data has raw
+                    if reg_data.get("password"):
+                        user.set_password(reg_data.get("password"))
+                    else:
+                        user.set_unusable_password()
+                user.save()
+            else:
+                # No RegistrationRequest found — fallback to older approach,
+                # but guard against missing raw password.
+                raw_pw = reg_data.get("password")
+                user = CustomUser.objects.create_user(
+                    user_id=generate_next_userid(),
+                    email=reg_data.get("email"),
+                    password=raw_pw,
+                    first_name=reg_data.get("first_name"),
+                    last_name=reg_data.get("last_name"),
+                    mobile=reg_data.get("mobile"),
+                    whatsapp_number=reg_data.get("whatsapp_number"),
+                    pincode=reg_data.get("pincode") or "",
+                    payment_type=reg_data.get("payment_type") or "",
+                    upi_number=reg_data.get("upi_number") or "",
+                    sponsor_id=reg_data.get("sponsor_id"),
+                    placement_id=reg_data.get("placement_id"),
+                    is_active=True,
+                )
         except Exception as e:
             logger.exception("Failed to create user for Payment %s: %s", payment.id, e)
             # Consider rolling back or marking payment failed in extreme cases
