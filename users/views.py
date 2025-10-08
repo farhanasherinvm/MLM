@@ -96,53 +96,17 @@ class RegisterView(APIView):
 
     def post(self, request, *args, **kwargs):
         serializer = RegistrationSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        validated = dict(serializer.validated_data)
-
-        # sanitize registration data before storing in Payment (don't store raw passwords)
-        sanitized = {k: v for k, v in validated.items() if k not in ("password", "confirm_password")}
-
-        amount = validated.get("amount", 100)
-
-        try:
-            with transaction.atomic():
-                payment = Payment.objects.create(amount=amount)
-                # store sanitized registration data in Payment (no raw password)
-                payment.set_registration_data(sanitized)
-
-                # create a separate RegistrationRequest that stores hashed password as required by model
-                reg_req = RegistrationRequest.objects.create(
-                    token=payment.registration_token,
-                    sponsor_id=validated.get("sponsor_id") or None,
-                    placement_id=validated.get("placement_id") or None,
-                    first_name=validated.get("first_name"),
-                    last_name=validated.get("last_name"),
-                    email=validated.get("email"),
-                    mobile=validated.get("mobile"),
-                    whatsapp_number=validated.get("whatsapp_number"),
-                    pincode=validated.get("pincode"),
-                    payment_type=validated.get("payment_type"),
-                    upi_number=validated.get("upi_number"),
-                    password=make_password(validated.get("password")),
-                    amount=int(amount) if isinstance(amount, (int,)) else int(float(amount)),
-                    is_completed=False
-                )
-
-        except Exception as e:
-            # attempt cleanup
-            try:
-                payment.delete()
-            except Exception:
-                pass
-            return Response({"error": f"Unable to create registration: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        return Response({
-            "message": "Registration received. Please complete payment to activate your account.",
-            "payment_id": payment.id,
-            "registration_token": str(payment.registration_token),
-            "amount": str(payment.amount),
-            "payment_status": payment.status
-        }, status=status.HTTP_201_CREATED)
+        if serializer.is_valid():
+            payment = serializer.create_payment(serializer.validated_data)
+            return Response(
+                {
+                    "registration_token": str(payment.registration_token),
+                    "admin_account_details": AdminAccountSerializer(AdminAccountDetails.objects.first()).data if AdminAccountDetails.objects.exists() else {},
+                    "message": "Choose payment method: Pay Now (Razorpay) or upload receipt with this token.",
+                },
+                status=status.HTTP_201_CREATED,
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 # class VerifyOTPView(APIView):
 #     permission_classes = [AllowAny]
