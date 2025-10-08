@@ -3,6 +3,8 @@ from rest_framework import serializers
 from .models import *
 from django.contrib.auth import get_user_model
 from .utils import validate_sponsor
+from django.db.models import Max
+import re
 
 User = get_user_model()
 
@@ -334,20 +336,10 @@ class ChildRegistrationSerializer(serializers.Serializer):
     def create(self, validated_data):
         parent = self.context['request'].user
 
-        # Generate unique user_id (like parent users)
-        last_user = CustomUser.objects.order_by('-id').first()
-        next_number = 1
-        if last_user and last_user.user_id.startswith("USR"):
-            try:
-                next_number = int(last_user.user_id.replace("USR", "")) + 1
-            except ValueError:
-                pass
-        user_id = f"USR{next_number:03d}"
-
+        # UUID based user id
         child_user = CustomUser.objects.create(
-            user_id=user_id,
             parent=parent,
-            sponsor_id=parent.user_id,   # parent is the sponsor
+            sponsor_id=parent.user_id,
             placement_id=None,
             first_name=validated_data.get('first_name', ''),
             last_name=validated_data.get('last_name', ''),
@@ -355,12 +347,14 @@ class ChildRegistrationSerializer(serializers.Serializer):
             mobile=validated_data.get('mobile', ''),
             whatsapp_number=validated_data.get('whatsapp_number', ''),
             pincode=validated_data.get('pincode', ''),
-            payment_type='Other',         # child doesn’t pay
+            payment_type='Other',     # child doesn’t pay
             upi_number='',
             is_active=True,
+            pmf_status=False,
         )
 
-        # Child should have no password
+        # Child has no password
         child_user.set_unusable_password()
         child_user.save()
+
         return child_user
