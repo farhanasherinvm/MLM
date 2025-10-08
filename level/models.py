@@ -11,6 +11,7 @@ import json
 import uuid
 from django.utils import timezone
 from cloudinary_storage.storage import MediaCloudinaryStorage
+from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +133,40 @@ class LevelPayment(models.Model):
 
     def __str__(self):
         return f"LevelPayment {self.id} - {self.user_level} - {self.status}"
+
+class PmfPayment(models.Model):
+    PMF_TYPE_CHOICES = [
+        ("PMF_PART_1", "PMF Part 1 Fee"),
+        ("PMF_PART_2", "PMF Part 2 Fee"),
+    ]
+    PAYMENT_STATUS_CHOICES = [
+        ("Pending", "Pending"),
+        ("Verified", "Verified"),
+        ("Failed", "Failed"),
+    ]
+
+    # Link to the user who owes the fee (using settings.AUTH_USER_MODEL)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.CASCADE, 
+        related_name='pmf_payments'
+    )
+    
+    # Identify which PMF part this record represents
+    pmf_type = models.CharField(max_length=20, choices=PMF_TYPE_CHOICES)
+    
+    amount = models.DecimalField(max_digits=10, decimal_places=2, default=1000.00)
+    status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default="Pending")
+
+    # Razorpay fields
+    razorpay_order_id = models.CharField(max_length=255, blank=True, null=True)
+    razorpay_payment_id = models.CharField(max_length=255, blank=True, null=True)
+    razorpay_signature = models.CharField(max_length=255, blank=True, null=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"PMF Payment {self.id} - {self.user.user_id} - {self.pmf_type}"
 
 def get_upline(user, depth):
     """Get the upline user at the specified depth."""
@@ -337,3 +372,5 @@ def update_user_level_on_payment(sender, instance, created, **kwargs):
                         logger.debug(f"Set eligible_to_refer=True for {user_level.user.user_id}")
                     except Profile.DoesNotExist:
                         logger.warning(f"No Profile found for user {user_level.user.user_id} when enabling referring")
+
+

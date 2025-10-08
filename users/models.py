@@ -13,7 +13,7 @@ import logging
 from django.utils import timezone
 from django.conf import settings
 logger = logging.getLogger(__name__) 
-
+from level import constants
 
 PAYMENT_CHOICES = [
     ("GPay", "GPay"),
@@ -61,6 +61,20 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(null=True, blank=True)
     mobile = models.CharField(max_length=15)
 
+
+    parent = models.ForeignKey(
+        'self',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='children'  #  access parent.children.all()
+    )
+    ROLE_CHOICES = (
+        ('parent', 'Parent'),
+        ('child', 'Child'),
+    )
+    role = models.CharField(max_length=10, choices=ROLE_CHOICES, default='parent')
+
     whatsapp_number = models.CharField(max_length=15, null=True, blank=True)
     pincode = models.CharField(max_length=10)
     payment_type = models.CharField(max_length=20, choices=PAYMENT_CHOICES)
@@ -73,11 +87,52 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     is_admin_user = models.BooleanField(default=False)
     
     otp = models.CharField(max_length=6, blank=True, null=True)
+    PMF_CHOICES = [
+        (constants.PMF_STATUS_NOT_PAID, 'Not Paid'),
+        (constants.PMF_STATUS_PART_1_PAID, 'Part 1 Paid'),
+        (constants.PMF_STATUS_PAID, 'Fully Paid'),
+    ]
+    
+    pmf_status = models.CharField(
+        max_length=20,
+        choices=PMF_CHOICES,
+        default=constants.PMF_STATUS_NOT_PAID,
+        verbose_name='PMF Status'
+    )
 
     objects = CustomUserManager()
 
     USERNAME_FIELD = "user_id" 
     REQUIRED_FIELDS = ["email"]
+
+def save(self, *args, **kwargs):
+    # Auto-generate custom user_id (all users get USR001, USR002, etc.)
+    if not self.user_id:
+        prefix = "USR"
+        last_user = CustomUser.objects.order_by('-id').first()
+        next_number = 1
+        if last_user and last_user.user_id.startswith(prefix):
+            try:
+                next_number = int(last_user.user_id.replace(prefix, '')) + 1
+            except ValueError:
+                pass
+        self.user_id = f"{prefix}{next_number:03d}"
+
+        # Set role
+        if self.parent:
+            self.role = "child"
+            # Child level = parent level + 1
+            self.level = self.parent.level + 1
+            # Increment parent's referral count
+            self.parent.total_referrals += 1
+            self.parent.save(update_fields=["total_referrals"])
+        else:
+            self.role = "parent"
+            self.level = 1
+
+    super().save(*args, **kwargs)
+
+
 
     def __str__(self):
         return self.user_id

@@ -608,10 +608,38 @@ class AdminAnalyticsView(APIView):
                     output_field=DecimalField(max_digits=12, decimal_places=2)
                 )
             ).prefetch_related('userlevel_set__level') # Prefetch for the loop
+
+            user_id_search = request.query_params.get('user_id')
+            if user_id_search:
+                # Use 'icontains' for case-insensitive partial match, or 'exact' if you only want perfect matches
+                queryset = queryset.filter(user_id__icontains=user_id_search)
+
+            # Filter by levels_completed (exact match)
+            levels_completed_filter = request.query_params.get('levels_completed')
+            if levels_completed_filter:
+                try:
+                    # Filter against the 'levels_completed' annotation
+                    queryset = queryset.filter(levels_completed=int(levels_completed_filter))
+                except ValueError:
+                    return Response(
+                        {"detail": "Invalid levels_completed parameter. Must be an integer."}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
             
             # 3. Pagination
             paginator = PageNumberPagination()
-            paginator.page_size = 50 
+            limit_param = request.query_params.get('limit')
+            
+            if limit_param:
+                try:
+                    paginator.page_size = int(limit_param) # Set page_size to the requested limit
+                except ValueError:
+                    return Response(
+                        {"detail": "Invalid limit parameter. Must be an integer."}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            else:
+                paginator.page_size = 50
             page = paginator.paginate_queryset(queryset, request)
             
             data = []
@@ -621,19 +649,19 @@ class AdminAnalyticsView(APIView):
                     status='paid' 
                 ).order_by('-level__order').first() 
                 
-                current_level_name = "N/A"
-                if active_level_entry and active_level_entry.level: # SAFE ACCESS CHECK
-                    current_level_name = active_level_entry.level.name
-                # --- END SAFE LOGIC ---
+                full_name_candidate = f"{user.first_name} {user.last_name}".strip()
+    
+                # 2. Check if the constructed name is blank and fall back to user_id or username
+                final_full_name = full_name_candidate or user.first_name or user.user_id 
                     
                 data.append({
                     'user_id': user.user_id,
-                    'full_name': f"{user.first_name} {user.last_name}".strip(),
+                    'full_name': final_full_name,
                     'total_income_generated': user.total_income_generated or Decimal('0.00'),
                     'total_referrals': user.total_referrals or 0,
                     'levels_completed': user.levels_completed or 0,
-                    'current_level_name': current_level_name,
                     'total_payments_made': user.total_payments_made or Decimal('0.00'),
+                    
                 })
 
             # FIX: Must explicitly use 'data=' keyword

@@ -1001,3 +1001,86 @@ class GetUserFullNameView(APIView):
     def post(self, request):
         user_id = self.get_user_id(request)
         return self.handle_request(user_id)
+
+
+
+
+
+from .serializers import ChildRegistrationSerializer
+
+class ChildRegistrationView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = ChildRegistrationSerializer(
+            data=request.data, 
+            context={'request': request}
+        )
+        if serializer.is_valid():
+            child = serializer.save()
+            return Response({
+                "message": "Child user created successfully",
+                "user_id": child.user_id,        
+                "parent_user_id": request.user.user_id,
+                
+            }, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class ChildListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        children = CustomUser.objects.filter(parent=request.user)
+        data = [
+            {
+                "user_id": c.user_id,
+                "first_name": c.first_name,
+                "last_name": c.last_name,
+                "email": c.email,
+                "mobile": c.mobile,
+            }
+            for c in children
+        ]
+        return Response({"children": data}, status=status.HTTP_200_OK)
+
+
+class SwitchToChildView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, child_user_id):
+        try:
+            child = CustomUser.objects.get(user_id=child_user_id, parent=request.user)
+        except CustomUser.DoesNotExist:
+            return Response(
+                {"error": "Child not found or not owned by this parent."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        refresh = RefreshToken.for_user(child)
+        refresh["parent_user_id"] = request.user.user_id
+
+        return Response({
+            "message": f"Switched to child account {child.user_id}",
+            "child_user_id": child.user_id,
+            "parent_user_id": request.user.user_id,
+            "refresh": str(refresh),
+            "access": str(refresh.access_token),
+        })
+
+
+class SwitchBackToParentView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not request.user.parent:
+            return Response({"message": "Already in parent account."}, status=status.HTTP_200_OK)
+
+        parent = request.user.parent
+        refresh = RefreshToken.for_user(parent)
+
+        return Response({
+            "message": f"Switched back to parent account {parent.user_id}",
+            "parent_user_id": parent.user_id,
+            "refresh": str(refresh),
+            "access": str(refresh.access_token),
+        })

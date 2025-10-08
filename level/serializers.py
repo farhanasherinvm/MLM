@@ -147,9 +147,9 @@ class UserInfoSerializer(serializers.Serializer):
 
 class AdminPaymentReportSerializer(serializers.ModelSerializer):
     username = serializers.SerializerMethodField()
-    level_name = serializers.CharField(source='level.name')
+    level_name = serializers.SerializerMethodField() 
     user_id = serializers.CharField(source='user.user_id')
-    amount = serializers.DecimalField(source='level.amount', max_digits=10, decimal_places=2)
+    amount = serializers.SerializerMethodField() 
     payment_method = serializers.SerializerMethodField()
     transaction_id = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
@@ -165,6 +165,15 @@ class AdminPaymentReportSerializer(serializers.ModelSerializer):
     
     def get_username(self, obj):
         return f"{obj.user.first_name or ''} {obj.user.last_name or ''}".strip() or obj.user.user_id
+
+    def get_level_name(self, obj):
+        """Safely retrieves the level name."""
+        return obj.level.name if obj.level else "MISSING LEVEL"
+
+    def get_amount(self, obj):
+        
+        # Ensure Decimal is imported at the top of the file
+        return obj.level.amount if obj.level else Decimal('0.00')
 
     def get_payment_method(self, obj):
         """Get the payment method from the latest LevelPayment."""
@@ -551,3 +560,18 @@ class AdminDummyUserUpdateSerializer(serializers.Serializer):
             UserLevel.objects.filter(user=admin, level_id=new_level_id).update(linked_user_id=moving_dummy_user_id)
             
         return updated_instance
+
+class PmfOrderSerializer(serializers.Serializer):
+    """Used to initiate a PMF Razorpay order."""
+    pmf_part = serializers.ChoiceField(
+        choices=['part_1', 'part_2'],
+        required=True,
+        error_messages={'invalid_choice': 'Invalid PMF part. Must be "part_1" or "part_2".'}
+    )
+
+class PmfVerifySerializer(serializers.Serializer):
+    """Used to verify PMF payment success."""
+    # These fields are expected from the Razorpay callback/frontend confirmation
+    razorpay_order_id = serializers.CharField(max_length=255, required=True)
+    razorpay_payment_id = serializers.CharField(max_length=255, required=True)
+    razorpay_signature = serializers.CharField(max_length=255, required=True)

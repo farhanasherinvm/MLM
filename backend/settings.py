@@ -18,8 +18,8 @@ CORS_ALLOWED_ORIGINS = [
     "https://winnersclubx.netlify.app",  # A common alternative for local host
     "https://mlm-pmif.onrender.com",
     "https://mlm-oiat.onrender.com",
-    "http://winnersclubx.com/",
-    "https://winnersclubx.com/"
+    "http://winnersclubx.com",
+    "https://winnersclubx.com"
     # Add your deployed frontend URL here when you have one (e.g., "https://your-frontend-domain.com")
 ]
 # Quick-start development settings - unsuitable for production

@@ -30,4 +30,10 @@ urlpatterns = [
     path("admin/users/<str:user_id>/profile-image/", AdminViewProfileImageView.as_view()),
     path('admin/network/', AdminNetworkView.as_view(), name='admin-network'),
     path("users/fullname/", GetUserFullNameView.as_view(), name="get-user-fullname"),
-]
+
+    # child
+    path('child-register/', ChildRegistrationView.as_view(), name='child-register'),
+    path('child-list/', ChildListView.as_view(), name='child-list'),
+    path('switch-to-child/<str:child_user_id>/', SwitchToChildView.as_view(), name='switch-to-child'),
+    path('switch-back-to-parent/', SwitchBackToParentView.as_view(), name='switch-back-to-parent'),
+] 
