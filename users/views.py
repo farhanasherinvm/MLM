@@ -858,34 +858,11 @@ class AdminListUsersView(APIView):
         return (request.query_params.get("export") or "").lower()
 
     def get(self, request):
-        search_query = self.get_search_query(request)
-        export_format = self.get_export_format(request)
-        return self.search_and_respond(search_query, export_format, request)
+        return self.handle_request(request)
 
     def post(self, request):
-        search_query = self.get_search_query(request)
-        export_format = self.get_export_format(request)
-        return self.search_and_respond(search_query, export_format, request)
-    
-    def search_and_respond(self, search_query, export_format, request):
-        users = CustomUser.objects.select_related("profile").all()
+        return self.handle_request(request)
 
-        # Apply filters (including date range, search, status, level, sorting)
-        users = apply_search_and_filters(users, request)
-
-        # Export if requested
-        if export_format == "csv":
-            return export_users_csv(users, filename="users.csv")
-        elif export_format == "pdf":
-            return export_users_pdf(users, filename="users.pdf")
-
-        # Paginate
-        paginator = AdminUserPagination()
-        page = paginator.paginate_queryset(users, request)
-        serializer = AdminUserListSerializer(page, many=True, context={"request": request})
-        return paginator.get_paginated_response(serializer.data)
-    
-    
     def handle_request(self, request):
         queryset = self.get_queryset(request)
         queryset = apply_search_and_filters(queryset, request)
@@ -925,15 +902,7 @@ class AdminUserListView(APIView):
     def search_and_respond(self, search_query, export_format, request):
         users = CustomUser.objects.select_related("profile").all()
 
-        # Filter by start_date / end_date
-        start_date = request.query_params.get("start_date") or request.data.get("start_date")
-        end_date = request.query_params.get("end_date") or request.data.get("end_date")
-        if start_date:
-            users = users.filter(date_of_joining__gte=start_date)
-        if end_date:
-            users = users.filter(date_of_joining__lte=end_date)
-
-        # Apply search / status / level filters    
+        # Apply filters (including date range, search, status, level, sorting)
         users = apply_search_and_filters(users, request)
 
         # Export if requested
@@ -946,7 +915,7 @@ class AdminUserListView(APIView):
         paginator = AdminUserPagination()
         page = paginator.paginate_queryset(users, request)
         serializer = AdminUserListSerializer(page, many=True, context={"request": request})
-        return paginator.get_paginated_response(serializer.data)    
+        return paginator.get_paginated_response(serializer.data)  
 class AdminUserDetailView(APIView):
     """
     Allows project admin to view & edit full user + profile details
