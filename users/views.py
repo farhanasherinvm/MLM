@@ -88,9 +88,10 @@ def safe_send_mail(subject, message, recipient_list, from_email=None, otp=None, 
 def generate_next_userid():
     while True:
         random_part = "".join(random.choices(string.digits, k=6))
-        user_id = f"WS{random_part}"
+        user_id = f"WC{random_part}"
         if not CustomUser.objects.filter(user_id=user_id).exists():
             return user_id
+
 class RegisterView(APIView):
     permission_classes = [AllowAny]
 
@@ -227,7 +228,6 @@ class RazorpayOrderView(APIView):
             "razorpay_key": settings.RAZORPAY_KEY_ID,
         }, status=status.HTTP_201_CREATED)
 
-
 class RazorpayVerifyView(APIView):
     permission_classes = [AllowAny]
 
@@ -273,22 +273,61 @@ class RazorpayVerifyView(APIView):
 
         # Create user from registration data
         reg_data = payment.get_registration_data()
+
+        # >>> CHANGED: Instead of assuming plaintext password is in reg_data,
+        # fetch the corresponding RegistrationRequest which stores the hashed password.
         try:
-            user = CustomUser.objects.create_user(
-                user_id=generate_next_userid(),
-                email=reg_data["email"],
-                password=reg_data["password"],
-                first_name=reg_data["first_name"],
-                last_name=reg_data["last_name"],
-                mobile=reg_data["mobile"],
-                whatsapp_number=reg_data.get("whatsapp_number"),
-                pincode=reg_data["pincode"],
-                payment_type=reg_data["payment_type"],
-                upi_number=reg_data.get("upi_number"),
-                sponsor_id=reg_data["sponsor_id"],
-                placement_id=reg_data.get("placement_id"),
-                is_active=True,
-            )
+            # Try to get the hashed password from RegistrationRequest
+            reg_req = RegistrationRequest.objects.filter(token=payment.registration_token).first()
+        except Exception:
+            reg_req = None
+
+        try:
+            # If we found a RegistrationRequest, use it (password is already hashed)
+            if reg_req:
+                user = CustomUser(
+                    user_id=generate_next_userid(),
+                    email=reg_data.get("email"),
+                    first_name=reg_data.get("first_name"),
+                    last_name=reg_data.get("last_name"),
+                    mobile=reg_data.get("mobile"),
+                    whatsapp_number=reg_data.get("whatsapp_number"),
+                    pincode=reg_data.get("pincode") or "",
+                    payment_type=reg_data.get("payment_type") or "",
+                    upi_number=reg_data.get("upi_number") or "",
+                    sponsor_id=reg_data.get("sponsor_id"),
+                    placement_id=reg_data.get("placement_id"),
+                    is_active=True,
+                )
+                # assign hashed password directly so we DON'T double-hash
+                if reg_req.password:
+                    user.password = reg_req.password
+                else:
+                    # fallback: if somehow the request didn't store a hashed password but reg_data has raw
+                    if reg_data.get("password"):
+                        user.set_password(reg_data.get("password"))
+                    else:
+                        user.set_unusable_password()
+                user.save()
+            else:
+                # No RegistrationRequest found — fallback to older approach,
+                # but guard against missing raw password.
+                raw_pw = reg_data.get("password")
+                user = CustomUser.objects.create_user(
+                    user_id=generate_next_userid(),
+                    email=reg_data.get("email"),
+                    password=raw_pw,
+                    first_name=reg_data.get("first_name"),
+                    last_name=reg_data.get("last_name"),
+                    mobile=reg_data.get("mobile"),
+                    whatsapp_number=reg_data.get("whatsapp_number"),
+                    pincode=reg_data.get("pincode") or "",
+                    payment_type=reg_data.get("payment_type") or "",
+                    upi_number=reg_data.get("upi_number") or "",
+                    sponsor_id=reg_data.get("sponsor_id"),
+                    placement_id=reg_data.get("placement_id"),
+                    is_active=True,
+                )
         except Exception as e:
             logger.exception("Failed to create user for Payment %s: %s", payment.id, e)
             # Consider rolling back or marking payment failed in extreme cases
@@ -355,97 +394,139 @@ class AdminVerifyPaymentView(APIView):
             "payments": data
         })
 
-    def post(self, request, payment_id, *args, **kwargs):
-        """Verify or mark payment failed"""
-        payment = get_object_or_404(Payment, id=payment_id)
-        reg_data = payment.get_registration_data()
+    logger = logging.getLogger(__name__)
 
-        status_choice = request.data.get("status")
-        if status_choice not in ["Verified", "Failed", "Declined"]:
-            return Response({"error": "Invalid status"}, status=400)
+    def post(self, request, payment_id=None):
+        logger.info("AdminVerifyPaymentView called for payment_id=%s by user=%s, data=%s",
+                    payment_id, getattr(request.user, 'id', None), request.data)
+        try:
+            payment = Payment.objects.get(id=payment_id)
+        except Payment.DoesNotExist:
+            return Response({"error": "Payment not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        if status_choice == "Failed":
-            payment.status = "Failed"
-            payment.save()
+        new_status = request.data.get("status")
+        if new_status not in ["Verified", "Declined", "Failed", "Pending"]:
+            return Response({"error": "Invalid status"}, status=status.HTTP_400_BAD_REQUEST)
 
-            email = reg_data.get("email")
-            if email:
-                safe_send_mail(
-                    subject="Payment unsuccessful",
-                    message=f"Hello {email},\n\nUnfortunately, your payment has failed. Please try again.",
-                    recipient_list=[email],
-                )
-            return Response({"message": "Payment marked as Failed"}, status=200)
-        
-        # DECLINED FLOW
-        if status_choice == "Declined":
-            payment.status = "Declined"
-            payment.save()
+        # If admin is verifying, create/link user similar to RazorpayVerifyView
+        if new_status == "Verified":
+            try:
+                with transaction.atomic():
+                    # persist status first
+                    payment.status = "Verified"
+                    payment.save(update_fields=["status"])
 
-            email = reg_data.get("email")
-            if email:
-                safe_send_mail(
-                    subject="Payment Declined",
-                    message=f"Hello {email},\n\nYour payment has been reviewed and declined by the admin. "
-                            f"Please try again",
-                    recipient_list=[email],
-                )
-            return Response({"message": "Payment marked as Declined"}, status=200)
+                    reg_data = payment.get_registration_data() or {}
+                    email = reg_data.get("email")
 
-        # Verified flow
-        payment.status = "Verified"
-        payment.save()
+                    user = None
+                    if email:
+                        user = CustomUser.objects.filter(email=email).first()
 
-        if not payment.user:
-            reg_data = payment.get_registration_data()
-            user, created = CustomUser.objects.get_or_create(
-                email=reg_data["email"],
-                defaults={
-                    "user_id": generate_next_userid(),
-                    "password": reg_data.get("password") or "",
-                    "sponsor_id": reg_data.get("sponsor_id"),
-                    "placement_id": reg_data.get("placement_id"),
-                    "first_name": reg_data["first_name"],
-                    "last_name": reg_data["last_name"],
-                    "mobile": reg_data["mobile"],
-                    "whatsapp_number": reg_data["whatsapp_number"],
-                    "pincode": reg_data["pincode"],
-                    "payment_type": reg_data["payment_type"],
-                    "upi_number": reg_data["upi_number"],
-                }
-            )
-            if created:
-                if reg_data.get("password"):
-                    user.set_password(reg_data["password"])
-                user.is_active = True
-                user.save()
+                    if user:
+                        # link & activate existing user
+                        user.is_active = True
+                        user.save(update_fields=["is_active"])
+                        payment.user = user
+                        payment.save(update_fields=["user"])
+                        RegistrationRequest.objects.filter(token=payment.registration_token).update(is_completed=True)
 
-            payment.user = user
-            payment.save()
+                        safe_send_mail(
+                            subject="Your MLM User ID",
+                            message=f"Hello {user.first_name},\nYour payment is verified. Your User ID is: {user.user_id}",
+                            recipient_list=[user.email],
+                            html_message=f"<p>Hello <strong>{user.first_name}</strong>,</p><p>Your payment is verified. Your User ID is: <strong>{user.user_id}</strong>.</p>",
+                        )
 
-            if created:
-                safe_send_mail(
-                    subject="Your MLM User ID",
-                    message=f"Hello {user.user_id},\n\nYour payment has been verified."
-                            f"Your User ID is: {user.user_id}",
-                    recipient_list=[user.email],
-                )
-            return Response({"message": "Payment verified", "user_id": user.user_id})
+                        return Response({
+                            "message": "Payment verified, UserId is send to your email.",
+                            "user_id": user.user_id
+                        }, status=status.HTTP_200_OK)
 
-        if payment.user and not payment.user.is_active:
-            payment.user.is_active = True
-            payment.user.save(update_fields=["is_active"])
+                    # User does not exist — try creating from RegistrationRequest if present
+                    reg_req = RegistrationRequest.objects.filter(token=payment.registration_token).first()
 
-        safe_send_mail(
-            subject="Your MLM User ID",
-            message=f"Hello {payment.user.user_id},\n\nYour payment has been verified. "
-                    f"Your User ID is: {payment.user.user_id}",
-            recipient_list=[payment.user.email],
-        )
+                    if reg_req:
+                        # create user using reg_req (reg_req.password is already hashed by RegisterView)
+                        user = CustomUser(
+                            user_id=generate_next_userid(),
+                            email=reg_data.get("email") or reg_req.email,
+                            first_name=reg_req.first_name or reg_data.get("first_name"),
+                            last_name=reg_req.last_name or reg_data.get("last_name"),
+                            mobile=reg_req.mobile or reg_data.get("mobile"),
+                            whatsapp_number=reg_req.whatsapp_number or reg_data.get("whatsapp_number"),
+                            pincode=reg_req.pincode or reg_data.get("pincode") or "",
+                            payment_type=reg_req.payment_type or reg_data.get("payment_type") or "",
+                            upi_number=reg_req.upi_number or reg_data.get("upi_number") or "",
+                            sponsor_id=reg_req.sponsor_id or reg_data.get("sponsor_id"),
+                            placement_id=reg_req.placement_id or reg_data.get("placement_id"),
+                            is_active=True,
+                        )
+                        if getattr(reg_req, "password", None):
+                            # password is already hashed, assign directly
+                            user.password = reg_req.password
+                        else:
+                            # fallback: if raw password exists in reg_data (unlikely) set it, else unusable
+                            if reg_data.get("password"):
+                                user.set_password(reg_data.get("password"))
+                            else:
+                                user.set_unusable_password()
+                        user.save()
+                        reg_req.is_completed = True
+                        reg_req.save(update_fields=["is_completed"])
+                    else:
+                        # fallback: try creating from reg_data (rare)
+                        raw_pw = reg_data.get("password")
+                        if not reg_data.get("email"):
+                            # email is required to create user
+                            payment.status = "Pending"
+                            payment.save(update_fields=["status"])
+                            return Response({"error": "Registration data missing email; cannot create user."},
+                                            status=status.HTTP_400_BAD_REQUEST)
 
-        return Response({"message": "Payment verified successfully"})
+                        user = CustomUser.objects.create_user(
+                            user_id=generate_next_userid(),
+                            email=reg_data.get("email"),
+                            password=raw_pw,
+                            first_name=reg_data.get("first_name"),
+                            last_name=reg_data.get("last_name"),
+                            mobile=reg_data.get("mobile"),
+                            whatsapp_number=reg_data.get("whatsapp_number"),
+                            pincode=reg_data.get("pincode") or "",
+                            payment_type=reg_data.get("payment_type") or "",
+                            upi_number=reg_data.get("upi_number") or "",
+                            sponsor_id=reg_data.get("sponsor_id"),
+                            placement_id=reg_data.get("placement_id"),
+                            is_active=True,
+                        )
 
-    
+                    # attach and notify
+                    payment.user = user
+                    payment.save(update_fields=["user"])
+                    safe_send_mail(
+                        subject="Your MLM User ID",
+                        message=f"Hello {user.first_name},\nYour payment is verified. Your User ID is: {user.user_id}",
+                        recipient_list=[user.email],
+                        html_message=f"<p>Hello <strong>{user.first_name}</strong>,</p><p>Your payment is verified. Your User ID is: <strong>{user.user_id}</strong>.</p>",
+                    )
+
+                    return Response({
+                        "message": "Payment verified, UserId is send to your email.",
+                        "user_id": user.user_id
+                    }, status=status.HTTP_200_OK)
+
+            except Exception as exc:
+                logger.exception("Unexpected error in admin verify payment: %s", exc)
+                # revert to pending so admin can retry
+                payment.status = "Pending"
+                payment.save(update_fields=["status"])
+                return Response({"error": "Unexpected error verifying payment"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # For non-Verified statuses just update status
+        payment.status = new_status
+        payment.save(update_fields=["status"])
+        return Response({"message": f"Payment status updated to {new_status}"}, status=status.HTTP_200_OK)
+
 class AdminAccountAPIView(APIView):
     permission_classes = [AllowAny]
     def get_permissions(self):
@@ -744,6 +825,24 @@ def apply_search_and_filters(queryset, request):
                 queryset = queryset.filter(user_id__in=valid_ids)
         except (ValueError, TypeError):
             pass
+    
+    sort_by = get_param("sort_by") or "date_of_joining"  # default sort field
+    sort_order = (get_param("sort_order") or "desc").lower()
+
+    # Only allow sorting by safe fields
+    allowed_fields = {
+        "first_name": "first_name",
+        "last_name": "last_name",
+        "email": "email",
+        "user_id": "user_id",
+        "date_of_joining": "date_of_joining",
+    }
+
+    if sort_by in allowed_fields:
+        sort_field = allowed_fields[sort_by]
+        if sort_order == "desc":
+            sort_field = f"-{sort_field}"
+        queryset = queryset.order_by(sort_field)
 
     return queryset
 
@@ -824,7 +923,8 @@ class AdminUserListView(APIView):
         paginator = AdminUserPagination()
         page = paginator.paginate_queryset(users, request)
         serializer = AdminUserListSerializer(page, many=True, context={"request": request})
-        return paginator.get_paginated_response(serializer.data)    
+        return paginator.get_paginated_response(serializer.data)
+        
 class AdminUserDetailView(APIView):
     """
     Allows project admin to view & edit full user + profile details
@@ -953,6 +1053,9 @@ class AdminNetworkView(APIView):
     def get(self, request, *args, **kwargs):
         queryset = self.get_queryset(request)
 
+        # Precompute levels once
+        user_levels = compute_user_levels()
+
         # Counts (before pagination)
         total_downline = queryset.count()
         active_count = queryset.filter(is_active=True).count()
@@ -961,8 +1064,12 @@ class AdminNetworkView(APIView):
         # Export handling
         export_format = request.query_params.get("export")
         if export_format == "csv":
+            for user in queryset:
+                user.level = user_levels.get(user.user_id, "")
             return export_users_csv(queryset, filename="network_users.csv")
         if export_format == "pdf":
+            for user in queryset:
+                user.level = user_levels.get(user.user_id, "")
             return export_users_pdf(queryset, filename="network_users.pdf", title="Network Users Report")
 
         # Pagination

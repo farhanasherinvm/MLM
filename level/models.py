@@ -172,10 +172,10 @@ def get_upline(user, depth):
     """Get the upline user at the specified depth."""
     current = user
     for _ in range(depth):
-        if not current or not current.sponsor_id:
+        if not current or not current.placement_id:
             return None
         try:
-            current = CustomUser.objects.get(user_id=current.sponsor_id)
+            current = CustomUser.objects.get(user_id=current.placement_id)
         except CustomUser.DoesNotExist:
             return None
     return current
@@ -221,21 +221,61 @@ def create_user_levels(sender, instance, created, **kwargs):
                 else:
                     logger.warning(f"No valid sponsor_id for user {instance.user_id}")
 
+                admin_user = None
+                # Fetch Admin ID from settings (You must define ADMIN_USER_ID in settings.py)
+                admin_user_id = getattr(settings, 'ADMIN_USER_ID', None) 
+
+                if admin_user_id:
+                    try:
+                        admin_user = CustomUser.objects.get(user_id=admin_user_id)
+                    except CustomUser.DoesNotExist:
+                        logger.error(f"Admin User with ID {admin_user_id} not found. 'Refer Help' linking may fail.")
+                
+                # The primary recipient is the referrer. If referrer is None, use the admin_user.
+                refer_help_recipient = referrer if referrer else admin_user
+
                 for level in levels:
                     linked_user_id = None
+                    upline_user = None
                     # Logic for Levels 1-6 (Nth upline)
-                    if referrer and 1 <= level.order <= 6:
-                        depth = level.order  
-                        upline_user = get_upline(instance, depth)  
+                    # if 1 <= level.order <= 6:
+                    #     depth = level.order  
+                    #     upline_user = get_upline(instance, depth)  
                         
+                    #     if upline_user:
+                    #         linked_user_id = upline_user.user_id
+                    if 1 <= level.order <= 6:
+                        depth = level.order
+                        
+                        # A. Try Placement Chain First
+                        if instance.placement_id:
+                            upline_user = get_upline(instance, depth) 
+                        
+                        # B. If Placement Fails or is Missing, Try Dummy Upline
+                        if not upline_user:
+                            try:
+                                # 🟢 CORRECTED DUMMY USER LOGIC: Filter by user_id prefix
+                                upline_user = CustomUser.objects.filter(
+                                    user_id__startswith='MASTER', # <-- CHANGED FILTER
+                                    is_active=True 
+                                ).order_by('user_id')[depth - 1] # Order by user_id to ensure a stable chain
+                            except IndexError:
+                                # No more active dummy users found at this depth
+                                upline_user = None
+                        else:
+                            # 🟢 FIX: If no Master Node found (due to IndexError), linked_user_id is None.
+                            # This leaves the slot empty for this level.
+                            linked_user_id = None 
+                            
+                        # C. Set ID based on the result
                         if upline_user:
                             linked_user_id = upline_user.user_id
                     
                     # Logic for 'Refer Help' (linking to direct sponsor)
-                    elif level.name == 'Refer Help' and referrer:
-                         # In this specific block, we link the NEW user's 'Refer Help' level to their direct sponsor.
-                         # The subsequent logic updates the sponsor's 'Refer Help' level.
-                         linked_user_id = referrer.user_id
+                    elif level.name == 'Refer Help':
+                        if refer_help_recipient:
+                            # Use the determined recipient (Sponsor or Admin)
+                            linked_user_id = refer_help_recipient.user_id
 
                     profile = Profile.objects.filter(user=instance).first()
                     target = level.amount * (Decimal('2') ** level.order)
@@ -265,7 +305,7 @@ def create_user_levels(sender, instance, created, **kwargs):
                     # The logic to create/update a 'Refer Help' level for the REFERRER
                     if referrer and level.name == 'Refer Help':
                         refer_help_ulevel, created_referrer_level = UserLevel.objects.get_or_create(
-                            user=referrer,
+                            user=refer_help_recipient,
                             level=level,
                             defaults={
                                 'linked_user_id': None,
