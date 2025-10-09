@@ -1060,13 +1060,13 @@ class AdminNetworkView(APIView):
 
         # ✅ If export requested, skip pagination and return immediately
         if export_format in ["csv", "pdf"]:
-            for user in queryset:
-                user.level = user_levels.get(user.user_id, "")
+            # for user in queryset:
+            #     user.level = user_levels.get(user.user_id, "")
 
             if export_format == "csv":
-                return export_users_csv(queryset, filename="network_users.csv")
+                return export_users_csv(queryset, filename="network_users.csv", user_levels=user_levels)
             elif export_format == "pdf":
-                return export_users_pdf(queryset, filename="network_users.pdf", title="Network Users Report")
+                return export_users_pdf(queryset, filename="network_users.pdf", title="Network Users Report", user_levels=user_levels)
 
         # Counts (before pagination)
         total_downline = queryset.count()

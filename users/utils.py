@@ -55,6 +55,9 @@ def validate_sponsor(sponsor_id: str) -> bool:
     return CustomUser.objects.filter(user_id=sponsor_id).exists()
 
 def export_users_csv(queryset, filename="users.csv"):
+    if user_levels is None:
+        user_levels = {}
+
     response = HttpResponse(content_type="text/csv")
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
 
@@ -68,11 +71,16 @@ def export_users_csv(queryset, filename="users.csv"):
         if len(profile_url) > 50:
             profile_url = profile_url[:47] + "..."
         full_name = f"{user.first_name} {user.last_name}".strip() or user.user_id
-        writer.writerow([full_name, user.user_id, getattr(user, "level", ""), profile_url, "Active" if user.is_active else "Blocked"])
+        level = user_levels.get(user.user_id, "")
+        # writer.writerow([full_name, user.user_id, getattr(user, "level", ""), profile_url, "Active" if user.is_active else "Blocked"])
+        writer.writerow([full_name, user.user_id, level, profile_url, "Active" if user.is_active else "Blocked"])
 
     return response
 
 def export_users_pdf(queryset, filename="users.pdf", title="Users Report"):
+    if user_levels is None:
+        user_levels = {}
+
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4)
     elements = []
@@ -80,36 +88,45 @@ def export_users_pdf(queryset, filename="users.pdf", title="Users Report"):
     elements.append(Paragraph(title, styles["Title"]))
 
     # ✅ Import safe level calculator
-    try:
-        from .views import compute_user_levels
-        user_levels = compute_user_levels()
-    except Exception:
-        user_levels = {}
+    # try:
+    #     from .views import compute_user_levels
+    #     user_levels = compute_user_levels()
+    # except Exception:
+    #     user_levels = {}
 
     # Table header
     data = [["Name", "User ID", "Level", "Profile Image", "Status"]]
 
     for user in queryset:
-        try:
-            # Safe profile access
-            profile = getattr(user, "profile", None)
-            profile_img = getattr(profile, "profile_image", None) if profile else None
-            profile_url = getattr(profile_img, "url", "") if profile_img else ""
+        # try:
+        #     # Safe profile access
+        #     profile = getattr(user, "profile", None)
+        #     profile_img = getattr(profile, "profile_image", None) if profile else None
+        #     profile_url = getattr(profile_img, "url", "") if profile_img else ""
 
-            # Trim long URLs for PDF layout
-            if profile_url and len(profile_url) > 50:
-                profile_url = profile_url[:47] + "..."
+        #     # Trim long URLs for PDF layout
+        #     if profile_url and len(profile_url) > 50:
+        #         profile_url = profile_url[:47] + "..."
 
-            full_name = (f"{user.first_name} {user.last_name}".strip() or user.user_id)
-            status = "Active" if getattr(user, "is_active", False) else "Blocked"
+        #     full_name = (f"{user.first_name} {user.last_name}".strip() or user.user_id)
+        #     status = "Active" if getattr(user, "is_active", False) else "Blocked"
 
-            # ✅ Use precomputed level (fallback to empty string)
-            level = user_levels.get(user.user_id, "")
+        #     # ✅ Use precomputed level (fallback to empty string)
+        #     level = user_levels.get(user.user_id, "")
 
-            data.append([full_name, user.user_id, str(level), profile_url, status])
-        except Exception as e:
-            # In case any single row breaks, push a safe fallback row
-            data.append([str(user), getattr(user, "user_id", ""), "", "", "ERROR"])
+        #     data.append([full_name, user.user_id, str(level), profile_url, status])
+        # except Exception as e:
+        #     # In case any single row breaks, push a safe fallback row
+        #     data.append([str(user), getattr(user, "user_id", ""), "", "", "ERROR"])
+        profile = getattr(user, "profile", None)
+        profile_img = getattr(profile, "profile_image", None) if profile else None
+        profile_url = getattr(profile_img, "url", "") if profile_img else ""
+        if profile_url and len(profile_url) > 50:
+            profile_url = profile_url[:47] + "..."
+        full_name = f"{user.first_name} {user.last_name}".strip() or user.user_id
+        level = user_levels.get(user.user_id, "")
+        status = "Active" if getattr(user, "is_active", False) else "Blocked"
+        data.append([full_name, user.user_id, str(level), profile_url, status])
 
     # Create table
     table = Table(data, colWidths=[150, 70, 50, 150, 60])
