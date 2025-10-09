@@ -1053,6 +1053,9 @@ class AdminNetworkView(APIView):
     def get(self, request, *args, **kwargs):
         queryset = self.get_queryset(request)
 
+        # Precompute levels once
+        user_levels = compute_user_levels()
+
         # Counts (before pagination)
         total_downline = queryset.count()
         active_count = queryset.filter(is_active=True).count()
@@ -1061,8 +1064,12 @@ class AdminNetworkView(APIView):
         # Export handling
         export_format = request.query_params.get("export")
         if export_format == "csv":
+            for user in queryset:
+                user.level = user_levels.get(user.user_id, "")
             return export_users_csv(queryset, filename="network_users.csv")
         if export_format == "pdf":
+            for user in queryset:
+                user.level = user_levels.get(user.user_id, "")
             return export_users_pdf(queryset, filename="network_users.pdf", title="Network Users Report")
 
         # Pagination
