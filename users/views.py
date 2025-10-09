@@ -825,6 +825,24 @@ def apply_search_and_filters(queryset, request):
                 queryset = queryset.filter(user_id__in=valid_ids)
         except (ValueError, TypeError):
             pass
+    
+    sort_by = get_param("sort_by") or "date_of_joining"  # default sort field
+    sort_order = (get_param("sort_order") or "desc").lower()
+
+    # Only allow sorting by safe fields
+    allowed_fields = {
+        "first_name": "first_name",
+        "last_name": "last_name",
+        "email": "email",
+        "user_id": "user_id",
+        "date_of_joining": "date_of_joining",
+    }
+
+    if sort_by in allowed_fields:
+        sort_field = allowed_fields[sort_by]
+        if sort_order == "desc":
+            sort_field = f"-{sort_field}"
+        queryset = queryset.order_by(sort_field)
 
     return queryset
 
@@ -840,11 +858,34 @@ class AdminListUsersView(APIView):
         return (request.query_params.get("export") or "").lower()
 
     def get(self, request):
-        return self.handle_request(request)
+        search_query = self.get_search_query(request)
+        export_format = self.get_export_format(request)
+        return self.search_and_respond(search_query, export_format, request)
 
     def post(self, request):
-        return self.handle_request(request)
+        search_query = self.get_search_query(request)
+        export_format = self.get_export_format(request)
+        return self.search_and_respond(search_query, export_format, request)
+    
+    def search_and_respond(self, search_query, export_format, request):
+        users = CustomUser.objects.select_related("profile").all()
 
+        # Apply filters (including date range, search, status, level, sorting)
+        users = apply_search_and_filters(users, request)
+
+        # Export if requested
+        if export_format == "csv":
+            return export_users_csv(users, filename="users.csv")
+        elif export_format == "pdf":
+            return export_users_pdf(users, filename="users.pdf")
+
+        # Paginate
+        paginator = AdminUserPagination()
+        page = paginator.paginate_queryset(users, request)
+        serializer = AdminUserListSerializer(page, many=True, context={"request": request})
+        return paginator.get_paginated_response(serializer.data)
+    
+    
     def handle_request(self, request):
         queryset = self.get_queryset(request)
         queryset = apply_search_and_filters(queryset, request)
