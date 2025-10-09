@@ -19,6 +19,7 @@ from .serializers import (
     ResetPasswordSerializer, ForgotPasswordSerializer, 
     AdminAccountSerializer, UserAccountDetailsSerializer, 
     UploadReceiptSerializer,  UserFullNameSerializer,
+    ChildRegistrationSerializer
     # VerifyOTPSerializer,
     )
 from .permissions import IsProjectAdmin
