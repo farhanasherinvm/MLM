@@ -902,6 +902,7 @@ class AdminUserListView(APIView):
 
     def search_and_respond(self, search_query, export_format, request):
         users = CustomUser.objects.select_related("profile").all()
+        user_levels = compute_user_levels()
 
         # Filter by start_date / end_date
         start_date = request.query_params.get("start_date") or request.data.get("start_date")
@@ -916,9 +917,9 @@ class AdminUserListView(APIView):
 
         # Export if requested
         if export_format == "csv":
-            return export_users_csv(users, filename="users.csv")
+            return export_users_csv(users, filename="users.csv", user_levels=user_levels)
         elif export_format == "pdf":
-            return export_users_pdf(users, filename="users.pdf")
+            return export_users_pdf(users, filename="users.pdf", user_levels=user_levels)
 
         # Paginate
         paginator = AdminUserPagination()
@@ -1059,14 +1060,14 @@ class AdminNetworkView(APIView):
         user_levels = compute_user_levels()
 
         # ✅ If export requested, skip pagination and return immediately
-        if export_format in ["csv", "pdf"]:
+        # if export_format in ["csv", "pdf"]:
             # for user in queryset:
             #     user.level = user_levels.get(user.user_id, "")
 
-            if export_format == "csv":
-                return export_users_csv(queryset, filename="network_users.csv", user_levels=user_levels)
-            elif export_format == "pdf":
-                return export_users_pdf(queryset, filename="network_users.pdf", title="Network Users Report", user_levels=user_levels)
+        if export_format == "csv":
+            return export_users_csv(queryset, filename="network_users.csv", user_levels=user_levels)
+        elif export_format == "pdf":
+            return export_users_pdf(queryset, filename="network_users.pdf", title="Network Users Report", user_levels=user_levels)
 
         # Counts (before pagination)
         total_downline = queryset.count()
