@@ -764,7 +764,7 @@ def compute_user_levels():
         get_level(u["user_id"])
     return levels
 
-def apply_search_and_filters(queryset, request):
+def apply_search_and_filters(queryset, request,user_levels=None):
     """Reusable function for search, status, date filters"""
     if user_levels is None:
         user_levels = compute_user_levels()
