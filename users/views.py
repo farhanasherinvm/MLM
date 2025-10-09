@@ -766,6 +766,9 @@ def compute_user_levels():
 
 def apply_search_and_filters(queryset, request):
     """Reusable function for search, status, date filters"""
+    if user_levels is None:
+        user_levels = compute_user_levels()
+
     params = getattr(request, "query_params", {}) or {}
     data = getattr(request, "data", {}) or {}
 
@@ -819,7 +822,7 @@ def apply_search_and_filters(queryset, request):
         try:
             target_level = int(level_filter)
             if target_level > 0:
-                user_levels = compute_user_levels()
+                # user_levels = compute_user_levels()
                 valid_ids = [
                     uid for uid, lvl in user_levels.items() if lvl == target_level
                 ]
@@ -913,7 +916,7 @@ class AdminUserListView(APIView):
             users = users.filter(date_of_joining__lte=end_date)
 
         # Apply search / status / level filters    
-        users = apply_search_and_filters(users, request)
+        users = apply_search_and_filters(users, request, user_levels=user_levels)
 
         # Export if requested
         if export_format == "csv":
