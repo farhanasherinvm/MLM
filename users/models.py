@@ -108,17 +108,19 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     REQUIRED_FIELDS = ["email"]
 
     def save(self, *args, **kwargs):
-        #  unique user_id
+    # Ensure unique user_id
         if not self.user_id:
-            self.user_id = f"USR{uuid.uuid4().hex[:6].upper()}"
+         while True:
+            uid = f"USR{uuid.uuid4().hex[:6].upper()}"
+            if not CustomUser.objects.filter(user_id=uid).exists():
+                self.user_id = uid
+                break
 
-        #  role and level
-        if self.parent:
-            self.role = "child"
-        else:
-            self.role = "parent"
+    # Set role
+        self.role = "child" if self.parent else "parent"
 
         super().save(*args, **kwargs)
+
 
     def __str__(self):
         return self.user_id

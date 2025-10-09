@@ -1026,7 +1026,7 @@ class GetUserFullNameView(APIView):
 
 
 
-from .serializers import ChildRegistrationSerializer
+
 
 class ChildRegistrationView(APIView):
     permission_classes = [IsAuthenticated]
@@ -1040,7 +1040,8 @@ class ChildRegistrationView(APIView):
             child = serializer.save()
             return Response({
                 "message": "Child user created successfully",
-                "user_id": child.user_id,        
+                "user_id": child.user_id, 
+                "child_password": request.data.get("password"),      
                 "parent_user_id": request.user.user_id,
                 
             }, status=status.HTTP_201_CREATED)
@@ -1087,20 +1088,29 @@ class SwitchToChildView(APIView):
             "access": str(refresh.access_token),
         })
 
-
 class SwitchBackToParentView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        if not request.user.parent:
-            return Response({"message": "Already in parent account."}, status=status.HTTP_200_OK)
+        # Check  session has parent_user_id from token
+        parent_user_id = getattr(request.auth, "payload", {}).get("parent_user_id") \
+            if request.auth else None
 
-        parent = request.user.parent
+        if not parent_user_id:
+            return Response(
+                {"error": "Cannot switch back. This session was not initiated by a parent."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            parent = CustomUser.objects.get(user_id=parent_user_id)
+        except CustomUser.DoesNotExist:
+            return Response({"error": "Parent user not found."}, status=status.HTTP_404_NOT_FOUND)
+
         refresh = RefreshToken.for_user(parent)
-
         return Response({
             "message": f"Switched back to parent account {parent.user_id}",
             "parent_user_id": parent.user_id,
             "refresh": str(refresh),
             "access": str(refresh.access_token),
-        })
+        }, status=status.HTTP_200_OK)
