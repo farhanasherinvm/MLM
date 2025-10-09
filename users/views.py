@@ -902,7 +902,15 @@ class AdminUserListView(APIView):
     def search_and_respond(self, search_query, export_format, request):
         users = CustomUser.objects.select_related("profile").all()
 
-        # Apply filters (including date range, search, status, level, sorting)
+        # Filter by start_date / end_date
+        start_date = request.query_params.get("start_date") or request.data.get("start_date")
+        end_date = request.query_params.get("end_date") or request.data.get("end_date")
+        if start_date:
+            users = users.filter(date_of_joining__gte=start_date)
+        if end_date:
+            users = users.filter(date_of_joining__lte=end_date)
+
+        # Apply search / status / level filters    
         users = apply_search_and_filters(users, request)
 
         # Export if requested
@@ -915,7 +923,8 @@ class AdminUserListView(APIView):
         paginator = AdminUserPagination()
         page = paginator.paginate_queryset(users, request)
         serializer = AdminUserListSerializer(page, many=True, context={"request": request})
-        return paginator.get_paginated_response(serializer.data)  
+        return paginator.get_paginated_response(serializer.data)
+        
 class AdminUserDetailView(APIView):
     """
     Allows project admin to view & edit full user + profile details
