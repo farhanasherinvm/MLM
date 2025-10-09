@@ -4,7 +4,7 @@ from level.views import (
     LevelViewSet, UserLevelViewSet, RazorpayOrderForLevelView,
     RazorpayVerifyForLevelView, ManualPaymentView, LevelPaymentViewSet,
     LevelCompletionViewSet,InitiatePaymentView, CreateDummyUsers, UpdateLinkedUserIdView, RecipientPaymentViewSet, DummyUserViewSet , AdminDummyUserControlView
-    , PmfStatusView, PmfOrderView, PmfVerifyView
+    , PmfStatusView, PmfOrderView, PmfVerifyView, PmfManualPaymentView, PmfPaymentViewSet
 )
 
 router = DefaultRouter()
@@ -14,6 +14,7 @@ router.register(r'level-payments', LevelPaymentViewSet,basename='level-payments'
 router.register(r'level-completion', LevelCompletionViewSet,basename='level-completion')
 router.register(r'recipient/payments', RecipientPaymentViewSet, basename='recipient-payments') 
 router.register(r'dummy-users', DummyUserViewSet, basename='dummy-users')
+router.register(r'pmf-payments', PmfPaymentViewSet, basename='pmf-payment')
 
 
 urlpatterns = [
@@ -28,4 +29,6 @@ urlpatterns = [
     path('pmf/status/', PmfStatusView.as_view(), name='pmf-status-check'),
     path('pmf/order/', PmfOrderView.as_view(), name='pmf-order'),       
     path('pmf/verify/', PmfVerifyView.as_view(), name='pmf-verify'),
+    path('pmf/manual-submit/', PmfManualPaymentView.as_view(), name='pmf-manual-submit'),
+
 ]
