@@ -54,7 +54,7 @@ def validate_sponsor(sponsor_id: str) -> bool:
         return True
     return CustomUser.objects.filter(user_id=sponsor_id).exists()
 
-def export_users_csv(queryset, filename="users.csv"):
+def export_users_csv(queryset, filename="users.csv", user_levels=None):
     if user_levels is None:
         user_levels = {}
 
@@ -77,7 +77,7 @@ def export_users_csv(queryset, filename="users.csv"):
 
     return response
 
-def export_users_pdf(queryset, filename="users.pdf", title="Users Report"):
+def export_users_pdf(queryset, filename="users.pdf", title="Users Report", user_levels=None):
     if user_levels is None:
         user_levels = {}
 
