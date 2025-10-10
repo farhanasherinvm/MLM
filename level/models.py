@@ -300,14 +300,12 @@ def create_user_levels(sender, instance, created, **kwargs):
                             except IndexError:
                                 # No more active dummy users found at this depth
                                 upline_user = None
-                        else:
-                            # 🟢 FIX: If no Master Node found (due to IndexError), linked_user_id is None.
-                            # This leaves the slot empty for this level.
-                            linked_user_id = None 
+                        # C. Final Assignment (Sets linked_user_id to the found ID or None)
+                        
+                        linked_user_id = upline_user.user_id if upline_user else None
                             
                         # C. Set ID based on the result
-                        if upline_user:
-                            linked_user_id = upline_user.user_id
+                        
                     
                     # Logic for 'Refer Help' (linking to direct sponsor)
                     elif level.name == 'Refer Help':
