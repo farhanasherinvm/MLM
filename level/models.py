@@ -79,7 +79,9 @@ class UserLevel(models.Model):
         ordering = ['level__order']
 
     def __str__(self):
-        return f"{self.user.user_id} - {self.level.name}"
+        level_name = self.level.name if self.level else "No Level Assigned"
+        user_id = self.user.user_id if self.user else "No User ID" 
+        return f"{user_id} - {level_name}"
 
 
     def save(self, *args, **kwargs):
