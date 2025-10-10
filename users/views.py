@@ -19,6 +19,7 @@ from .serializers import (
     ResetPasswordSerializer, ForgotPasswordSerializer, 
     AdminAccountSerializer, UserAccountDetailsSerializer, 
     UploadReceiptSerializer,  UserFullNameSerializer,
+    ChildRegistrationSerializer
     # VerifyOTPSerializer,
     )
 from .permissions import IsProjectAdmin
@@ -88,7 +89,7 @@ def safe_send_mail(subject, message, recipient_list, from_email=None, otp=None, 
 def generate_next_userid():
     while True:
         random_part = "".join(random.choices(string.digits, k=6))
-        user_id = f"WS{random_part}"
+        user_id = f"WC{random_part}"
         if not CustomUser.objects.filter(user_id=user_id).exists():
             return user_id
 
@@ -763,8 +764,11 @@ def compute_user_levels():
         get_level(u["user_id"])
     return levels
 
-def apply_search_and_filters(queryset, request):
+def apply_search_and_filters(queryset, request,user_levels=None):
     """Reusable function for search, status, date filters"""
+    if user_levels is None:
+        user_levels = compute_user_levels()
+
     params = getattr(request, "query_params", {}) or {}
     data = getattr(request, "data", {}) or {}
 
@@ -818,13 +822,31 @@ def apply_search_and_filters(queryset, request):
         try:
             target_level = int(level_filter)
             if target_level > 0:
-                user_levels = compute_user_levels()
+                # user_levels = compute_user_levels()
                 valid_ids = [
                     uid for uid, lvl in user_levels.items() if lvl == target_level
                 ]
                 queryset = queryset.filter(user_id__in=valid_ids)
         except (ValueError, TypeError):
             pass
+    
+    sort_by = get_param("sort_by") or "date_of_joining"  # default sort field
+    sort_order = (get_param("sort_order") or "desc").lower()
+
+    # Only allow sorting by safe fields
+    allowed_fields = {
+        "first_name": "first_name",
+        "last_name": "last_name",
+        "email": "email",
+        "user_id": "user_id",
+        "date_of_joining": "date_of_joining",
+    }
+
+    if sort_by in allowed_fields:
+        sort_field = allowed_fields[sort_by]
+        if sort_order == "desc":
+            sort_field = f"-{sort_field}"
+        queryset = queryset.order_by(sort_field)
 
     return queryset
 
@@ -883,6 +905,7 @@ class AdminUserListView(APIView):
 
     def search_and_respond(self, search_query, export_format, request):
         users = CustomUser.objects.select_related("profile").all()
+        user_levels = compute_user_levels()
 
         # Filter by start_date / end_date
         start_date = request.query_params.get("start_date") or request.data.get("start_date")
@@ -893,19 +916,20 @@ class AdminUserListView(APIView):
             users = users.filter(date_of_joining__lte=end_date)
 
         # Apply search / status / level filters    
-        users = apply_search_and_filters(users, request)
+        users = apply_search_and_filters(users, request, user_levels=user_levels)
 
         # Export if requested
         if export_format == "csv":
-            return export_users_csv(users, filename="users.csv")
+            return export_users_csv(users, filename="users.csv", user_levels=user_levels)
         elif export_format == "pdf":
-            return export_users_pdf(users, filename="users.pdf")
+            return export_users_pdf(users, filename="users.pdf", user_levels=user_levels)
 
         # Paginate
         paginator = AdminUserPagination()
         page = paginator.paginate_queryset(users, request)
         serializer = AdminUserListSerializer(page, many=True, context={"request": request})
-        return paginator.get_paginated_response(serializer.data)    
+        return paginator.get_paginated_response(serializer.data)
+        
 class AdminUserDetailView(APIView):
     """
     Allows project admin to view & edit full user + profile details
@@ -1033,18 +1057,25 @@ class AdminNetworkView(APIView):
 
     def get(self, request, *args, **kwargs):
         queryset = self.get_queryset(request)
+        export_format = request.query_params.get("export", "").lower()
+
+        # Precompute levels once
+        user_levels = compute_user_levels()
+
+        # ✅ If export requested, skip pagination and return immediately
+        # if export_format in ["csv", "pdf"]:
+            # for user in queryset:
+            #     user.level = user_levels.get(user.user_id, "")
+
+        if export_format == "csv":
+            return export_users_csv(queryset, filename="network_users.csv", user_levels=user_levels)
+        elif export_format == "pdf":
+            return export_users_pdf(queryset, filename="network_users.pdf", title="Network Users Report", user_levels=user_levels)
 
         # Counts (before pagination)
         total_downline = queryset.count()
         active_count = queryset.filter(is_active=True).count()
         blocked_count = queryset.filter(is_active=False).count()
-
-        # Export handling
-        export_format = request.query_params.get("export")
-        if export_format == "csv":
-            return export_users_csv(queryset, filename="network_users.csv")
-        if export_format == "pdf":
-            return export_users_pdf(queryset, filename="network_users.pdf", title="Network Users Report")
 
         # Pagination
         paginator = PageNumberPagination()
@@ -1107,7 +1138,7 @@ class GetUserFullNameView(APIView):
 
 
 
-from .serializers import ChildRegistrationSerializer
+
 
 class ChildRegistrationView(APIView):
     permission_classes = [IsAuthenticated]
@@ -1121,7 +1152,8 @@ class ChildRegistrationView(APIView):
             child = serializer.save()
             return Response({
                 "message": "Child user created successfully",
-                "user_id": child.user_id,        
+                "user_id": child.user_id, 
+                "child_password": request.data.get("password"),      
                 "parent_user_id": request.user.user_id,
                 
             }, status=status.HTTP_201_CREATED)
@@ -1168,20 +1200,29 @@ class SwitchToChildView(APIView):
             "access": str(refresh.access_token),
         })
 
-
 class SwitchBackToParentView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        if not request.user.parent:
-            return Response({"message": "Already in parent account."}, status=status.HTTP_200_OK)
+        # Check  session has parent_user_id from token
+        parent_user_id = getattr(request.auth, "payload", {}).get("parent_user_id") \
+            if request.auth else None
 
-        parent = request.user.parent
+        if not parent_user_id:
+            return Response(
+                {"error": "Cannot switch back. This session was not initiated by a parent."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            parent = CustomUser.objects.get(user_id=parent_user_id)
+        except CustomUser.DoesNotExist:
+            return Response({"error": "Parent user not found."}, status=status.HTTP_404_NOT_FOUND)
+
         refresh = RefreshToken.for_user(parent)
-
         return Response({
             "message": f"Switched back to parent account {parent.user_id}",
             "parent_user_id": parent.user_id,
             "refresh": str(refresh),
             "access": str(refresh.access_token),
-        })
+        }, status=status.HTTP_200_OK)

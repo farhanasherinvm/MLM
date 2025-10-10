@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Level, UserLevel, LevelPayment, get_referrer_details
+from .models import Level, UserLevel, LevelPayment, get_referrer_details,check_upline_fully_paid, PmfPayment
 import logging
 import json
 from decimal import Decimal
@@ -31,10 +31,32 @@ class LevelSerializer(serializers.ModelSerializer):
 class UserLevelStatusSerializer(serializers.ModelSerializer):
     level_name = serializers.CharField(source='level.name')
     amount = serializers.DecimalField(source='level.amount', max_digits=10, decimal_places=2)
+    is_upline_fully_paid = serializers.SerializerMethodField() # <-- ADD THIS
+    can_pay_now = serializers.SerializerMethodField() 
 
     class Meta:
         model = UserLevel
-        fields = ['id', 'level_name', 'amount', 'is_active', 'status', 'pay_enabled', 'linked_user_id', 'balance', 'received']
+        fields = ['id', 'level_name', 'amount', 'is_active', 'status', 'pay_enabled', 'linked_user_id', 'balance', 'received','is_upline_fully_paid','can_pay_now']
+
+    def get_is_upline_fully_paid(self, user_level_instance):
+        """Checks if the upline for this level is fully paid (L1-L6)."""
+        # Only check matrix levels (1-6)
+        if user_level_instance.level.order > 6:
+            return True # Dependency check is skipped for non-matrix levels
+
+        upline_id = user_level_instance.linked_user_id
+        # Call the helper function from models.py
+        return check_upline_fully_paid(upline_id)
+    
+    def get_can_pay_now(self, user_level_instance):
+        """Determines if the user is currently eligible to pay this level."""
+        
+        is_unpaid = user_level_instance.status != 'paid'
+        upline_is_paid = self.get_is_upline_fully_paid(user_level_instance)
+        is_matrix_level = user_level_instance.level.order <= 6
+        
+        # User can pay if: 1) Unpaid AND 2) Matrix Level AND 3) Upline is fully paid
+        return is_unpaid and is_matrix_level and upline_is_paid
 
 class UserLevelFinancialSerializer(serializers.ModelSerializer):
     level_name = serializers.CharField(source='level.name')
@@ -295,9 +317,90 @@ class ManualPaymentSerializer(serializers.Serializer):
     user_level_id = serializers.IntegerField()
     payment_proof = serializers.FileField(required=False)
 
+    def validate(self, data):
+        user_level_id = data.get('user_level_id')
+        request = self.context.get('request')
+        user = request.user if request else None
+
+        if not user:
+            raise serializers.ValidationError({"error": "User context is required for payment initiation."})
+        
+        try:
+            # 1. Fetch the UserLevel record
+            # NOTE: Ensure UserLevel is imported at the top of serializers.py
+            user_level_to_pay = UserLevel.objects.select_related('level').get(
+                id=user_level_id, 
+                user=user,
+                status__in=['not_paid', 'rejected'] # Allow if not paid or rejected
+            )
+        except UserLevel.DoesNotExist:
+            raise serializers.ValidationError({"user_level_id": "Invalid level ID, or level is already paid/pending/approved."})
+        
+        # 2. Extract key variables
+        level_order = user_level_to_pay.level.order
+        upline_id = user_level_to_pay.linked_user_id
+
+        # 🛑 ENFORCEMENT LOGIC 
+        if level_order >= 1 and level_order <= 6:
+            # Check for linked user existence first
+            if not upline_id:
+                raise serializers.ValidationError({
+                    "error": "Cannot initiate payment: Upline slot is not yet assigned for this level."
+                })
+                
+            # Use the helper function here (Ensure check_upline_fully_paid is imported)
+            if not check_upline_fully_paid(upline_id):
+                raise serializers.ValidationError({
+                    "error": f"Payment Blocked: Your upline ({upline_id}) must complete payment for all levels (1-6) before you can pay Level {level_order} manually."
+                })
+        
+        # Add the full UserLevel object to validated_data for easy access in the view
+        data['user_level_instance'] = user_level_to_pay
+        return data
+
 class InitiatePaymentSerializer(serializers.Serializer):
     user_level_id = serializers.IntegerField()
     payment_method = serializers.ChoiceField(choices=['Razorpay', 'Manual'])
+
+    def validate(self, data):
+        user_level_id = data.get('user_level_id')
+        request = self.context.get('request')
+        user = request.user if request else None
+
+        if not user:
+            raise serializers.ValidationError({"error": "User context is required for payment initiation."})
+        
+        try:
+            # 1. Fetch the UserLevel record
+            user_level_to_pay = UserLevel.objects.select_related('level').get(
+                id=user_level_id, 
+                user=user,
+                status__in=['not_paid', 'rejected'] # Allow payment if not paid or rejected
+            )
+        except UserLevel.DoesNotExist:
+            raise serializers.ValidationError({"user_level_id": "Invalid level ID, or level is already paid/pending."})
+        
+        # 2. Extract key variables
+        level_order = user_level_to_pay.level.order
+        upline_id = user_level_to_pay.linked_user_id
+
+        # 🛑 ENFORCEMENT LOGIC 
+        if level_order >= 1 and level_order <= 6:
+            # Check for linked user existence first
+            if not upline_id:
+                raise serializers.ValidationError({
+                    "error": "Cannot initiate payment: Upline slot is not yet assigned for this level."
+                })
+                
+            # Use the helper function here
+            if not check_upline_fully_paid(upline_id):
+                raise serializers.ValidationError({
+                    "error": f"Payment Blocked: Your upline ({upline_id}) must complete payment for all levels (1-6) before you can pay Level {level_order}."
+                })
+        
+        # Add the full UserLevel object to validated_data for easy access in the view
+        data['user_level_instance'] = user_level_to_pay
+        return data
 
 
 
@@ -689,3 +792,47 @@ class PmfVerifySerializer(serializers.Serializer):
     razorpay_order_id = serializers.CharField(max_length=255, required=True)
     razorpay_payment_id = serializers.CharField(max_length=255, required=True)
     razorpay_signature = serializers.CharField(max_length=255, required=True)
+
+class PmfManualPaymentSerializer(serializers.Serializer):
+    pmf_part = serializers.ChoiceField(
+        choices=['part_1', 'part_2'],
+        required=True,
+        error_messages={'invalid_choice': 'Invalid PMF part. Must be "part_1" or "part_2".'}
+    )
+    payment_proof = serializers.CharField(max_length=500, required=True, allow_blank=True) 
+
+class PmfPaymentSerializer(serializers.ModelSerializer):
+    # Use pmf_type as the level/part name
+    pmf_part_name = serializers.CharField(source='get_pmf_type_display', read_only=True)
+    payment_proof = serializers.CharField(
+        max_length=500, 
+        required=True, 
+        allow_blank=True # <--- Change this to True
+    )
+    
+    class Meta:
+        model = PmfPayment
+        # Minimal data for general listing/detail
+        fields = ['id', 'user', 'pmf_part_name', 'status', 'created_at','payment_method','payment_proof']
+        read_only_fields = fields # Usually read-only in this admin vie
+
+class AdminPendingPmfPaymentsSerializer(serializers.ModelSerializer):
+    """
+    Serializer for admin to view pending manual payments.
+    Only shows ID, User ID, PMF Part Name, and Proof.
+    """
+    # Use pmf_type to display the Part Name (e.g., "PMF Part 1 Fee")
+    level_name = serializers.CharField(source='get_pmf_type_display', read_only=True)
+    
+    # Get the user's main identifier (assuming user_id is the key identifier)
+    user_id = serializers.CharField(source='user.user_id', read_only=True) 
+
+    class Meta:
+        model = PmfPayment
+        fields = [
+            'id', 
+            'user_id', 
+            'level_name', 
+            'payment_method',
+            'payment_proof', # The actual proof string/URL for review
+        ]

@@ -126,7 +126,6 @@ class AdminPaymentSerializer(serializers.ModelSerializer):
 class AUCReportSerializer(serializers.Serializer):
     from_user = serializers.SerializerMethodField()
     username = serializers.SerializerMethodField()
-    from_name = serializers.SerializerMethodField()
     linked_username = serializers.SerializerMethodField()
     amount = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
@@ -152,15 +151,14 @@ class AUCReportSerializer(serializers.Serializer):
         return self._linked_user_cache.get(linked_user_id)
 
     def get_from_user(self, obj):
-        return f"{obj.user.last_name or ''}, {obj.user.first_name or ''}".strip() if hasattr(obj, 'user') and obj.user else ''
+        linked_user = self._get_linked_user(obj)
+        if linked_user:
+            return f"{getattr(linked_user, 'first_name', '')} {getattr(linked_user, 'last_name', '')}".strip()
 
     def get_username(self, obj):
         return obj.user.user_id if hasattr(obj, 'user') and obj.user else ''
 
-    def get_from_name(self, obj):
-        linked_user = self._get_linked_user(obj)
-        if linked_user:
-            return f"{getattr(linked_user, 'first_name', '')} {getattr(linked_user, 'last_name', '')}".strip()
+
 
     def get_linked_username(self, obj):
         return getattr(obj, 'linked_user_id', '')

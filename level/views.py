@@ -28,6 +28,10 @@ from level import constants
 from .serializers import (
     PmfOrderSerializer, 
     PmfVerifySerializer, 
+    PmfPaymentSerializer,
+    AdminPendingPmfPaymentsSerializer,
+    PmfManualPaymentSerializer
+
 )
 from rest_framework.permissions import AllowAny
 from decimal import Decimal
@@ -112,7 +116,7 @@ class UserLevelViewSet(viewsets.ModelViewSet):
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     elif data['status'] == 'rejected':
-                        user_level.pay_enabled = False
+                        user_level.pay_enabled = True
                         user_level.status = data['status']
                         user_level.save()
                         # Optionally update or create a LevelPayment record to reflect rejection
@@ -306,20 +310,21 @@ class ManualPaymentView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        serializer = ManualPaymentSerializer(data=request.data)
+        serializer = ManualPaymentSerializer(data=request.data, context={'request': request})
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            user_level = UserLevel.objects.get(
-                id=serializer.validated_data['user_level_id'],
-                user=request.user,
-                status__in=['not_paid', 'rejected'],
-                is_active=True,
-                pay_enabled=True
+        validated_data = serializer.validated_data
+        
+        # --- FIX: Retrieve the validated UserLevel object directly ---
+        user_level = validated_data.get('user_level_instance')
+
+        if LevelPayment.objects.filter(user_level=user_level, status='Pending', payment_method='Manual').exists():
+             return Response(
+                {"error": "A manual payment for this level is already pending admin review."}, 
+                status=status.HTTP_400_BAD_REQUEST
             )
-        except UserLevel.DoesNotExist:
-            return Response({"error": "UserLevel not found, already paid, or payment not enabled"}, status=status.HTTP_404_NOT_FOUND)
+        # --- End FIX
 
         payment_proof = serializer.validated_data.get('payment_proof')
         level_payment = LevelPayment.objects.create(
@@ -398,7 +403,7 @@ class LevelPaymentViewSet(viewsets.ModelViewSet):
             level_payment.save()
             user_level = level_payment.user_level
             user_level.status = 'rejected'
-            user_level.pay_enabled = False
+            user_level.pay_enabled = True
             user_level.save()
 
         logger.info(f"Manual payment rejected for LevelPayment {level_payment.id} by admin")
@@ -474,7 +479,7 @@ class RecipientPaymentViewSet(viewsets.GenericViewSet):
             # Optionally update the payer's UserLevel to 'rejected' and disable payment
             user_level = level_payment.user_level
             user_level.status = 'rejected'
-            user_level.pay_enabled = False
+            user_level.pay_enabled = True
             user_level.save(update_fields=['status', 'pay_enabled'])
 
         logger.info(f"Manual payment rejected for LevelPayment {level_payment.id} by linked user {request.user.user_id}")
@@ -523,21 +528,12 @@ class InitiatePaymentView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        serializer = InitiatePaymentSerializer(data=request.data)
+        serializer = InitiatePaymentSerializer(data=request.data,context={'request': request})
         if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST,)
 
-        try:
-            user_level = UserLevel.objects.get(
-                id=serializer.validated_data['user_level_id'],
-                user=request.user,
-                status__in=['not_paid', 'rejected'],
-                is_active=True,
-                pay_enabled=True
-            )
-        except UserLevel.DoesNotExist:
-            return Response({"error": "UserLevel not found, already paid, or payment not enabled 123"}, status=status.HTTP_404_NOT_FOUND)
-
+  
+        user_level = serializer.validated_data['user_level_instance']
         payment_method = serializer.validated_data['payment_method']
 
         # --- BEGIN: LOCK ENFORCEMENT CHECK ---
@@ -995,4 +991,148 @@ class PmfStatusView(APIView):
             "current_payment_cap": current_cap_threshold,
             "is_payment_locked": is_locked,
             "lock_details": lock_message # Helpful for debugging/frontend messages
+        }, status=status.HTTP_200_OK)
+
+
+class PmfManualPaymentView(APIView):
+    """Handles manual submission of PMF payment proof."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        # Using the PmfManualPaymentSerializer you provided earlier
+        serializer = PmfManualPaymentSerializer(data=request.data) 
+        serializer.is_valid(raise_exception=True)
+
+        validated_data = serializer.validated_data
+        pmf_part = validated_data.get('pmf_part')
+        payment_proof = validated_data.get('payment_proof')
+        user = request.user
+        
+        # 1. Determine amount and check eligibility (using user.pmf_status)
+        if pmf_part == 'part_1':
+            amount = constants.PMF_PART_1_AMOUNT
+            pmf_type_tag = 'PMF_PART_1'
+            if user.pmf_status != constants.PMF_STATUS_NOT_PAID:
+                 return Response({"error": "PMF Part 1 is already paid or in process."}, status=status.HTTP_400_BAD_REQUEST)
+        elif pmf_part == 'part_2':
+            amount = constants.PMF_PART_2_AMOUNT
+            pmf_type_tag = 'PMF_PART_2'
+            if user.pmf_status != constants.PMF_STATUS_PART_1_PAID:
+                 return Response({"error": "PMF Part 2 cannot be paid yet or is already paid."}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            return Response({"error": "Invalid PMF part specified."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 2. Check for existing Pending manual payment
+        if PmfPayment.objects.filter(user=user, pmf_type=pmf_type_tag, status='Pending', payment_method='Manual').exists():
+            return Response({"error": "A manual payment for this PMF part is already pending admin review."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 3. Create PmfPayment record
+        try:
+            pmf_payment = PmfPayment.objects.create(
+                user=user, 
+                amount=float(amount),
+                status='Pending', 
+                pmf_type=pmf_type_tag,
+                payment_method='Manual', # <--- Set the method
+                payment_proof=payment_proof # <--- Store the proof
+            )
+        except Exception as e:
+            logger.error(f"Failed to create Manual PMF payment record for {user.user_id}: {e}")
+            return Response({"error": "Failed to initiate manual payment record."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response({
+            "message": "Manual payment proof submitted successfully. Awaiting admin verification.",
+            "pmf_payment_id": pmf_payment.id,
+        }, status=status.HTTP_201_CREATED)
+
+
+class PmfPaymentViewSet(viewsets.ModelViewSet):
+    """
+    Admin ViewSet for managing and verifying manual PMF payments.
+    """
+    queryset = PmfPayment.objects.all()
+    serializer_class = PmfPaymentSerializer
+    permission_classes = [IsAdminUser]
+
+    def get_serializer_class(self):
+        # Use a detailed serializer for pending list to show payment proof
+        if self.action == 'pending':
+            return AdminPendingPmfPaymentsSerializer
+        return PmfPaymentSerializer
+
+    def get_queryset(self):
+        # Custom queryset for the 'pending' action
+        if self.action == 'pending':
+            return self.queryset.filter(status='Pending', payment_method='Manual').order_by('-created_at')
+        return self.queryset.all().order_by('-created_at')
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
+
+    # ------------------------------------------------------------------
+    # Action: List Pending Payments (GET /api/pmf-payments/pending/)
+    # ------------------------------------------------------------------
+    @action(detail=False, methods=['get'], url_path='pending')
+    def pending(self, request):
+        """List all pending manual PMF payments for admin review."""
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = self.get_serializer(queryset, many=True, context={'request': request})
+        return Response(serializer.data)
+
+    # ------------------------------------------------------------------
+    # Action: Verify Payment (POST /api/pmf-payments/{pk}/verify/)
+    # ------------------------------------------------------------------
+    @action(detail=True, methods=['post'])
+    def verify(self, request, pk=None):
+        pmf_payment = self.get_object()
+
+        if pmf_payment.payment_method != "Manual" or pmf_payment.status != "Pending":
+            return Response({"error": "Only pending manual payments can be verified."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = pmf_payment.user
+
+        with transaction.atomic():
+            # 1. Update PmfPayment status
+            pmf_payment.status = "Verified"
+            pmf_payment.save(update_fields=['status'])
+
+            # 2. Determine and Update CustomUser PMF status
+            if pmf_payment.pmf_type == 'PMF_PART_1':
+                user.pmf_status = constants.PMF_STATUS_PART_1_PAID
+            elif pmf_payment.pmf_type == 'PMF_PART_2':
+                user.pmf_status = constants.PMF_STATUS_PAID
+            
+            user.save(update_fields=['pmf_status']) # Save the user status change
+
+        logger.info(f"Manual PMF payment verified for {pmf_payment.id} by admin {request.user.user_id}")
+
+        return Response({
+            "message": f"PMF {pmf_payment.pmf_type} payment verified and user status updated to {user.pmf_status}.",
+            "payment_data": self.get_serializer(pmf_payment).data
+        }, status=status.HTTP_200_OK)
+
+    # ------------------------------------------------------------------
+    # Action: Reject Payment (POST /api/pmf-payments/{pk}/reject/)
+    # ------------------------------------------------------------------
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        pmf_payment = self.get_object()
+
+        if pmf_payment.payment_method != "Manual" or pmf_payment.status != "Pending":
+            return Response({"error": "Only pending manual payments can be rejected."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # For PMF rejection, we only need to mark the payment as failed.
+        # The user's pmf_status should generally not be affected by a failed/rejected attempt, 
+        # as they remain in the 'NOT_PAID' or 'PART_1_PAID' state, allowing them to try again.
+        with transaction.atomic():
+            pmf_payment.status = "Failed"
+            pmf_payment.save(update_fields=['status'])
+            
+        logger.info(f"Manual PMF payment rejected for {pmf_payment.id} by admin {request.user.user_id}")
+
+        return Response({
+            "message": "Manual payment rejected. User's PMF status is unchanged, and they can resubmit proof or use Razorpay.",
+            "payment_data": self.get_serializer(pmf_payment).data
         }, status=status.HTTP_200_OK)

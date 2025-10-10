@@ -639,7 +639,7 @@ class AdminAnalyticsView(APIView):
                         status=status.HTTP_400_BAD_REQUEST
                     )
             else:
-                paginator.page_size = 50
+                paginator.page_size = 10
             page = paginator.paginate_queryset(queryset, request)
             
             data = []

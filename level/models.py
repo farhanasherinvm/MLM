@@ -55,7 +55,7 @@ class UserLevel(models.Model):
     profile = models.ForeignKey(Profile, on_delete=models.CASCADE, null=True, blank=True)
     linked_user_id = models.CharField(max_length=20, null=True, blank=True, default=None)
     is_active = models.BooleanField(default=True)
-    payment_mode = models.CharField(max_length=50, default='Razorpay', blank=True)
+    payment_mode = models.CharField(max_length=50, default='Manual', blank=True)
     transaction_id = models.CharField(max_length=100, null=True, blank=True)
     approved_at = models.DateTimeField(null=True, blank=True)
     requested_date = models.DateTimeField(null=True, blank=True)
@@ -105,7 +105,7 @@ class LevelPayment(models.Model):
     user_level = models.ForeignKey(UserLevel, on_delete=models.CASCADE, related_name='payments')
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default="Pending")
-    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default="Razorpay")
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default="Manual")
     razorpay_order_id = models.CharField(max_length=255, blank=True, null=True)
     razorpay_payment_id = models.CharField(max_length=255, blank=True, null=True)
     razorpay_signature = models.CharField(max_length=255, blank=True, null=True)
@@ -144,6 +144,10 @@ class PmfPayment(models.Model):
         ("Verified", "Verified"),
         ("Failed", "Failed"),
     ]
+    PAYMENT_METHOD_CHOICES = [
+        ("Razorpay", "Razorpay"),
+        ("Manual", "Manual"),
+    ]
 
     # Link to the user who owes the fee (using settings.AUTH_USER_MODEL)
     user = models.ForeignKey(
@@ -151,9 +155,16 @@ class PmfPayment(models.Model):
         on_delete=models.CASCADE, 
         related_name='pmf_payments'
     )
+    payment_method = models.CharField(
+        max_length=20, 
+        choices=PAYMENT_METHOD_CHOICES, 
+        default="Razorpay" # <--- This ensures the default is Razorpay
+    )
     
     # Identify which PMF part this record represents
     pmf_type = models.CharField(max_length=20, choices=PMF_TYPE_CHOICES)
+    payment_proof = models.CharField(max_length=500, blank=True, null=True)
+
     
     amount = models.DecimalField(max_digits=10, decimal_places=2, default=1000.00)
     status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default="Pending")
@@ -180,6 +191,33 @@ def get_upline(user, depth):
             return None
     return current
 
+def check_upline_fully_paid(upline_id):
+    """
+    Checks if the upline user identified by upline_id has paid ALL levels 1-6.
+    Returns True only if the upline is fully paid for L1-L6.
+    """
+    if not upline_id:
+        return False
+    
+    try:
+        
+        
+        upline_user = CustomUser.objects.get(user_id=upline_id)
+    except CustomUser.DoesNotExist:
+        # If the upline doesn't exist, block payment/show ineligible.
+        logger.error(f"Upline user {upline_id} not found for payment check.")
+        return False
+
+    # Check the count of paid levels (L1-L6) for the upline.
+    paid_levels_count = upline_user.userlevel_set.filter(
+        level__order__gte=1,
+        level__order__lte=6,
+        status='paid'
+    ).count()
+    
+    # The upline must have paid ALL 6 matrix levels
+    return paid_levels_count >= 6
+
 def get_referrer_details(linked_user_id):
     """
     Fetch referrer details from linked_user_id (CustomUser.user_id).
@@ -194,9 +232,9 @@ def get_referrer_details(linked_user_id):
             'user_id': linked_user_id,
             'username': f"{referrer_user.first_name} {referrer_user.last_name}".strip(),
             'name': f"{referrer_profile.first_name} {referrer_profile.last_name}".strip(),
-            'email': referrer_profile.email,
-            'mobile': referrer_profile.mobile,
-            'whatsapp_number': referrer_profile.whatsapp_number or '',
+            'email': referrer_user.email,
+            'mobile': referrer_user.mobile,
+            'whatsapp_number': referrer_user.whatsapp_number or '',
         }
     except (CustomUser.DoesNotExist, Profile.DoesNotExist):
         return None
@@ -262,14 +300,12 @@ def create_user_levels(sender, instance, created, **kwargs):
                             except IndexError:
                                 # No more active dummy users found at this depth
                                 upline_user = None
-                        else:
-                            # 🟢 FIX: If no Master Node found (due to IndexError), linked_user_id is None.
-                            # This leaves the slot empty for this level.
-                            linked_user_id = None 
+                        # C. Final Assignment (Sets linked_user_id to the found ID or None)
+                        
+                        linked_user_id = upline_user.user_id if upline_user else None
                             
                         # C. Set ID based on the result
-                        if upline_user:
-                            linked_user_id = upline_user.user_id
+                        
                     
                     # Logic for 'Refer Help' (linking to direct sponsor)
                     elif level.name == 'Refer Help':
@@ -291,7 +327,7 @@ def create_user_levels(sender, instance, created, **kwargs):
                             'profile': profile,
                             'linked_user_id': linked_user_id,
                             'status': 'not_paid',
-                            'payment_mode': 'Razorpay',
+                            'payment_mode': 'Manual',
                             'target': target,
                             'balance': target,
                             'received': 0
@@ -310,7 +346,7 @@ def create_user_levels(sender, instance, created, **kwargs):
                             defaults={
                                 'linked_user_id': None,
                                 'status': 'not_paid',
-                                'payment_mode': 'Razorpay',
+                                'payment_mode': 'Manual',
                                 'target': level.amount,
                                 'balance': level.amount,
                                 'received': 0
