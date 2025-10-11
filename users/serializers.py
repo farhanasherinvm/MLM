@@ -14,7 +14,7 @@ class VerifyOTPSerializer(serializers.Serializer):
     otp = serializers.CharField()
     
 class RegistrationSerializer(serializers.Serializer):
-    sponsor_id = serializers.CharField(required=True)
+    sponsor_id = serializers.CharField(required=False, allow_blank=True)
     placement_id = serializers.CharField(required=False, allow_blank=True)
     first_name = serializers.CharField()
     last_name = serializers.CharField()
