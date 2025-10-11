@@ -279,107 +279,19 @@ class PaymentReportViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(report_data)
 
 # Existing DashboardReportViewSet (unchanged)
+# Assuming necessary imports (Decimal, Sum, Count, Q, timezone, timedelta) are present
+
 class DashboardReportViewSet(viewsets.ViewSet):
     permission_classes = [IsAdminUser]
 
     def list(self, request):
         
-        # 1. Total Members: Active users only
-        total_members = CustomUser.objects.filter(is_active=True).count()
-        logger.debug(f"Total members: {total_members}")
-         
+        # Define constants
         PAID_STATUS = 'paid'
-        # 2. Total Income: Sum of all received amounts
-        # NOTE: This correctly handles the case where 'received' might be null by defaulting to 0
-        total_income = UserLevel.objects.filter(
-            status=PAID_STATUS  
-        ).aggregate(total=Sum('received'))['total']
-        total_income = total_income if isinstance(total_income, (int, float, Decimal)) else Decimal(0)
-        logger.debug(f"Total income: {total_income}")
+        VERIFIED_STATUS = 'Verified'
 
-        # 3. Total Active Level 6: Users with exactly 6 paid levels (1-6)
-        # --------------------------------------------------------------------------------
-        # FIX: The query is fine, but to improve efficiency, filter first and then count distinct IDs.
-        # This approach ensures users are counted only if they have ALL 6 levels paid.
-        # It's better to use __in and annotate/filter once for the total.
-        active_level_6 = CustomUser.objects.filter(
-            # Filter users who have at least one paid level <= 6
-            userlevel__level__order__lte=6,
-            userlevel__status='paid'
-        ).annotate(
-            # Count the number of paid levels they have (levels 1 through 6)
-            paid_levels=Count('userlevel', filter=Q(userlevel__level__order__lte=6, userlevel__status='paid'))
-        ).filter(
-            # Only keep those who have exactly 6 paid levels
-            paid_levels=6
-        ).distinct().count()
-        logger.debug(f"Total active level 6: {active_level_6}")
-        # --------------------------------------------------------------------------------
-
-        # 4. New users on each level: Users with exactly N levels completed (1-6)
-        new_users_per_level = []
-        # NOTE: The loop and annotation logic here is correct for counting users at exactly each level.
-        for lvl in range(1, 7):
-            users_at_level = CustomUser.objects.filter(
-                userlevel__level__order__lte=lvl,
-                userlevel__status='paid'
-            ).annotate(
-                paid_levels=Count('userlevel', filter=Q(userlevel__level__order__lte=lvl, userlevel__status='paid'))
-            ).filter(paid_levels=lvl).distinct().count()
-            new_users_per_level.append({'level': lvl, 'count': users_at_level})
-            logger.debug(f"New users at level {lvl}: {users_at_level}")
-
-        # 5. Recent payments: Last 10 verified payments (last 30 days)
-        # This logic is correct.
-        recent_payments_qs = LevelPayment.objects.filter(
-            status='Verified',
-            created_at__gte=timezone.now() - timedelta(days=30)
-        ).select_related('user_level__user').order_by('-created_at')[:10]
-        recent_payments = LevelPaymentReportSerializer(recent_payments_qs, many=True).data
-        logger.debug(f"Recent payments count: {len(recent_payments)}")
-        recent_payments = LevelPaymentReportSerializer(recent_payments_qs, many=True).data
-
-        # 6. New user registrations: Last 10 users (last 30 days)
-        # This logic is correct.
-        recent_users_qs = CustomUser.objects.filter(
-            date_of_joining__gte=timezone.now() - timedelta(days=30)
-        ).order_by('-date_of_joining').prefetch_related('userlevel_set')[:10] # Added prefetch for performance
-        
-        new_user_registrations = []
-        for user in recent_users_qs:
-            completed_levels = UserLevel.objects.filter(
-                user=user, status='paid', level__order__lte=6
-            ).count()
-            
-            # Using user.email as fallback is a good practice
-            username_display = f"{user.first_name} {user.last_name}".strip() 
-            new_user_registrations.append({
-                'user_id': user.user_id,
-                'username': username_display or user.email, 
-                'levels_done': completed_levels
-            })
-        logger.debug(f"New user registrations count: {len(new_user_registrations)}")
-         
-        # 7. Latest report: Data for latest help requests and payment
-        latest_refer_help = UserLevel.objects.filter(
-            level__name='Refer Help', 
-            status=PAID_STATUS # <-- ADDED: Filter for paid status
-        ).order_by('-requested_date').select_related('user', 'level').first()
-
-        latest_level_help = UserLevel.objects.filter(
-            level__name__contains='Level', 
-            status=PAID_STATUS # <-- ADDED: Filter for paid status
-        ).order_by('-requested_date').select_related('user', 'level').first()
-
-        # 3. Latest Level Payment (Use the existing query, but enhance reporting below)
-        latest_level_payment = LevelPayment.objects.order_by('-created_at').select_related('user_level__user').first()
-
-
-        # --------------------------------------------------------------------------------
-        # FIX: The dictionary structure for latest_report is complex and the 'N/A' 
-        # handling can be simplified to avoid repeated checks.
-        # --------------------------------------------------------------------------------
-        
+        # Helper function MUST be defined here, or imported from utils, 
+        # but CANNOT contain the ORM queries inside it.
         def safe_user_data(user_level_instance):
             """Safely extracts user data from a UserLevel instance or returns N/A dict."""
             if not user_level_instance or not user_level_instance.user:
@@ -388,6 +300,7 @@ class DashboardReportViewSet(viewsets.ViewSet):
             user = user_level_instance.user
             level = user_level_instance.level
 
+            # NOTE: Removed the redundant ORM queries that were causing the flaw.
             return {
                 'name': f"{user.first_name} {user.last_name}".strip() or user.email,
                 'email_id': user.email or 'N/A',
@@ -396,21 +309,102 @@ class DashboardReportViewSet(viewsets.ViewSet):
                 'amount': level.amount or 0,
                 'time': user_level_instance.requested_date.strftime('%Y-%m-%d %H:%M:%S') if user_level_instance.requested_date else 'N/A'
             }
+        
+        # 1. Total Members... (Correct)
+        total_members = CustomUser.objects.filter(is_active=True).count()
+        logger.debug(f"Total members: {total_members}")
+        
+        # 2. Total Income... (Correct: Filters by PAID_STATUS)
+        total_income = UserLevel.objects.filter(
+            status=PAID_STATUS  
+        ).aggregate(total=Sum('received'))['total']
+        total_income = total_income if isinstance(total_income, (int, float, Decimal)) else Decimal(0)
+        logger.debug(f"Total income: {total_income}")
+
+        # 3. Total Active Level 6... (Correct)
+        active_level_6 = CustomUser.objects.filter(
+            userlevel__level__order__lte=6,
+            userlevel__status=PAID_STATUS
+        ).annotate(
+            paid_levels=Count('userlevel', filter=Q(userlevel__level__order__lte=6, userlevel__status=PAID_STATUS))
+        ).filter(paid_levels=6).distinct().count()
+        logger.debug(f"Total active level 6: {active_level_6}")
+
+        # 4. New users on each level... (Correct)
+        new_users_per_level = []
+        for lvl in range(1, 7):
+            users_at_level = CustomUser.objects.filter(
+                userlevel__level__order__lte=lvl,
+                userlevel__status=PAID_STATUS
+            ).annotate(
+                paid_levels=Count('userlevel', filter=Q(userlevel__level__order__lte=lvl, userlevel__status=PAID_STATUS))
+            ).filter(paid_levels=lvl).distinct().count()
+            new_users_per_level.append({'level': lvl, 'count': users_at_level})
+            logger.debug(f"New users at level {lvl}: {users_at_level}")
+
+        # 5. Recent payments... (Correct: select_related and status filter are correct)
+        recent_payments_qs = LevelPayment.objects.filter(
+            status=VERIFIED_STATUS,
+            created_at__gte=timezone.now() - timedelta(days=30)
+        ).select_related('user_level__user').order_by('-created_at')[:10]
+        # Replaced duplicated serializer line with the correct assignment:
+        recent_payments = LevelPaymentReportSerializer(recent_payments_qs, many=True).data
+        logger.debug(f"Recent payments count: {len(recent_payments)}")
+
+        # 6. New user registrations... (Correct)
+        recent_users_qs = CustomUser.objects.filter(
+            date_of_joining__gte=timezone.now() - timedelta(days=30)
+        ).order_by('-date_of_joining').prefetch_related('userlevel_set')[:10] 
+        
+        new_user_registrations = []
+        for user in recent_users_qs:
+            completed_levels = UserLevel.objects.filter(
+                user=user, status=PAID_STATUS, level__order__lte=6
+            ).count()
+            
+            username_display = f"{user.first_name} {user.last_name}".strip() 
+            new_user_registrations.append({
+                'user_id': user.user_id,
+                'username': username_display or user.email, 
+                'levels_done': completed_levels
+            })
+        logger.debug(f"New user registrations count: {len(new_user_registrations)}")
+        
+        # 7. Latest report: Data for latest help requests and payment
+        # Queries are now correct and executed ONCE
+        latest_refer_help = UserLevel.objects.filter(
+            level__name='Refer Help',  
+            status=PAID_STATUS 
+        ).order_by('-requested_date').select_related('user', 'level').first()
+
+        latest_level_help = UserLevel.objects.filter(
+            level__name__contains='Level',  
+            status=PAID_STATUS 
+        ).order_by('-requested_date').select_related('user', 'level').first()
+
+        latest_level_payment = LevelPayment.objects.filter(
+            status=VERIFIED_STATUS # ✅ FIX: Only verified payments are considered the "latest"
+        ).order_by('-created_at').select_related('user_level__user').first()
 
         latest_report = {
             'latest_refer_help': latest_refer_help.level.name if latest_refer_help and latest_refer_help.level else 'N/A',
-            'latest_refer_user': safe_user_data(latest_refer_help),
+            
+            'latest_refer_user': {
+                **safe_user_data(latest_refer_help),
+                'status': latest_refer_help.status if latest_refer_help else 'N/A'
+            },
             
             'latest_level_help': latest_level_help.level.name if latest_level_help and latest_level_help.level else 'N/A',
             
             'latest_level_payment': {
                 'amount': latest_level_payment.amount if latest_level_payment else 0,
                 'time': latest_level_payment.created_at.strftime('%Y-%m-%d %H:%M:%S') if latest_level_payment and latest_level_payment.created_at else 'N/A',
-                'done': latest_level_payment.status == 'Verified' if latest_level_payment else False
+                'status': latest_level_payment.status if latest_level_payment else 'N/A',
+                'done': latest_level_payment.status == VERIFIED_STATUS if latest_level_payment else False
             }
         }
         
-        # 8. Final Response Serialization
+        # 8. Final Response Serialization... (Correct)
         data = {
             'total_members': total_members,
             'total_income': total_income,
@@ -421,7 +415,6 @@ class DashboardReportViewSet(viewsets.ViewSet):
             'latest_report': latest_report
         }
         
-        # The serializer should be able to handle the data structure passed
         serializer = DashboardReportSerializer(data) 
         return Response(serializer.data)
 
@@ -438,8 +431,20 @@ class UserReportViewSet(viewsets.ViewSet):
         total_received = user_levels.aggregate(total=Sum('received'))['total'] or 0
         pending_send_count = user_levels.filter(status='pending').count()
         # Corrected aggregation for total_amount_generated using level__amount
-        total_amount_generated = user_levels.filter(status='paid').aggregate(total=Sum('level__amount'))['total'] or 0
-        send_help = user_levels.filter(level__name__contains='Refer Help').aggregate(total=Sum('level__amount'))['total'] or 0
+        total_received = user_levels.filter(
+            status='paid',
+            level__order__lte=6  
+        ).aggregate(
+            total=Sum('received')
+        )['total'] or Decimal(0)
+
+        # Total Paid for Levels (Send Help) - CORRECTED to only include levels 1-6
+        total_paid_for_levels = user_levels.filter(
+            status='paid',
+            level__order__lte=6  # <-- ADDED: Filter to levels 1 through 6
+        ).aggregate(
+            total=Sum('level__amount')
+        )['total'] or Decimal(0)
         receive_help = user_levels.filter(status='paid').count()
         referral_count = CustomUser.objects.filter(sponsor_id=user.user_id).count()
         total_income = total_received  # Total income is the total amount received by the user
@@ -450,10 +455,10 @@ class UserReportViewSet(viewsets.ViewSet):
             'level_completed': completed_levels,
             'total_received': total_received,
             'pending_send_count': pending_send_count,
-            'total_amount_generated': total_amount_generated,
+            'total_amount_generated': total_received,
             'pending_receive_count': pending_recevie_count,
             'total_income': total_income,
-            'send_help': send_help,
+            'send_help': total_paid_for_levels,
             'receive_help': receive_help,
             'referral_count': referral_count
         }

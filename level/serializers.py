@@ -339,20 +339,26 @@ class ManualPaymentSerializer(serializers.Serializer):
         # 2. Extract key variables
         level_order = user_level_to_pay.level.order
         upline_id = user_level_to_pay.linked_user_id
+        is_upline_master = upline_id.startswith('MASTER') if upline_id else False
 
         # 🛑 ENFORCEMENT LOGIC 
         if level_order >= 1 and level_order <= 6:
             # Check for linked user existence first
-            if not upline_id:
-                raise serializers.ValidationError({
-                    "error": "Cannot initiate payment: Upline slot is not yet assigned for this level."
-                })
+            if not is_upline_master and not check_upline_fully_paid(upline_id):
+    
+                upline_user = CustomUser.objects.get(user_id=upline_id)
+                paid_levels_count = upline_user.userlevel_set.filter(
+                    level__order__gte=1,
+                    level__order__lte=6,
+                    status='paid'
+                ).count()
                 
-            # Use the helper function here (Ensure check_upline_fully_paid is imported)
-            if not check_upline_fully_paid(upline_id):
+                # Raise the specific payment blocked error
                 raise serializers.ValidationError({
-                    "error": f"Payment Blocked: Your upline ({upline_id}) must complete payment for all levels (1-6) before you can pay Level {level_order} manually."
+                    "error": (f"Payment Blocked: Your upline ({upline_id}) has only paid for {paid_levels_count} "
+                              f"levels (1-6) and must complete all levels before you can pay Level {level_order} manually.")
                 })
+
         
         # Add the full UserLevel object to validated_data for easy access in the view
         data['user_level_instance'] = user_level_to_pay
@@ -615,21 +621,36 @@ class CreateDummyUsersSerializer(serializers.Serializer):
 
         # 4. Create UserLevel record
         # Status is set to 'paid' immediately as no payment is required from this user.
-        user_level = UserLevel.objects.create(
-            user=user, 
-            level=assigned_level, 
-            linked_user_id=admin.user_id,
-            is_active=can_be_active,
-            payment_mode=validated_data['select_payment_type'], 
-            status='paid' # <-- SET TO 'paid' (or equivalent)
-        )
+        if assigned_level:
+            user_level, created = UserLevel.objects.update_or_create(
+                # CRITICAL: Fields used to FIND the record (unique constraint fields)
+                user=user,
+                level=assigned_level,
+                defaults={
+                    # Fields to SET/UPDATE on creation or existing record
+                    'linked_user_id': admin.user_id, # Linking the admin as the upline
+                    'is_active': can_be_active,
+                    'payment_mode': validated_data['select_payment_type'], 
+                    'status': 'not_paid', # New users start as not_paid
+                }
+            )
+        else:
+            # Handle case where no assigned_level was found (e.g., admin slots full)
+            # The user is created but remains unlinked, and this view returns an error
+            # or a specific instance if you need one to pass to the response serializer.
+            # For now, we'll return a placeholder or the CustomUser instance itself.
+            user_level = None 
+            # NOTE: You might need to change your view logic if user_level is None here.
+            # A common approach is to return the newly created `user` object.
+            
+        
 
    
         # 6. Link Admin's slot
         if assigned_level:
             UserLevel.objects.filter(user=admin, level=assigned_level).update(linked_user_id=user.user_id)
 
-        return user_level
+        return user 
 
 
 

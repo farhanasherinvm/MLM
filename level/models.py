@@ -216,7 +216,7 @@ def check_upline_fully_paid(upline_id):
         level__order__lte=6,
         status='paid'
     ).count()
-    
+    logger.debug(f"Upline {upline_id} has {paid_levels_count} paid levels out of 6 required.")
     # The upline must have paid ALL 6 matrix levels
     return paid_levels_count >= 6
 
