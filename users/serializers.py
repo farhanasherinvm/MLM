@@ -35,8 +35,9 @@ class RegistrationSerializer(serializers.Serializer):
          raise serializers.ValidationError({"password": "Passwords do not match."})
 
     # Check sponsor exists
-        if not CustomUser.objects.filter(user_id=data["sponsor_id"]).exists():
-          raise serializers.ValidationError({"sponsor_id": "Sponsor ID does not exist."})
+        sponsor_id = data.get("sponsor_id")
+        if sponsor_id and not validate_sponsor(sponsor_id):
+            raise serializers.ValidationError({"sponsor_id": "Sponsor ID does not exist."})
 
     # Check placement ID validity and limit
         placement_id = data.get("placement_id")
