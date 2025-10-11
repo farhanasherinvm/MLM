@@ -56,7 +56,7 @@ class CustomUserManager(BaseUserManager):
         user.pmf_status = constants.PMF_STATUS_PAID
         user.save(update_fields=["pmf_status"])
 
-        return self.create_user(user_id, email, password, **extra_fields)
+        return user
 
 class CustomUser(AbstractBaseUser, PermissionsMixin):
     PAYMENT_CHOICES = PAYMENT_CHOICES
