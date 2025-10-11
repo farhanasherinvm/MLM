@@ -753,30 +753,63 @@ class AdminDummyUserUpdateSerializer(serializers.ModelSerializer):
 
         # C. Handle Level Change Logic
         # This only applies to the specific UserLevel instance representing the Admin's slot.
-        if new_level:
-            # Find the current UserLevel entry that corresponds to the Admin's link to this user
-            current_admin_slot = UserLevel.objects.filter(
+        # if new_level:
+        #     # Find the current UserLevel entry that corresponds to the Admin's link to this user
+        #     current_admin_slot = UserLevel.objects.filter(
+        #         user=admin, linked_user_id=moving_dummy_user_id, level__order__lte=6
+        #     ).select_related('level').first()
+            
+        #     original_level = current_admin_slot.level if current_admin_slot else None
+            
+        #     is_level_changed = original_level and original_level.pk != new_level.pk
+
+        #     if is_level_changed and instance.is_active: 
+                
+        #         # 1. Free up the original slot
+        #         if current_admin_slot:
+        #             UserLevel.objects.filter(pk=current_admin_slot.pk).update(linked_user_id=None)
+                
+        #         # 2. Occupy the new slot (Reusing your previous logic)
+        #         admin_new_level_slot = UserLevel.objects.filter(user=admin, level=new_level).first()
+        #         if admin_new_level_slot and admin_new_level_slot.linked_user_id:
+        #             # Unlink the overwritten user from all admin slots
+        #             overwritten_user_id = admin_new_level_slot.linked_user_id
+        #             UserLevel.objects.filter(user=admin, linked_user_id=overwritten_user_id).update(linked_user_id=None)
+                    
+        #         UserLevel.objects.filter(user=admin, level=new_level).update(linked_user_id=moving_dummy_user_id)
+        
+
+        if new_level and instance.is_active: # Keep this check (level provided AND user is active)
+            
+            # 1. Find the current slot *holding* this dummy user under the admin
+            current_slot_holding_user = UserLevel.objects.filter(
                 user=admin, linked_user_id=moving_dummy_user_id, level__order__lte=6
             ).select_related('level').first()
             
-            original_level = current_admin_slot.level if current_admin_slot else None
+            # Determine the PK of the level this user is currently linked to, or None
+            original_level_pk = current_slot_holding_user.level.pk if current_slot_holding_user else None
             
-            is_level_changed = original_level and original_level.pk != new_level.pk
+            # 🟢 CRITICAL FIX: Check if it's a new placement (unlinked) OR a move to a different level.
+            is_placement_or_move = (original_level_pk is None) or (original_level_pk != new_level.pk)
 
-            if is_level_changed and instance.is_active: 
+            if is_placement_or_move: 
                 
-                # 1. Free up the original slot
-                if current_admin_slot:
-                    UserLevel.objects.filter(pk=current_admin_slot.pk).update(linked_user_id=None)
+                # 1a. Free up the original slot (only runs if an existing link was found)
+                if current_slot_holding_user:
+                    UserLevel.objects.filter(pk=current_slot_holding_user.pk).update(linked_user_id=None)
                 
-                # 2. Occupy the new slot (Reusing your previous logic)
+                # 2. Occupy the new slot (level=new_level)
                 admin_new_level_slot = UserLevel.objects.filter(user=admin, level=new_level).first()
-                if admin_new_level_slot and admin_new_level_slot.linked_user_id:
-                    # Unlink the overwritten user from all admin slots
-                    overwritten_user_id = admin_new_level_slot.linked_user_id
-                    UserLevel.objects.filter(user=admin, linked_user_id=overwritten_user_id).update(linked_user_id=None)
+                
+                if admin_new_level_slot:
+                    # Unlink any overwritten user from ALL admin slots if the new slot is already occupied
+                    if admin_new_level_slot.linked_user_id:
+                        overwritten_user_id = admin_new_level_slot.linked_user_id
+                        UserLevel.objects.filter(user=admin, linked_user_id=overwritten_user_id).update(linked_user_id=None)
                     
-                UserLevel.objects.filter(user=admin, level=new_level).update(linked_user_id=moving_dummy_user_id)
+                    # Link the dummy user to the new level slot
+                    UserLevel.objects.filter(user=admin, level=new_level).update(linked_user_id=moving_dummy_user_id)
+
 
 
         # --- PART 3: Handle Admin Slot Linking/Unlinking (Activation/Deactivation) ---
