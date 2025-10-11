@@ -14,7 +14,7 @@ class VerifyOTPSerializer(serializers.Serializer):
     otp = serializers.CharField()
     
 class RegistrationSerializer(serializers.Serializer):
-    sponsor_id = serializers.CharField(required=True)
+    sponsor_id = serializers.CharField(required=False, allow_blank=True)
     placement_id = serializers.CharField(required=False, allow_blank=True)
     first_name = serializers.CharField()
     last_name = serializers.CharField()
@@ -35,8 +35,9 @@ class RegistrationSerializer(serializers.Serializer):
          raise serializers.ValidationError({"password": "Passwords do not match."})
 
     # Check sponsor exists
-        if not CustomUser.objects.filter(user_id=data["sponsor_id"]).exists():
-          raise serializers.ValidationError({"sponsor_id": "Sponsor ID does not exist."})
+        sponsor_id = data.get("sponsor_id")
+        if sponsor_id and not validate_sponsor(sponsor_id):
+            raise serializers.ValidationError({"sponsor_id": "Sponsor ID does not exist."})
 
     # Check placement ID validity and limit
         placement_id = data.get("placement_id")
@@ -120,7 +121,7 @@ class LoginSerializer(serializers.Serializer):
             raise serializers.ValidationError("Invalid UserID or password.")
 
         # ✅ Only allow login if payment/registration verified
-        if not user.is_active:
+        if not user.is_active and not user.is_superuser:
             raise serializers.ValidationError("This account is not active. Complete payment verification.")
 
         data["user"] = user

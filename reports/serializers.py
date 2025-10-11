@@ -5,6 +5,9 @@ from django.db.models import Count, Sum, Q,F
 from datetime import datetime
 from django.utils import timezone
 from rest_framework import serializers
+from django.urls import reverse
+from decimal import Decimal
+
 
 from django.core.exceptions import ObjectDoesNotExist
 
@@ -377,56 +380,72 @@ class PaymentReportSerializer(serializers.ModelSerializer):
         return representation
 
 
-class BonusSummarySerializer(serializers.ModelSerializer):
-    username = serializers.SerializerMethodField()  # Current user's user_id
-    bonus_amount = serializers.SerializerMethodField()  # Bonus received
-    status = serializers.SerializerMethodField()     # Converted status
-    total_bonus = serializers.SerializerMethodField()  # Total bonus (optional aggregate)
+
+class BonusSummaryDataSerializer(serializers.Serializer):
+    """Calculates a single, aggregated income statement summary for a user."""
+    user_id = serializers.CharField(read_only=True)
+    username = serializers.CharField(read_only=True)
+    statement_date = serializers.CharField(read_only=True)
+    referral_bonus = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    level_help = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    rank_bonus = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    send_help = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    net_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    received_total = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+
+    def to_representation(self, user):
+        # Data Aggregation Logic:
+        sent_help_sum = UserLevel.objects.filter(
+            user=user, 
+            status='paid',
+        ).exclude(level__name='Refer Help').aggregate(Sum('level__amount'))['level__amount__sum'] or Decimal('0.00')
+
+        received_total = UserLevel.objects.filter(
+            user=user
+        ).aggregate(Sum('received'))['received__sum'] or Decimal('0.00')
+        
+        # Placeholders for breakdown (modify with your actual logic if available)
+        referral_bonus = Decimal('0.00')
+        level_help = Decimal('0.00')
+        rank_bonus = Decimal('0.00')
+        
+        return {
+            'user_id': user.user_id,
+            'username': f"{user.first_name} {user.last_name}".strip(),
+            'statement_date': timezone.now().strftime('%Y-%m-%d'),
+            'referral_bonus': referral_bonus,
+            'level_help': level_help,
+            'rank_bonus': rank_bonus,
+            'send_help': sent_help_sum,
+            'net_amount': sent_help_sum,
+            'received_total': received_total,
+        }
+
+class UserBonusListSerializer(serializers.ModelSerializer):
+    """Serializer for listing users and generating PDF download links."""
+    full_name = serializers.SerializerMethodField()
+    pdf_download_url = serializers.SerializerMethodField()
 
     class Meta:
-        model = UserLevel
-        fields = ['id', 'username', 'bonus_amount', 'status', 'total_bonus']
+        model = CustomUser
+        fields = ['id','user_id', 'full_name', 'email', 'pdf_download_url']
+        
+    def get_full_name(self, obj):
+        return f"{obj.first_name} {obj.last_name}".strip()
 
-    def validate(self, data):
-        """Validate the data to ensure consistency with frontend input."""
+    def get_pdf_download_url(self, obj):
         request = self.context.get('request')
         if not request:
-            raise serializers.ValidationError("Request context is missing.")
-        return data
-
-    def get_username(self, obj):
-        """Get the current user's user_id."""
-        user = getattr(obj, 'user', None)
-        if user:
-            return getattr(user, 'user_id', 'N/A')
-        return 'N/A'
-
-    def get_bonus_amount(self, obj):
-        """Get the bonus amount from received field."""
-        return getattr(obj, 'received', 0) if hasattr(obj, 'received') else 0
-
-    def get_status(self, obj):
-        """Convert status to 'Completed' or 'Pending', refined by LevelPayment if exists."""
-        latest_payment = getattr(obj, 'payments', []).order_by('-created_at').first()
-        if latest_payment and latest_payment.status == 'Verified':
-            return "Completed"
-        return "Completed" if obj.status == 'paid' else "Pending"
-
-    def get_total_bonus(self, obj):
-        """Get the total bonus for the user across all UserLevel records."""
-        user = getattr(obj, 'user', None)
-        if user:
-            total = UserLevel.objects.filter(user=user).aggregate(total=Sum('received'))['total'] or 0
-            return total
-        return 0
-
-    def to_representation(self, instance):
-        """Ensure all fields are present with fallbacks."""
-        representation = super().to_representation(instance)
-        for field in self.fields:
-            if representation.get(field) is None:
-                representation[field] = 'N/A' if field not in ['bonus_amount', 'total_bonus'] else 0 if field in ['bonus_amount', 'total_bonus'] else None
-        return representation
+            return None
+        
+        try:
+            
+            pdf_path = reverse('single-user-bonus-detail', kwargs={'user_id': obj.user_id})
+            return request.build_absolute_uri(f"{pdf_path}?export=pdf")
+            
+        except Exception:
+            # Fallback for debugging 
+            return f"Error: Check URL config for user {obj.user_id}"
 
 
 class LevelUsersSerializer(serializers.ModelSerializer):

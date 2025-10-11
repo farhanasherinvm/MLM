@@ -18,7 +18,8 @@ from .serializers import (
 from django.http import HttpResponse
 import csv
 import io
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.units import inch
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.pagesizes import A4
@@ -30,7 +31,9 @@ from decimal import Decimal
 from django.db.utils import OperationalError, ProgrammingError
 from django.core.exceptions import FieldError
 from django.db.models.expressions import OuterRef, Subquery 
-
+from users.models import Payment
+from level.models import PmfPayment
+from operator import attrgetter
 logger = logging.getLogger(__name__)
 
 # Helper function for safe date conversion (used in both views)
@@ -40,160 +43,264 @@ def safe_parse_date(date_str):
     except (ValueError, TypeError):
         return None
 
-# --- Existing AUC Report View (Kept as is for compatibility with combined data) ---
+
 
 class AdminAUCReportView(APIView):
     permission_classes = [IsAdminUser]
     pagination_class = PageNumberPagination
     pagination_class.page_size = 10
+    
+    def get_all_payment_data(self):
+        # 1. Fetch Registration Payments (must be Verified)
+        registration_payments = Payment.objects.filter(
+            status='Verified' 
+        ).select_related('user').all()
 
-    def get(self, request):
-        user_levels = UserLevel.objects.select_related('user', 'level').all()
-        level_payments = LevelPayment.objects.select_related('user_level__user', 'user_level__level').all()
-        auc_data = list(user_levels) + list(level_payments)
+        # 2. Fetch PMF Payments (must be Verified)
+        pmf_payments = PmfPayment.objects.filter(
+            status='Verified'
+        ).select_related('user').all()
 
-        email = request.query_params.get("email")
-        status = request.query_params.get("status")
-        user_id = request.query_params.get("user_id")
-        username = request.query_params.get("username")
+        # Combine and sort by creation date (descending)
+        combined_data = sorted(
+            list(registration_payments) + list(pmf_payments),
+            key=attrgetter('created_at'),
+            reverse=True
+        )
+        return combined_data
+
+    def apply_filters(self, request, combined_data):
+        
+
+        email = request.query_params.get("email", '').lower()
+        user_id = request.query_params.get("user_id", '').lower()
+        search = request.query_params.get('search', '').lower()
         start_date_str = request.query_params.get("start_date")
         end_date_str = request.query_params.get("end_date")
         limit = request.query_params.get("limit")
-        export = request.query_params.get("export")
         
         start_date = safe_parse_date(start_date_str)
         end_date = safe_parse_date(end_date_str)
-
-        # Filters - (Object list filtering is retained from original AUC View)
-        if email:
-            auc_data = [item for item in auc_data if hasattr(item, 'user') and getattr(item.user, 'email', '').lower().find(email.lower()) != -1]
         
-        if username:
-            auc_data = [item for item in auc_data if hasattr(item, 'user') and (
-                getattr(item.user, 'first_name', '').lower().find(username.lower()) != -1 or
-                getattr(item.user, 'last_name', '').lower().find(username.lower()) != -1 or
-                f"{getattr(item.user, 'first_name', '')} {getattr(item.user, 'last_name', '')}".lower().find(username.lower()) != -1
-            )]
-            
-        if status and status.lower() != "all":
-            if status.lower() == "completed":
-                auc_data = [item for item in auc_data if getattr(item, 'status', '').lower() == 'paid']
-            elif status.lower() == "pending":
-                auc_data = [item for item in auc_data if getattr(item, 'status', '').lower() != 'paid']
+        filtered_data = []
+
+        for item in combined_data:
+            # Need to re-implement the user retrieval utility here if it's not a method on the view
+            def _get_user_from_item(obj):
+                if hasattr(obj, 'user') and obj.user:
+                    return obj.user
                 
-        if user_id:
-            auc_data = [item for item in auc_data if hasattr(item, 'user') and getattr(item.user, 'user_id', '').lower() == user_id.lower()]
+                if obj.__class__.__name__ == 'Payment':
+                    payment_user_id = getattr(obj, 'user_id', None)
+                    
+                    if payment_user_id:
+                        try:
+                            return CustomUser.objects.get(user_id=payment_user_id)
+                        except CustomUser.DoesNotExist:
+                            pass
+                            
+                return None
             
-        if start_date:
-            auc_data = [item for item in auc_data if (
-                (getattr(item, 'requested_date', None) and item.requested_date.date() >= start_date) or
-                (getattr(item, 'created_at', None) and item.created_at.date() >= start_date)
-            )]
-        if end_date:
-            auc_data = [item for item in auc_data if (
-                (getattr(item, 'requested_date', None) and item.requested_date.date() <= end_date) or
-                (getattr(item, 'created_at', None) and item.created_at.date() <= end_date)
-            )]
+            user = _get_user_from_item(item)
 
-        search = request.query_params.get('search', '')
-        if search:
-            auc_data = [item for item in auc_data if (
-                hasattr(item, 'user') and (
-                    getattr(item.user, 'first_name', '').lower().find(search.lower()) != -1 or
-                    getattr(item.user, 'last_name', '').lower().find(search.lower()) != -1 or
-                    getattr(item.user, 'user_id', '').lower().find(search.lower()) != -1 or
-                    (getattr(item, 'status', '') and item.status.lower().find(search.lower()) != -1) or
-                    (getattr(item, 'payment_method', '') and item.payment_method.lower().find(search.lower()) != -1)
-                )
-            )]
+            if user is None:
+                continue 
+            
+            # --- Text/ID Filters ---
+            match_text = True
+            if search or user_id or email:
+                user_match = False
+                if user:
+                    if user_id and user.user_id.lower() == user_id:
+                        user_match = True
+                    elif email and user.email and user.email.lower().find(email) != -1:
+                        user_match = True
+                    elif search:
+                        name = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".lower()
+                        if user.user_id.lower().find(search) != -1 or name.find(search) != -1 or (user.email and user.email.lower().find(search) != -1):
+                            user_match = True
+                
+                if (user_id or email or search) and not user_match:
+                    match_text = False
 
+            # --- Date Filters ---
+            match_date = True
+            item_date = item.created_at.date() if item.created_at else None
+            
+            if item_date:
+                if start_date and item_date < start_date:
+                    match_date = False
+                if end_date and item_date > end_date:
+                    match_date = False
+            else:
+                if start_date or end_date:
+                    match_date = False
+
+            if match_text and match_date:
+                filtered_data.append(item)
+
+            if limit:
+                try:
+                    limit_int = int(limit)
+                    filtered_data = filtered_data[:limit_int]
+                    # If we're exporting, we use this limited set.
+                except ValueError:
+                    pass 
+
+        return filtered_data
+
+
+    def get(self, request):
+        combined_data = self.get_all_payment_data()
+        
+        # 1. Apply Filters
+        filtered_data = self.apply_filters(request, combined_data)
+        
+        limit = request.query_params.get("limit")
+        export = request.query_params.get("export")
+        
+        # 2. Handle Limit
         if limit:
             try:
-                limit = int(limit)
-                auc_data = auc_data[:limit]
+                limit_int = int(limit)
+                queryset_for_export = filtered_data[:limit_int]
+                # If we're exporting, we use this limited set.
             except ValueError:
-                pass
+                pass 
 
-        # Export options (Re-used helper methods from original code)
-        if export == "csv":
-            return self.export_csv(auc_data, 'auc_report')
-        elif export == "pdf":
-            return self.export_pdf(auc_data, 'auc_report')
-        elif export == "xlsx":
-            return self.export_xlsx(auc_data, 'auc_report')
+                
 
+        # 3. Serialize all filtered data to calculate totals, regardless of pagination/limit
+        full_serialized_data = AUCReportSerializer(filtered_data, many=True).data
+
+        # 4. Calculate Total Payments and GST
+        total_payments = sum(Decimal(item['amount']) for item in full_serialized_data)
+        total_gst = sum(Decimal(item['gst_total']) for item in full_serialized_data)
+        total_cgst = sum(Decimal(item['cgst']) for item in full_serialized_data)
+        total_sgst = sum(Decimal(item['sgst']) for item in full_serialized_data)
+        
+        totals = {
+            'total_payments': total_payments.quantize(Decimal('0.01')),
+            'total_gst': total_gst.quantize(Decimal('0.01')),
+            'total_cgst': total_cgst.quantize(Decimal('0.01')),
+            'total_sgst': total_sgst.quantize(Decimal('0.01')),
+        }
+
+        # 5. Handle Export
+        if export in ["csv", "pdf", "xlsx"]:
+            # Use the filtered_data for export
+            if export == "csv":
+                return self.export_csv(filtered_data, totals, 'auc_report')
+            elif export == "pdf":
+                return self.export_pdf(filtered_data, totals, 'auc_report')
+            # elif export == "xlsx":
+            #     return self.export_xlsx(filtered_data, totals, 'auc_report') 
+
+        # 6. Handle Pagination (for JSON response)
         paginator = self.pagination_class()
-        page = paginator.paginate_queryset(auc_data, request)
+        page = paginator.paginate_queryset(filtered_data, request)
+        
         if page is not None:
-            serializer = AUCReportSerializer(page, many=True, context={'request': request})
-            return paginator.get_paginated_response(serializer.data)
+            serializer = AUCReportSerializer(page, many=True)
+            response_data = paginator.get_paginated_response(serializer.data).data
+            # Add totals to the paginated response
+            response_data['report_totals'] = totals
+            return Response(response_data)
             
-        serializer = AUCReportSerializer(auc_data, many=True, context={'request': request})
-        return Response(serializer.data)
+        # If no pagination/limit, return all data + totals
+        return Response({
+            'results': full_serialized_data,
+            'report_totals': totals
+        })
 
-    # Export methods for AUCReportView (Re-used from original code)
-    def export_csv(self, queryset, filename_prefix):
+    # --- Export Methods (Updated to include totals) ---
+
+    def export_csv(self, queryset, totals, filename_prefix):
         response = HttpResponse(content_type="text/csv")
         response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.csv"'
         writer = csv.writer(response)
-        writer.writerow(['From User', 'Username', 'From Name', 'Linked Username', 'Amount', 'Status', 'Date', 'Payment Method'])
+        
+        writer.writerow(['User ID', 'Name', 'Phone', 'Email', 'Type', 'Amount', 'Status', 'Date', 'GST Total', 'CGST', 'SGST'])
+        
         serializer = AUCReportSerializer(queryset, many=True)
         for data in serializer.data:
             writer.writerow([
-                data['from_user'], data['username'], data['from_name'], data['linked_username'], str(data['amount']), 
-                data['status'], str(data['date']) if data['date'] else '', data['payment_method']
+                data['user_id'], data['user_name'], data['phone_number'], data['email'], 
+                data['transaction_type'], str(data['amount']), data['status'], 
+                str(data['date']) if data['date'] else '', 
+                str(data['gst_total']), str(data['cgst']), str(data['sgst'])
             ])
+            
+        # Add totals section
+        writer.writerow([])
+        writer.writerow(['TOTALS:', '', '', '', '', ''])
+        writer.writerow(['Total Payments', str(totals['total_payments'])])
+        writer.writerow(['Total GST', str(totals['total_gst'])])
+        writer.writerow(['Total CGST', str(totals['total_cgst'])])
+        writer.writerow(['Total SGST', str(totals['total_sgst'])])
+        
         return response
 
-    def export_pdf(self, queryset, filename_prefix):
+    def export_pdf(self, queryset, totals, filename_prefix):
         buffer = io.BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=A4)
+        doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30)
         elements = []
         styles = getSampleStyleSheet()
-        elements.append(Paragraph(f"{filename_prefix.replace('_', ' ').title()} Report", styles["Title"]))
+        elements.append(Paragraph(f"{filename_prefix.replace('_', ' ').upper()} REPORT", styles["Title"]))
+        elements.append(Spacer(1, 12))
 
-        data = [['From User', 'Username', 'From Name', 'Linked Username', 'Amount', 'Status', 'Date', 'Payment Method']]
+        # --- Data Table ---
+        data = [['User ID', 'Name', 'Phone', 'Email', 'Type', 'Amount', 'Status', 'Date', 'GST Total', 'CGST', 'SGST']]
+        
         serializer = AUCReportSerializer(queryset, many=True)
         for data_item in serializer.data:
             data.append([
-                data_item['from_user'], data_item['username'], data_item['from_name'], data_item['linked_username'], 
-                str(data_item['amount']), data_item['status'], str(data_item['date']) if data_item['date'] else '', data_item['payment_method']
+                data_item['user_id'], data_item['user_name'], data_item['phone_number'], data_item['email'], 
+                data_item['transaction_type'], str(data_item['amount']), data_item['status'], 
+                str(data_item['date']) if data_item['date'] else '', 
+                str(data_item['gst_total']), str(data_item['cgst']), str(data_item['sgst'])
             ])
 
-        table = Table(data)
+        table_width = A4[0] - 60 
+        col_widths = [table_width * w for w in [0.09, 0.15, 0.11, 0.17, 0.11, 0.08, 0.08, 0.10, 0.11, 0.09, 0.09]]
+        table = Table(data, colWidths=col_widths)
+        
         table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#CCCCCC')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('ALIGN', (5, 1), (10, -1), 'RIGHT'), # Align amounts to the right
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
         ]))
         elements.append(table)
+        elements.append(Spacer(1, 24))
+        
+        # --- Totals Table ---
+        totals_data = [
+            ['Report Totals', ''],
+            ['Total Payments', f"₹ {totals['total_payments']}"],
+            ['Total GST (18%)', f"₹ {totals['total_gst']}"],
+            ['Total CGST (9%)', f"₹ {totals['total_cgst']}"],
+            ['Total SGST (9%)', f"₹ {totals['total_sgst']}"],
+        ]
+        
+        totals_table = Table(totals_data, colWidths=[2.5*inch, 1.5*inch])
+        totals_table.setStyle(TableStyle([
+            ('FONTNAME', (0, 0), (0, 0), 'Helvetica-Bold'),
+            ('FONTNAME', (0, 1), (0, -1), 'Helvetica-Bold'),
+            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+            ('BOX', (0, 0), (-1, -1), 1, colors.black),
+            ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ]))
+        elements.append(totals_table)
+
         doc.build(elements)
 
         buffer.seek(0)
         response = HttpResponse(buffer, content_type='application/pdf')
         response['Content-Disposition'] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.pdf"'
         return response
-
-    def export_xlsx(self, queryset, filename_prefix):
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "AUCReport"
-        ws.append(['From User', 'Username', 'From Name', 'Linked Username', 'Amount', 'Status', 'Date', 'Payment Method'])
-        serializer = AUCReportSerializer(queryset, many=True)
-        for data in serializer.data:
-            ws.append([
-                data['from_user'], data['username'], data['from_name'], data['linked_username'], 
-                data['amount'], data['status'], str(data['date']) if data['date'] else '', data['payment_method']
-            ])
-        output = io.BytesIO()
-        wb.save(output)
-        output.seek(0)
-        response = HttpResponse(output, content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.xlsx"'
-        return response
-
 # ----------------------------------------------------------------------------
 # --- NEW SPECIFIC REPORT VIEWS (Replacing AllAdminReportsView logic) ---
 # ----------------------------------------------------------------------------

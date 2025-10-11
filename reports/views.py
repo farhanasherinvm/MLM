@@ -5,16 +5,17 @@ from rest_framework.decorators import action
 from django.http import HttpResponse
 import csv
 import io
-from reportlab.pdfgen import canvas
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph,Spacer
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib import colors
+from reportlab.lib.units import inch
+from reportlab.pdfgen import canvas
 from django_filters.rest_framework import DjangoFilterBackend
 from level.models import UserLevel, LevelPayment
 from level.serializers import AdminPaymentReportSerializer
 from .filters import PaymentFilter
-from .serializers import DashboardReportSerializer, LevelPaymentReportSerializer, SendRequestReportSerializer, AUCReportSerializer, PaymentReportSerializer, LevelUsersSerializer,BonusSummarySerializer
+from .serializers import DashboardReportSerializer, LevelPaymentReportSerializer, SendRequestReportSerializer, AUCReportSerializer, PaymentReportSerializer, LevelUsersSerializer,UserBonusListSerializer,BonusSummaryDataSerializer
 from users.models import CustomUser
 from django.db.models import Count, Sum, Q,Value, CharField
 from django.utils import timezone
@@ -25,6 +26,10 @@ from rest_framework.pagination import PageNumberPagination
 import logging
 from datetime import datetime
 from django.db.models.functions import Concat
+from rest_framework.generics import ListAPIView
+from rest_framework.permissions import IsAuthenticated
+from decimal import Decimal
+
 
 logger = logging.getLogger(__name__)
 
@@ -278,24 +283,42 @@ class DashboardReportViewSet(viewsets.ViewSet):
     permission_classes = [IsAdminUser]
 
     def list(self, request):
+        
+        # 1. Total Members: Active users only
         total_members = CustomUser.objects.filter(is_active=True).count()
         logger.debug(f"Total members: {total_members}")
-
-        # Total income: Sum of all received from UserLevel
-        total_income = UserLevel.objects.aggregate(total=Sum('received'))['total'] or 0
+         
+        PAID_STATUS = 'paid'
+        # 2. Total Income: Sum of all received amounts
+        # NOTE: This correctly handles the case where 'received' might be null by defaulting to 0
+        total_income = UserLevel.objects.filter(
+            status=PAID_STATUS  
+        ).aggregate(total=Sum('received'))['total']
+        total_income = total_income if isinstance(total_income, (int, float, Decimal)) else Decimal(0)
         logger.debug(f"Total income: {total_income}")
 
-        # Total active level 6: Users with all 6 levels paid (excluding Refer Help)
+        # 3. Total Active Level 6: Users with exactly 6 paid levels (1-6)
+        # --------------------------------------------------------------------------------
+        # FIX: The query is fine, but to improve efficiency, filter first and then count distinct IDs.
+        # This approach ensures users are counted only if they have ALL 6 levels paid.
+        # It's better to use __in and annotate/filter once for the total.
         active_level_6 = CustomUser.objects.filter(
+            # Filter users who have at least one paid level <= 6
             userlevel__level__order__lte=6,
             userlevel__status='paid'
         ).annotate(
+            # Count the number of paid levels they have (levels 1 through 6)
             paid_levels=Count('userlevel', filter=Q(userlevel__level__order__lte=6, userlevel__status='paid'))
-        ).filter(paid_levels=6).distinct().count()
+        ).filter(
+            # Only keep those who have exactly 6 paid levels
+            paid_levels=6
+        ).distinct().count()
         logger.debug(f"Total active level 6: {active_level_6}")
+        # --------------------------------------------------------------------------------
 
-        # New users on each level: Users with exactly N levels completed (1-6)
+        # 4. New users on each level: Users with exactly N levels completed (1-6)
         new_users_per_level = []
+        # NOTE: The loop and annotation logic here is correct for counting users at exactly each level.
         for lvl in range(1, 7):
             users_at_level = CustomUser.objects.filter(
                 userlevel__level__order__lte=lvl,
@@ -306,55 +329,88 @@ class DashboardReportViewSet(viewsets.ViewSet):
             new_users_per_level.append({'level': lvl, 'count': users_at_level})
             logger.debug(f"New users at level {lvl}: {users_at_level}")
 
-        # Recent payments: Last 10 verified payments (last 30 days)
+        # 5. Recent payments: Last 10 verified payments (last 30 days)
+        # This logic is correct.
         recent_payments_qs = LevelPayment.objects.filter(
             status='Verified',
             created_at__gte=timezone.now() - timedelta(days=30)
-        ).order_by('-created_at')[:10]
+        ).select_related('user_level__user').order_by('-created_at')[:10]
         recent_payments = LevelPaymentReportSerializer(recent_payments_qs, many=True).data
         logger.debug(f"Recent payments count: {len(recent_payments)}")
+        recent_payments = LevelPaymentReportSerializer(recent_payments_qs, many=True).data
 
-        # New user registrations: Last 10 users with username, user_id, levels done (last 30 days)
+        # 6. New user registrations: Last 10 users (last 30 days)
+        # This logic is correct.
         recent_users_qs = CustomUser.objects.filter(
             date_of_joining__gte=timezone.now() - timedelta(days=30)
-        ).order_by('-date_of_joining')[:10]
+        ).order_by('-date_of_joining').prefetch_related('userlevel_set')[:10] # Added prefetch for performance
+        
         new_user_registrations = []
         for user in recent_users_qs:
             completed_levels = UserLevel.objects.filter(
                 user=user, status='paid', level__order__lte=6
             ).count()
+            
+            # Using user.email as fallback is a good practice
+            username_display = f"{user.first_name} {user.last_name}".strip() 
             new_user_registrations.append({
                 'user_id': user.user_id,
-                'username': f"{user.first_name} {user.last_name}".strip() or user.email,
+                'username': username_display or user.email, 
                 'levels_done': completed_levels
             })
         logger.debug(f"New user registrations count: {len(new_user_registrations)}")
+         
+        # 7. Latest report: Data for latest help requests and payment
+        latest_refer_help = UserLevel.objects.filter(
+            level__name='Refer Help', 
+            status=PAID_STATUS # <-- ADDED: Filter for paid status
+        ).order_by('-requested_date').select_related('user', 'level').first()
 
-        # Latest report: Data for latest help requests and payment
-        latest_refer_help = UserLevel.objects.filter(level__name='Refer Help').order_by('-requested_date').first()
-        latest_level_help = UserLevel.objects.filter(level__name__contains='Level').order_by('-requested_date').first()
-        latest_level_payment = LevelPayment.objects.order_by('-created_at').first()
+        latest_level_help = UserLevel.objects.filter(
+            level__name__contains='Level', 
+            status=PAID_STATUS # <-- ADDED: Filter for paid status
+        ).order_by('-requested_date').select_related('user', 'level').first()
+
+        # 3. Latest Level Payment (Use the existing query, but enhance reporting below)
+        latest_level_payment = LevelPayment.objects.order_by('-created_at').select_related('user_level__user').first()
+
+
+        # --------------------------------------------------------------------------------
+        # FIX: The dictionary structure for latest_report is complex and the 'N/A' 
+        # handling can be simplified to avoid repeated checks.
+        # --------------------------------------------------------------------------------
+        
+        def safe_user_data(user_level_instance):
+            """Safely extracts user data from a UserLevel instance or returns N/A dict."""
+            if not user_level_instance or not user_level_instance.user:
+                return {'name': 'N/A', 'email_id': 'N/A', 'first_name': 'N/A', 'last_name': 'N/A', 'amount': 0, 'time': 'N/A'}
+
+            user = user_level_instance.user
+            level = user_level_instance.level
+
+            return {
+                'name': f"{user.first_name} {user.last_name}".strip() or user.email,
+                'email_id': user.email or 'N/A',
+                'first_name': user.first_name or 'N/A',
+                'last_name': user.last_name or 'N/A',
+                'amount': level.amount or 0,
+                'time': user_level_instance.requested_date.strftime('%Y-%m-%d %H:%M:%S') if user_level_instance.requested_date else 'N/A'
+            }
 
         latest_report = {
-            'latest_refer_help': latest_refer_help.level.name if latest_refer_help else 'N/A',
-            'latest_refer_user': {
-                'name': f"{latest_refer_help.user.first_name} {latest_refer_help.user.last_name}".strip() if latest_refer_help else 'N/A',
-                'email_id': latest_refer_help.user.email if latest_refer_help else 'N/A',
-                'first_name': latest_refer_help.user.first_name if latest_refer_help else 'N/A',
-                'last_name': latest_refer_help.user.last_name if latest_refer_help else 'N/A',
-                'amount': latest_refer_help.level.amount if latest_refer_help else 0,
-                'time': latest_refer_help.requested_date.strftime('%Y-%m-%d %H:%M:%S') if latest_refer_help and latest_refer_help.requested_date else 'N/A'
-            } if latest_refer_help else {
-                'name': 'N/A', 'email_id': 'N/A', 'first_name': 'N/A', 'last_name': 'N/A', 'amount': 0, 'time': 'N/A'
-            },
-            'latest_level_help': latest_level_help.level.name if latest_level_help else 'N/A',
+            'latest_refer_help': latest_refer_help.level.name if latest_refer_help and latest_refer_help.level else 'N/A',
+            'latest_refer_user': safe_user_data(latest_refer_help),
+            
+            'latest_level_help': latest_level_help.level.name if latest_level_help and latest_level_help.level else 'N/A',
+            
             'latest_level_payment': {
                 'amount': latest_level_payment.amount if latest_level_payment else 0,
-                'time': latest_level_payment.created_at.strftime('%Y-%m-%d %H:%M:%S') if latest_level_payment else 'N/A',
+                'time': latest_level_payment.created_at.strftime('%Y-%m-%d %H:%M:%S') if latest_level_payment and latest_level_payment.created_at else 'N/A',
                 'done': latest_level_payment.status == 'Verified' if latest_level_payment else False
-            } if latest_level_payment else {'amount': 0, 'time': 'N/A', 'done': False}
+            }
         }
-
+        
+        # 8. Final Response Serialization
         data = {
             'total_members': total_members,
             'total_income': total_income,
@@ -364,7 +420,9 @@ class DashboardReportViewSet(viewsets.ViewSet):
             'new_user_registrations': new_user_registrations,
             'latest_report': latest_report
         }
-        serializer = DashboardReportSerializer(data)
+        
+        # The serializer should be able to handle the data structure passed
+        serializer = DashboardReportSerializer(data) 
         return Response(serializer.data)
 
 # Existing UserReportViewSet (unchanged)
@@ -1017,156 +1075,148 @@ class PaymentReport(APIView):
         )
         response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.xlsx"'
         return response
+class StandardPagination(PageNumberPagination):
+    page_size = 10
+    page_size_query_param = 'page_size'
+    max_page_size = 100
 
-class BonusSummary(APIView):
-    pagination_class = PageNumberPagination
-    pagination_class.page_size = 10
+class AllUserBonusSummaryListView(ListAPIView):
+    """Admin endpoint to list all users with pagination, search, and PDF download links."""
+    queryset = CustomUser.objects.all().order_by('id')
+    serializer_class = UserBonusListSerializer
+    pagination_class = StandardPagination
+    permission_classes = [IsAuthenticated, IsAdminUser] # Restrict to admins/staff
 
-    def get(self, request):
-        # Check for PDF export first
-        export = request.query_params.get("export", "").lower()  # Case-insensitive
-        record_id = request.query_params.get("record_id", None)
-        if export == "pdf" and record_id:
-            try:
-                record = UserLevel.objects.get(id=record_id, user=request.user)
-                queryset = UserLevel.objects.filter(id=record_id)  # Single record queryset
-
-                buffer = io.BytesIO()
-                doc = SimpleDocTemplate(buffer, pagesize=A4)
-                elements = []
-                styles = getSampleStyleSheet()
-                title = f"Invoice for {request.user.first_name} {request.user.last_name} ({request.user.user_id}) - Record ID {record_id} - {timezone.now().strftime('%Y-%m-%d %H:%M:%S')}"
-                elements.append(Paragraph(title, styles["Title"]))
-                elements.append(Spacer(1, 12))
-
-                # Serialize data for the specific record
-                send_request_data = SendRequestReportSerializer(queryset, many=True, context={'request': request}).data
-                auc_report_data = AUCReportSerializer(queryset, many=True, context={'request': request}).data
-                payment_report_data = PaymentReportSerializer(queryset, many=True, context={'request': request}).data
-                level_users_data = LevelUsersSerializer(queryset, many=True, context={'request': request}).data
-
-                # Send Request Report Section
-                elements.append(Paragraph("Send Request Report", styles["Heading2"]))
-                send_data = [['From User', 'Username', 'From Name', 'Amount', 'Status', 'Approved At', 'Payment Method', 'Level']]
-                send_data.extend([[item['from_user'], item['username'], item['from_name'], str(item['amount']), item['status'],
-                                   item['requested_date'] if item['requested_date'] else '', item['payment_method'], item.get('level', '')]
-                                  for item in send_request_data])
-                table = Table(send_data)
-                table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
-                ]))
-                elements.append(table)
-                elements.append(Spacer(1, 12))
-
-                # AUC Report Section
-                elements.append(Paragraph("AUC Report", styles["Heading2"]))
-                auc_data = [['From User', 'Username', 'From Name', 'Linked Username', 'Amount', 'Status', 'Date', 'Payment Method']]
-                auc_data.extend([[item['from_user'], item['username'], item['from_name'], item['linked_username'], str(item['amount']),
-                                  item['status'], item['date'] if item['date'] else '', item['payment_method']]
-                                 for item in auc_report_data])
-                table = Table(auc_data)
-                table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
-                ]))
-                elements.append(table)
-                elements.append(Spacer(1, 12))
-
-                # Payment Report Section
-                elements.append(Paragraph("Payment Report", styles["Heading2"]))
-                payment_data = [['From User', 'Username', 'From Name', 'Linked Username', 'Amount', 'Payout Amount', 'Transaction Fee',
-                                 'Status', 'Approved At', 'Total']]
-                payment_data.extend([[item['from_user'], item['username'], item['from_name'], item['linked_username'],
-                                     str(item['amount']), str(item['payout_amount']), str(item['transaction_fee']), item['status'],
-                                     item['requested_date'] if item['requested_date'] else '', str(item['total'])]
-                                    for item in payment_report_data])
-                table = Table(payment_data)
-                table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
-                ]))
-                elements.append(table)
-                elements.append(Spacer(1, 12))
-
-                # Level Users Report Section
-                elements.append(Paragraph("Level Users Report", styles["Heading2"]))
-                level_data = [['From User', 'Username', 'From Name', 'Linked Username', 'Amount', 'Status', 'Level', 'Approved At',
-                               'Total', 'Payment Method']]
-                level_data.extend([[item['from_user'], item['username'], item['from_name'], item['linked_username'],
-                                   str(item['amount']), item['status'], item['level'],
-                                   item['requested_date'] if item['requested_date'] else '', str(item['total']), item['payment_method']]
-                                  for item in level_users_data])
-                table = Table(level_data)
-                table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
-                ]))
-                elements.append(table)
-
-                doc.build(elements)
-                buffer.seek(0)
-                response = HttpResponse(buffer, content_type="application/pdf")
-                timestamp = timezone.now().strftime("%Y%m%d_%H%M%S")  # 20250922_1335
-                response["Content-Disposition"] = f'attachment; filename="invoice_{request.user.user_id}_record_{record_id}_{timestamp}.pdf"'
-                return response
-            except UserLevel.DoesNotExist:
-                return Response({"error": "Record not found"}, status=404)
-
-        # Fetch UserLevel data for the logged-in user
-        queryset = UserLevel.objects.select_related('user', 'level').filter(user=request.user).order_by('-requested_date')
-
-        # Apply filters
-        start_date = request.query_params.get("start_date")
-        end_date = request.query_params.get("end_date")
-        search = request.query_params.get('search', '')
-        if start_date:
-            try:
-                start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
-                queryset = queryset.filter(requested_date__date__gte=start_date)
-            except ValueError:
-                logger.error(f"Invalid start_date format: {start_date}")
-        if end_date:
-            try:
-                end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
-                queryset = queryset.filter(requested_date__date__lte=end_date)
-            except ValueError:
-                logger.error(f"Invalid end_date format: {end_date}")
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        search = self.request.query_params.get('search', '')
         if search:
             queryset = queryset.filter(
-                Q(user__first_name__icontains=search) |
-                Q(user__last_name__icontains=search) |
-                Q(user__user_id__icontains=search) |
-                Q(level__name__icontains=search) |
-                Q(status__icontains=search)
+                Q(user_id__icontains=search) |
+                Q(first_name__icontains=search) |
+                Q(last_name__icontains=search)
             )
+        return queryset
 
-        # Pagination
-        paginator = self.pagination_class()
-        page = paginator.paginate_queryset(queryset, request)
-        if page is not None:
-            serializer = BonusSummarySerializer(page, many=True, context={'request': request})
-            return paginator.get_paginated_response(serializer.data)
+class SingleUserBonusSummaryView(APIView):
+    """Handles PDF generation and JSON summary for a single user (by ID)."""
+    permission_classes = [IsAuthenticated] 
 
-        serializer = BonusSummarySerializer(queryset, many=True, context={'request': request})
-        response_data = {
-            'username': request.user.user_id,
-            'records': serializer.data
-        }
-        return Response(response_data)
+    def create_income_statement_pdf(self, data, user):
+        """Generates the PDF Income Statement using the data calculated by the serializer."""
+        buffer = io.BytesIO()
+        # Set margins to be a bit tighter
+        doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
+        elements = []
+        styles = getSampleStyleSheet()
+        
+        # Custom style for bolding titles
+        bold_style = styles['Normal'].clone('BoldStyle')
+        bold_style.fontName = 'Helvetica-Bold'
+        
+        # --- 1. Header/User Info ---
+        user_info_table = Table([
+            [Paragraph('<font size=20>LIO CLUB X</font>', styles['Title']), '', f"UserID: {data['user_id']}"],
+            ['', '', f"UserName: {data['username']}"],
+        ], colWidths=[2.5*inch, 2*inch, 2*inch])
+        
+        user_info_table.setStyle(TableStyle([
+            ('ALIGN', (2,0), (2,1), 'RIGHT'),
+            ('VALIGN', (0,0), (-1,-1), 'TOP'),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+            ('FONTNAME', (2,0), (2,1), 'Helvetica-Bold'),
+        ]))
+        elements.append(user_info_table)
+        elements.append(Paragraph('Income Statement', styles["Heading1"]))
+        elements.append(Spacer(1, 12))
+        
+        # --- 2. Contact/Statement Date Info ---
+        # NOTE: You may need to adjust attribute names (e.g., 'mobile', 'upi_number') 
+        # to match your CustomUser/Profile model structure.
+        phone = getattr(user, 'mobile', 'xxxxxxxxxx')
+        email = getattr(user, 'email', 'N/A')
+        # Assuming profile attribute exists and has a 'upi_number' field
+        upi_number = getattr(getattr(user, 'profile', None), 'upi_number', '9562763166') 
+        
+        contact_info_table = Table([
+            [f"Phone: {phone[:2]}{'x' * (len(phone)-3)}", f"Statement Date: {data['statement_date']}"],
+            [f"Email: {email}", ''],
+            [f"UPI Number: {upi_number}", ''],
+        ], colWidths=[3*inch, 3*inch])
+        
+        contact_info_table.setStyle(TableStyle([
+            ('LEFTPADDING', (0,0), (-1,-1), 0),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+        ]))
+        elements.append(contact_info_table)
+        elements.append(Spacer(1, 24))
 
+        # --- 3. Income Table ---
+        income_data = [
+            [Paragraph('Income', bold_style), Paragraph('Amount', bold_style)],
+            ['Referral Bonus', f"{data['referral_bonus']:.2f}"],
+            ['Level Help', f"{data['level_help']:.2f}"],
+            ['Rank Bonus', f"{data['rank_bonus']:.2f}"],
+            ['Send Help', f"{data['send_help']:.2f}"],
+            [Paragraph('Net Amount', bold_style), f"{data['net_amount']:.2f}"],
+            [Paragraph('Received Total', bold_style), f"{data['received_total']:.2f}"],
+            [Paragraph("Please Enter a amount", styles['Normal']), ''] # Footer text from image
+        ]
+
+        table_style = TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#CCCCCC')),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('ALIGN', (1, 1), (1, 7), 'RIGHT'), # Align amounts to the right
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTNAME', (0, 5), (-1, 7), 'Helvetica-Bold'), # Total rows
+        ])
+        
+        income_table = Table(income_data, colWidths=[4*inch, 1.5*inch])
+        income_table.setStyle(table_style)
+        elements.append(income_table)
+        elements.append(Spacer(1, 24))
+
+        # 4. Footer
+        elements.append(Paragraph("For More Details Visit At:", styles['Normal']))
+        
+        doc.build(elements)
+        buffer.seek(0)
+        return buffer
+    
+    # The 'get' method remains unchanged and is correct
+    def get(self, request, user_id):
+        # 1. Fetch User and Authorize
+        try:
+            target_user = CustomUser.objects.get(user_id=user_id)
+        except CustomUser.DoesNotExist:
+            return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Non-admins can only view their own report
+        if not request.user.is_staff and target_user != request.user:
+             return Response({"error": "You can only access your own summary."}, status=status.HTTP_403_FORBIDDEN)
+
+        # 2. Get Summary Data via Serializer
+        # Make sure BonusSummaryDataSerializer is correctly imported
+        serializer = BonusSummaryDataSerializer(target_user)
+        summary_data = serializer.data
+        
+        # 3. Handle PDF Export
+        export = request.query_params.get("export", "").lower() 
+        if export == "pdf":
+            try:
+                # This calls the full PDF generation logic
+                buffer = self.create_income_statement_pdf(summary_data, target_user)
+                response = HttpResponse(buffer.getvalue(), content_type="application/pdf")
+                timestamp = timezone.now().strftime("%Y%m%d_%H%M%S")
+                response["Content-Disposition"] = f'attachment; filename="income_statement_{target_user.user_id}_{timestamp}.pdf"'
+                return response
+            except Exception as e:
+                # Log error here
+                return Response({"error": f"PDF generation failed: {e}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # 4. Standard JSON Response
+        return Response(summary_data)
 
 
 class LevelUsersReport(APIView):

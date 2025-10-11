@@ -4,6 +4,8 @@ from django.core.exceptions import ObjectDoesNotExist
 from level.models import UserLevel, LevelPayment, Level
 from users.models import CustomUser 
 from .models import AdminNotification # Included for the Notification serializer
+from django.utils import timezone
+from decimal import Decimal
 
 class AdminSendRequestReportSerializer(serializers.ModelSerializer):
     from_user = serializers.SerializerMethodField()
@@ -122,94 +124,124 @@ class AdminPaymentSerializer(serializers.ModelSerializer):
         level = getattr(obj.user_level, 'level', None) if getattr(obj, 'user_level', None) else None
         return getattr(level, 'name', 'N/A') if level else 'N/A'
     
-# AUCReportSerializer (Provided by User - Retained as is)
 class AUCReportSerializer(serializers.Serializer):
-    from_user = serializers.SerializerMethodField()
-    username = serializers.SerializerMethodField()
-    linked_username = serializers.SerializerMethodField()
-    amount = serializers.SerializerMethodField()
-    status = serializers.SerializerMethodField()
+    """
+    Serializer to unify data from Payment (Registration) and PmfPayment models, 
+    and calculate GST for AUC report.
+    """
+    # User Details
+    user_id = serializers.SerializerMethodField()
+    user_name = serializers.SerializerMethodField()
+    phone_number = serializers.SerializerMethodField()
+    email = serializers.SerializerMethodField()
+    
+    # Payment Details
+    transaction_type = serializers.SerializerMethodField() # Registration, PMF Part 1, PMF Part 2
+    amount = serializers.DecimalField(max_digits=10, decimal_places=2) 
+    
+    # GST Breakdown
+    gst_total = serializers.SerializerMethodField()
+    cgst = serializers.SerializerMethodField()
+    sgst = serializers.SerializerMethodField()
+    
+    # Standard Fields
+    status = serializers.CharField()
     date = serializers.SerializerMethodField()
-    payment_method = serializers.SerializerMethodField()
-    gic = serializers.SerializerMethodField()
+    
 
-    def _get_linked_user(self, obj):
-        linked_user_id = getattr(obj, 'linked_user_id', None)
+
+    def _get_user(self, obj):
         
-        if not hasattr(self, '_linked_user_cache'):
-            self._linked_user_cache = {}
+        # 1. Try direct ForeignKey link 
+        if hasattr(obj, 'user') and obj.user_id and obj.user:
+            return obj.user
+        
+        # 2. Fallback for Payment (Registration Fee) model
+        if obj.__class__.__name__ == 'Payment':
+            payment_user_id = getattr(obj, 'user_id', None)
             
-        if linked_user_id not in self._linked_user_cache:
-            linked_user = None
-            if linked_user_id:
+            if payment_user_id:
                 try:
-                    linked_user = CustomUser.objects.get(user_id=linked_user_id)
+                    # ✅ DIRECT FIX: Use the model to query the database
+                    from your_app.models import CustomUser # OPTIONAL: Import here if preferred
+                    return CustomUser.objects.get(user_id=payment_user_id)  
                 except CustomUser.DoesNotExist:
                     pass
-            self._linked_user_cache[linked_user_id] = linked_user
-            
-        return self._linked_user_cache.get(linked_user_id)
+                except Exception:
+                    # Catch all other exceptions (like database errors)
+                    pass
+        return None
+    
 
-    def get_from_user(self, obj):
-        linked_user = self._get_linked_user(obj)
-        if linked_user:
-            return f"{getattr(linked_user, 'first_name', '')} {getattr(linked_user, 'last_name', '')}".strip()
+    # --- Field Getters ---
+    
+    def get_user_id(self, obj):
+        user = self._get_user(obj)
+        return user.user_id if user else 'N/A'
 
-    def get_username(self, obj):
-        return obj.user.user_id if hasattr(obj, 'user') and obj.user else ''
+    def get_user_name(self, obj):
+        user = self._get_user(obj)
+        if user:
+            return f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip()
+        return 'N/A'
 
+    def get_phone_number(self, obj):
+        user = self._get_user(obj)
+        return getattr(user, 'mobile', 'N/A')
 
+    def get_email(self, obj):
+        user = self._get_user(obj)
+        return getattr(user, 'email', 'N/A')
 
-    def get_linked_username(self, obj):
-        return getattr(obj, 'linked_user_id', '')
-
-    def get_amount(self, obj):
-        if hasattr(obj, 'amount') and obj.amount:
-            return obj.amount
-            
-        if hasattr(obj, 'received') and obj.received:
-            return obj.received
-            
-        if hasattr(obj, 'level') and hasattr(obj.level, 'amount'):
-            return obj.level.amount
-            
-        return 0
-
-    def get_status(self, obj):
-        return obj.status if hasattr(obj, 'status') else ''
+    def get_transaction_type(self, obj):
+        if obj.__class__.__name__ == 'Payment':
+            # Payment model is for the initial 100 registration fee
+            return 'Registration Fee'
+        elif obj.__class__.__name__ == 'PmfPayment':
+            # PmfPayment model is for PMF fees
+            # This calls the method on the PmfPayment model (e.g., "PMF Part 1 Fee")
+            return obj.get_pmf_type_display() 
+        return 'Unknown'
 
     def get_date(self, obj):
-        if isinstance(obj, LevelPayment):
-            return obj.created_at
-        elif isinstance(obj, UserLevel):
-            return obj.approved_at or obj.requested_date
+        if hasattr(obj, 'created_at'):
+            return timezone.localtime(obj.created_at).strftime("%Y-%m-%d %H:%M:%S")
         return None
 
-    def get_payment_method(self, obj):
-        if isinstance(obj, LevelPayment):
-            return obj.payment_method
-        elif isinstance(obj, UserLevel):
-            return obj.payment_mode
-        
-        return ''
-
-    def get_gic(self, obj):
-        base_amount = 0
-
-        if isinstance(obj, LevelPayment):
-            base_amount = getattr(obj, 'amount', 0)
-        
-        elif isinstance(obj, UserLevel):
-            base_amount = getattr(obj, 'received', 0)
-            
-            if base_amount is None or base_amount == 0:
-                if hasattr(obj, 'level') and hasattr(obj.level, 'amount'):
-                    base_amount = getattr(obj.level, 'amount', 0)
+    # --- GST Getters (Assuming 18% total GST) ---
+    def _calculate_gst(self, obj):
+        base_amount = getattr(obj, 'amount', Decimal('0.00'))
         
         try:
-            return float(base_amount) * 0.18
+            base_amount = Decimal(base_amount)
         except (TypeError, ValueError):
-            return 0
+            return Decimal('0.00'), Decimal('0.00')
+        
+        if base_amount == 0:
+            return Decimal('0.00'), Decimal('0.00')
+
+        # Calculation assuming 'amount' is the gross amount (Amount + GST)
+        gst_rate = Decimal('0.18')
+        # Total GST = (Gross Amount * GST Rate) / (1 + GST Rate)
+        total_gst = (base_amount * gst_rate) / (Decimal('1.00') + gst_rate)
+        half_gst = total_gst / Decimal('2.0')
+        
+        return total_gst.quantize(Decimal('0.01')), half_gst.quantize(Decimal('0.01'))
+
+    def get_gst_total(self, obj):
+        total_gst, _ = self._calculate_gst(obj)
+        return total_gst
+
+    def get_cgst(self, obj):
+        _, half_gst = self._calculate_gst(obj)
+        return half_gst
+
+    def get_sgst(self, obj):
+        _, half_gst = self._calculate_gst(obj)
+        return half_gst
+
+
+
 
 class AdminNotificationSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source='user.user_id', read_only=True) 
