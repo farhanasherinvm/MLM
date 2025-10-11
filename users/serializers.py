@@ -121,7 +121,7 @@ class LoginSerializer(serializers.Serializer):
             raise serializers.ValidationError("Invalid UserID or password.")
 
         # ✅ Only allow login if payment/registration verified
-        if not user.is_active:
+        if not user.is_active and not user.is_superuser:
             raise serializers.ValidationError("This account is not active. Complete payment verification.")
 
         data["user"] = user
