@@ -37,6 +37,7 @@ class CustomUserManager(BaseUserManager):
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
         extra_fields.setdefault("is_admin_user", True)
+        extra_fields.setdefault("is_active", True)
 
         # Auto-fill required fields to satisfy unique constraints
         if "mobile" not in extra_fields or not extra_fields["mobile"]:
@@ -48,6 +49,12 @@ class CustomUserManager(BaseUserManager):
             extra_fields["first_name"] = "Admin"
         if "last_name" not in extra_fields:
             extra_fields["last_name"] = "User"
+
+        user = self.create_user(user_id, email, password, **extra_fields)
+
+        # ✅ Disable payment requirement for superuser
+        user.pmf_status = constants.PMF_STATUS_PAID
+        user.save(update_fields=["pmf_status"])
 
         return self.create_user(user_id, email, password, **extra_fields)
 
