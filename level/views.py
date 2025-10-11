@@ -715,7 +715,7 @@ class DummyUserViewSet(viewsets.ReadOnlyModelViewSet):
         user_id__startswith='MASTER' # Initial filter for dummy users
     ).prefetch_related(
         'userlevel_set' 
-    ).order_by('-date_of_joining') 
+    ).order_by('date_of_joining') 
     
     # Use the new serializer that handles CustomUser objects
     serializer_class = AdminMasterUserSerializer # <-- REQUIRES NEW SERIALIZER (See below)
