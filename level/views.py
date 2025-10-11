@@ -697,10 +697,10 @@ class CreateDummyUsers(generics.CreateAPIView):
         
         user_level_instance = serializer.save()
         
-        response_serializer = DummyUserSerializer(user_level_instance, context={'request': request})
+        response_serializer = AdminMasterUserSerializer(user_level_instance, context={'request': request})
         
         return Response({
-            "message": f"Master Node {user_level_instance.user.user_id} created successfully.",
+            "message": f"Master Node {user_level_instance.user_id} created successfully.",
             "data": response_serializer.data
         }, status=status.HTTP_201_CREATED)
 
