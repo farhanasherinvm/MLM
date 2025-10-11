@@ -431,8 +431,20 @@ class UserReportViewSet(viewsets.ViewSet):
         total_received = user_levels.aggregate(total=Sum('received'))['total'] or 0
         pending_send_count = user_levels.filter(status='pending').count()
         # Corrected aggregation for total_amount_generated using level__amount
-        total_amount_generated = user_levels.filter(status='paid').aggregate(total=Sum('level__amount'))['total'] or 0
-        send_help = user_levels.filter(level__name__contains='Refer Help').aggregate(total=Sum('level__amount'))['total'] or 0
+        total_received = user_levels.filter(
+            status='paid',
+            level__order__lte=6  
+        ).aggregate(
+            total=Sum('received')
+        )['total'] or Decimal(0)
+
+        # Total Paid for Levels (Send Help) - CORRECTED to only include levels 1-6
+        total_paid_for_levels = user_levels.filter(
+            status='paid',
+            level__order__lte=6  # <-- ADDED: Filter to levels 1 through 6
+        ).aggregate(
+            total=Sum('level__amount')
+        )['total'] or Decimal(0)
         receive_help = user_levels.filter(status='paid').count()
         referral_count = CustomUser.objects.filter(sponsor_id=user.user_id).count()
         total_income = total_received  # Total income is the total amount received by the user
@@ -443,10 +455,10 @@ class UserReportViewSet(viewsets.ViewSet):
             'level_completed': completed_levels,
             'total_received': total_received,
             'pending_send_count': pending_send_count,
-            'total_amount_generated': total_amount_generated,
+            'total_amount_generated': total_received,
             'pending_receive_count': pending_recevie_count,
             'total_income': total_income,
-            'send_help': send_help,
+            'send_help': total_paid_for_levels,
             'receive_help': receive_help,
             'referral_count': referral_count
         }
