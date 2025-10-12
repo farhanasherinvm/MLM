@@ -387,22 +387,46 @@ class InitiatePaymentSerializer(serializers.Serializer):
             raise serializers.ValidationError({"user_level_id": "Invalid level ID, or level is already paid/pending."})
         
         # 2. Extract key variables
+        # level_order = user_level_to_pay.level.order
+        # upline_id = user_level_to_pay.linked_user_id
+
+        # # 🛑 ENFORCEMENT LOGIC 
+        # if level_order >= 1 and level_order <= 6:
+        #     # Check for linked user existence first
+        #     if not upline_id:
+        #         raise serializers.ValidationError({
+        #             "error": "Cannot initiate payment: Upline slot is not yet assigned for this level."
+        #         })
+                
+        #     # Use the helper function here
+        #     if not check_upline_fully_paid(upline_id):
+        #         raise serializers.ValidationError({
+        #             "error": f"Payment Blocked: Your upline ({upline_id}) must complete payment for all levels (1-6) before you can pay Level {level_order}."
+        #         })
+
         level_order = user_level_to_pay.level.order
         upline_id = user_level_to_pay.linked_user_id
+        is_upline_master = upline_id.startswith('MASTER') if upline_id else False
 
         # 🛑 ENFORCEMENT LOGIC 
         if level_order >= 1 and level_order <= 6:
             # Check for linked user existence first
-            if not upline_id:
-                raise serializers.ValidationError({
-                    "error": "Cannot initiate payment: Upline slot is not yet assigned for this level."
-                })
+            if not is_upline_master and not check_upline_fully_paid(upline_id):
+    
+                upline_user = CustomUser.objects.get(user_id=upline_id)
+                paid_levels_count = upline_user.userlevel_set.filter(
+                    level__order__gte=1,
+                    level__order__lte=6,
+                    status='paid'
+                ).count()
                 
-            # Use the helper function here
-            if not check_upline_fully_paid(upline_id):
+                # Raise the specific payment blocked error
                 raise serializers.ValidationError({
-                    "error": f"Payment Blocked: Your upline ({upline_id}) must complete payment for all levels (1-6) before you can pay Level {level_order}."
+                    "error": (f"Payment Blocked: Your upline ({upline_id}) has only paid for {paid_levels_count} "
+                              f"levels (1-6) and must complete all levels before you can pay Level {level_order} manually.")
                 })
+
+        
         
         # Add the full UserLevel object to validated_data for easy access in the view
         data['user_level_instance'] = user_level_to_pay
