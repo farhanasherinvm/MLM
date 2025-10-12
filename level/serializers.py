@@ -853,16 +853,12 @@ class PmfManualPaymentSerializer(serializers.Serializer):
         required=True,
         error_messages={'invalid_choice': 'Invalid PMF part. Must be "part_1" or "part_2".'}
     )
-    payment_proof = serializers.CharField(max_length=500, required=True, allow_blank=True) 
+    payment_proof = serializers.FileField(required=False, allow_null=True) 
 
 class PmfPaymentSerializer(serializers.ModelSerializer):
     # Use pmf_type as the level/part name
     pmf_part_name = serializers.CharField(source='get_pmf_type_display', read_only=True)
-    payment_proof = serializers.CharField(
-        max_length=500, 
-        required=True, 
-        allow_blank=True # <--- Change this to True
-    )
+    payment_proof = serializers.FileField(required=False, allow_null=True) 
     
     class Meta:
         model = PmfPayment

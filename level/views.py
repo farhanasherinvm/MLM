@@ -35,6 +35,7 @@ from .serializers import (
 )
 from rest_framework.permissions import AllowAny
 from decimal import Decimal
+from rest_framework.parsers import MultiPartParser, FormParser 
 
 
 logger = logging.getLogger(__name__)
@@ -1053,6 +1054,7 @@ class PmfPaymentViewSet(viewsets.ModelViewSet):
     queryset = PmfPayment.objects.all()
     serializer_class = PmfPaymentSerializer
     permission_classes = [IsAdminUser]
+    parser_classes = (MultiPartParser, FormParser)
 
     def get_serializer_class(self):
         # Use a detailed serializer for pending list to show payment proof

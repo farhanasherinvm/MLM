@@ -165,7 +165,11 @@ class PmfPayment(models.Model):
     
     # Identify which PMF part this record represents
     pmf_type = models.CharField(max_length=20, choices=PMF_TYPE_CHOICES)
-    payment_proof = models.CharField(max_length=500, blank=True, null=True)
+    payment_proof = models.FileField(
+            upload_to='payment_proofs/', storage=MediaCloudinaryStorage(),
+            blank=True, 
+            null=True
+        )
 
     
     amount = models.DecimalField(max_digits=10, decimal_places=2, default=1000.00)
