@@ -690,6 +690,7 @@ class AdminAnalyticsView(APIView):
                 count=Count('id')
             ).values('count')[:1] 
             
+            
             # 2. Add Annotations
             queryset = queryset.annotate(
                 # FIX: Explicit output_field=models.IntegerField()
@@ -697,11 +698,11 @@ class AdminAnalyticsView(APIView):
                 
                 # Income: Aggregating 'received' from UserLevel
                 total_income_generated=Sum(
-                    'userlevel__received', 
-                    filter=Q(userlevel__status='paid'),
-                    output_field=DecimalField(max_digits=12, decimal_places=2)
+                    'userlevel__received',
+                    # Ensure the output type is correct for decimal data
+                    output_field=DecimalField(max_digits=12, decimal_places=2) 
                 ),
-                
+
                 # Levels Completed: Counting paid UserLevel records
                 levels_completed=Count(
                     'userlevel',

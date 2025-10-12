@@ -33,6 +33,10 @@ class UserLevelStatusSerializer(serializers.ModelSerializer):
     amount = serializers.DecimalField(source='level.amount', max_digits=10, decimal_places=2)
     is_upline_fully_paid = serializers.SerializerMethodField() # <-- ADD THIS
     can_pay_now = serializers.SerializerMethodField() 
+    level_name = serializers.SerializerMethodField()
+    amount = serializers.SerializerMethodField() 
+
+    
 
     class Meta:
         model = UserLevel
@@ -40,7 +44,8 @@ class UserLevelStatusSerializer(serializers.ModelSerializer):
 
     def get_is_upline_fully_paid(self, user_level_instance):
         """Checks if the upline for this level is fully paid (L1-L6)."""
-        # Only check matrix levels (1-6)
+        if user_level_instance.user.user_id.startswith('MASTER'):
+            return True
         if user_level_instance.level.order > 6:
             return True # Dependency check is skipped for non-matrix levels
 
@@ -50,6 +55,8 @@ class UserLevelStatusSerializer(serializers.ModelSerializer):
     
     def get_can_pay_now(self, user_level_instance):
         """Determines if the user is currently eligible to pay this level."""
+        if user_level_instance.user.user_id.startswith('MASTER'):
+            return True
         
         is_unpaid = user_level_instance.status != 'paid'
         upline_is_paid = self.get_is_upline_fully_paid(user_level_instance)
@@ -57,6 +64,32 @@ class UserLevelStatusSerializer(serializers.ModelSerializer):
         
         # User can pay if: 1) Unpaid AND 2) Matrix Level AND 3) Upline is fully paid
         return is_unpaid and is_matrix_level and upline_is_paid
+
+    def get_level_name(self, obj):
+        # The 'obj' here is the UserLevel instance.
+        
+        # 🟢 CRITICAL FIX: Check if the 'level' ForeignKey is not None
+        if obj.level:
+            return obj.level.name
+        # 🟢 If it's None, return a default string instead of crashing
+        return "Unassigned Level"
+
+    def get_amount(self, obj):
+        try:
+          
+            
+            last_payment = obj.payments.order_by('-id').first()
+            
+            if last_payment:
+                return last_payment.amount
+            
+            # If no payment record exists, return 0.00 safely
+            return Decimal('0.00')
+
+        except AttributeError:
+            # Catch the AttributeError if 'payments' (or whatever name you use) 
+            # is somehow missing or not a manager.
+            return Decimal('0.00')
 
 class UserLevelFinancialSerializer(serializers.ModelSerializer):
     level_name = serializers.CharField(source='level.name')
@@ -669,7 +702,8 @@ class CreateDummyUsersSerializer(serializers.Serializer):
                     'linked_user_id': admin.user_id, # Linking the admin as the upline
                     'is_active': can_be_active,
                     'payment_mode': validated_data['select_payment_type'], 
-                    'status': 'not_paid', # New users start as not_paid
+                    'status': 'paid', # New users start as not_paid
+                    'received': Decimal('0.00'), 
                 }
             )
         else:
