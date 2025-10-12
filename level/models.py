@@ -293,20 +293,23 @@ def create_user_levels(sender, instance, created, **kwargs):
                         
                         # A. Try Placement Chain First
                         if instance.placement_id:
-                            upline_user = get_upline(instance, depth) 
+                            placement_user = CustomUser.objects.get(user_id=instance.placement_id)
+                            upline_user = get_upline(placement_user, depth - 1) 
+                        
                         
                         # B. If Placement Fails or is Missing, Try Dummy Upline
-                        if not upline_user:
+                        if not upline_user and not instance.placement_id:
+                            logger.warning(
+                                f"No placement or upline found for {instance.user_id}. Falling back to Master Node."
+                            )
                             try:
-                                # 🟢 CORRECTED DUMMY USER LOGIC: Filter by user_id prefix
+                                # Get the appropriate Master Node
                                 upline_user = CustomUser.objects.filter(
-                                    user_id__startswith='MASTER', # <-- CHANGED FILTER
-                                    is_active=True 
-                                ).order_by('user_id')[depth - 1] # Order by user_id to ensure a stable chain
+                                    user_id__startswith='MASTER',
+                                    is_active=True  
+                                ).order_by('user_id')[depth - 1] 
                             except IndexError:
-                                # No more active dummy users found at this depth
                                 upline_user = None
-                        # C. Final Assignment (Sets linked_user_id to the found ID or None)
                         
                         linked_user_id = upline_user.user_id if upline_user else None
                             
