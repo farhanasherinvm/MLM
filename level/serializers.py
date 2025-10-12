@@ -514,15 +514,29 @@ class AdminMasterUserSerializer(serializers.ModelSerializer):
         Finds which of the Admin's matrix slots (Levels 1-6) this dummy user is linked to.
         This provides the single Admin level link to display on the user's record.
         """
+
         try:
-            admin = self.context['request'].user
-            # Find the Admin's UserLevel slot that is currently occupied by this 'user'
-            linked_slot = UserLevel.objects.filter(
-                user=admin, 
-                linked_user_id=user.user_id,
-                level__order__lte=6 # Only check matrix levels
-            ).select_related('level').first()
+           
+            admin_user_id = self.context.get('admin_user_id')
             
+            if not admin_user_id and self.context.get('request') and self.context['request'].user.is_authenticated:
+                admin_user_id = self.context['request'].user.user_id
+            
+            if not admin_user_id:
+                # Cannot proceed without the Admin ID
+                return "Error: Admin ID Missing"
+
+            # 2. Fetch the Admin's CustomUser object explicitly
+            # This guarantees we query the database with the correct user instance.
+            admin_user = CustomUser.objects.get(user_id=admin_user_id) 
+            
+            # 3. Perform the query using the fetched Admin user object
+            linked_slot = UserLevel.objects.using('default').filter( # <-- ADDED .using('default')
+                user=admin_user, 
+                linked_user_id=user.user_id,
+                level__order__lte=6 
+            ).select_related('level').first()
+                
             return linked_slot.level.name if linked_slot else "Not Linked"
         except:
             return "Error/Not Linked"
@@ -746,10 +760,9 @@ class AdminDummyUserUpdateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"email": "This email is already in use by another user."})
             
         return data
-
+ 
     @transaction.atomic
     def update(self, instance, validated_data):
-        # instance is the CustomUser object
         original_user_active_status = instance.is_active
         new_active_status = validated_data.get('is_active')
         new_level = validated_data.pop('level', None)
@@ -757,87 +770,51 @@ class AdminDummyUserUpdateSerializer(serializers.ModelSerializer):
         admin = self.context['request'].user
         moving_dummy_user_id = instance.user_id
 
-        # --- PART 1: Update CustomUser data (Using ModelSerializer built-in update) ---
+        # PART 1: Update CustomUser data
         instance = super().update(instance, validated_data)
 
-        # --- PART 2: Handle UserLevel updates (Level, Status, is_active sync) ---
-        
+        # PART 2: Handle UserLevel updates (Status, is_active sync)
+
         # A. Sync is_active status globally across all UserLevel records
         if new_active_status is not None:
-            # Propagate the CustomUser's is_active status to all UserLevel records
             UserLevel.objects.filter(user=instance).update(is_active=new_active_status)
-            
-        # B. Propagate status update (CRITICAL FIX for payment issue)
+                
+        # B. Propagate status update
         if new_status:
-            # 🟢 FIX: Update ALL UserLevel records for this user with the new status
             UserLevel.objects.filter(user=instance).update(
                 status=new_status,
                 approved_at=timezone.now() if new_status == 'paid' else None
             )
 
-        # C. Handle Level Change Logic
-        # This only applies to the specific UserLevel instance representing the Admin's slot.
-        # if new_level:
-        #     # Find the current UserLevel entry that corresponds to the Admin's link to this user
-        #     current_admin_slot = UserLevel.objects.filter(
-        #         user=admin, linked_user_id=moving_dummy_user_id, level__order__lte=6
-        #     ).select_related('level').first()
+        # PART 3: Handle Level Change Logic (Manual Admin Placement)
+        if new_level and instance.is_active:
             
-        #     original_level = current_admin_slot.level if current_admin_slot else None
+            # 1. Check if the target slot exists
+            admin_new_level_slot = UserLevel.objects.filter(user=admin, level=new_level).first()
             
-        #     is_level_changed = original_level and original_level.pk != new_level.pk
+            if not admin_new_level_slot:
+                raise serializers.ValidationError({"level": f"Admin's UserLevel slot for {new_level.name} does not exist."})
 
-        #     if is_level_changed and instance.is_active: 
-                
-        #         # 1. Free up the original slot
-        #         if current_admin_slot:
-        #             UserLevel.objects.filter(pk=current_admin_slot.pk).update(linked_user_id=None)
-                
-        #         # 2. Occupy the new slot (Reusing your previous logic)
-        #         admin_new_level_slot = UserLevel.objects.filter(user=admin, level=new_level).first()
-        #         if admin_new_level_slot and admin_new_level_slot.linked_user_id:
-        #             # Unlink the overwritten user from all admin slots
-        #             overwritten_user_id = admin_new_level_slot.linked_user_id
-        #             UserLevel.objects.filter(user=admin, linked_user_id=overwritten_user_id).update(linked_user_id=None)
-                    
-        #         UserLevel.objects.filter(user=admin, level=new_level).update(linked_user_id=moving_dummy_user_id)
-        
-
-        if new_level and instance.is_active: # Keep this check (level provided AND user is active)
+            # 2. Check for occupation by another user (Prevents overwriting another active master node)
+            overwritten_user_id = admin_new_level_slot.linked_user_id
             
-            # 1. Find the current slot *holding* this dummy user under the admin
-            current_slot_holding_user = UserLevel.objects.filter(
-                user=admin, linked_user_id=moving_dummy_user_id, level__order__lte=6
-            ).select_related('level').first()
+            if overwritten_user_id and overwritten_user_id != moving_dummy_user_id:
+                raise serializers.ValidationError({
+                    "level": f"Slot for {new_level.name} is occupied by {overwritten_user_id}. Change is blocked."
+                })
+                
+            # 3. Unconditionally free up the old slot(s) for this user (Prevents double-linking)
+            UserLevel.objects.filter(
+                user=admin, 
+                linked_user_id=moving_dummy_user_id, 
+                level__order__lte=6
+            ).update(linked_user_id=None)
             
-            # Determine the PK of the level this user is currently linked to, or None
-            original_level_pk = current_slot_holding_user.level.pk if current_slot_holding_user else None
-            
-            # 🟢 CRITICAL FIX: Check if it's a new placement (unlinked) OR a move to a different level.
-            is_placement_or_move = (original_level_pk is None) or (original_level_pk != new_level.pk)
+            # 4. Establish the new link (Occupy the new slot)
+            UserLevel.objects.filter(user=admin, level=new_level).update(linked_user_id=moving_dummy_user_id)
 
-            if is_placement_or_move: 
-                
-                # 1a. Free up the original slot (only runs if an existing link was found)
-                if current_slot_holding_user:
-                    UserLevel.objects.filter(pk=current_slot_holding_user.pk).update(linked_user_id=None)
-                
-                # 2. Occupy the new slot (level=new_level)
-                admin_new_level_slot = UserLevel.objects.filter(user=admin, level=new_level).first()
-                
-                if admin_new_level_slot:
-                    # Unlink any overwritten user from ALL admin slots if the new slot is already occupied
-                    if admin_new_level_slot.linked_user_id:
-                        overwritten_user_id = admin_new_level_slot.linked_user_id
-                        UserLevel.objects.filter(user=admin, linked_user_id=overwritten_user_id).update(linked_user_id=None)
-                    
-                    # Link the dummy user to the new level slot
-                    UserLevel.objects.filter(user=admin, level=new_level).update(linked_user_id=moving_dummy_user_id)
-
-
-
-        # --- PART 3: Handle Admin Slot Linking/Unlinking (Activation/Deactivation) ---
-        if new_active_status is not None:
+        # PART 4: Handle Automatic Slot Linking/Unlinking (ONLY if no manual level change occurred)
+        if new_active_status is not None and not new_level:
             
             if new_active_status is True and original_user_active_status is False:
                 # Activation: Link to the next available slot if one exists
@@ -846,7 +823,7 @@ class AdminDummyUserUpdateSerializer(serializers.ModelSerializer):
                         user=admin, level__order__lt=7, linked_user_id__isnull=True
                     ).order_by('level__order').first()
                     
-                    if available_slot: 
+                    if available_slot:
                         UserLevel.objects.filter(pk=available_slot.pk).update(linked_user_id=moving_dummy_user_id)
 
             elif new_active_status is False and original_user_active_status is True:
@@ -854,7 +831,6 @@ class AdminDummyUserUpdateSerializer(serializers.ModelSerializer):
                 UserLevel.objects.filter(user=admin, linked_user_id=moving_dummy_user_id).update(linked_user_id=None)
                 
         return instance
-
 
 class PmfOrderSerializer(serializers.Serializer):
     """Used to initiate a PMF Razorpay order."""

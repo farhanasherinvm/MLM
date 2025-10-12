@@ -748,9 +748,15 @@ class AdminDummyUserControlView(APIView):
         if serializer.is_valid():
             updated_user = serializer.save()
             
-            # 🟢 CRITICAL FIX 3: Use the AdminMasterUserSerializer for the response
-            # (Assuming you use the serializer designed to display one record per user)
-            response_data = AdminMasterUserSerializer(updated_user, context={'request': request}).data
+            
+            refreshed_user = CustomUser.objects.get(pk=updated_user.pk)
+            
+      
+            admin_id_to_pass = request.user.user_id 
+            response_context = {'request': request, 'admin_user_id': admin_id_to_pass} 
+            
+            # 🟢 FIX 3: Use the refreshed instance and the new context
+            response_data = AdminMasterUserSerializer(refreshed_user, context=response_context).data
             
             return Response({"message": "Dummy user details updated successfully", "data": response_data}, status=status.HTTP_200_OK)
         
