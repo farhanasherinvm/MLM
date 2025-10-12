@@ -420,61 +420,98 @@ class DashboardReportViewSet(viewsets.ViewSet):
 
 # Existing UserReportViewSet (unchanged)
 class UserReportViewSet(viewsets.ViewSet):
-    # No permission_classes specified, assumes IsAuthenticated by default or custom logic if needed
+    # Recommended: Enforce authentication
+    permission_classes = [IsAuthenticated] 
 
     @action(detail=False, methods=['get'], url_path='user-report')
     def user_report(self, request):
         logger.debug("User report endpoint hit for user %s", request.user.user_id)
         user = request.user
-        user_levels = UserLevel.objects.filter(user=user)
-        completed_levels = user_levels.filter(status='paid', level__order__lte=6).count()
-        total_received = user_levels.aggregate(total=Sum('received'))['total'] or 0
-        pending_send_count = user_levels.filter(status='pending').count()
-        # Corrected aggregation for total_amount_generated using level__amount
-        total_received = user_levels.filter(
-            status='paid',
-            level__order__lte=6  
-        ).aggregate(
-            total=Sum('received')
-        )['total'] or Decimal(0)
-
-        # Total Paid for Levels (Send Help) - CORRECTED to only include levels 1-6
+        
+        # Use reverse relation, caching the queryset for reuse
+        # Assuming the reverse relation name from CustomUser to UserLevel is 'userlevel_set'
+        user_levels = user.userlevel_set.all() 
+        
+        # --- Calculations ---
+        
+        # 1. Total Income (Total Received) - Sum of 'received' across ALL UserLevel records.
+        # This is the most accurate definition of total income.
+        # Use .aggregate() only once for efficiency if possible, or directly on the queryset
+        total_income = user_levels.aggregate(total=Sum('received'))['total'] or Decimal(0)
+        
+        # 2. Total Paid (Send Help) - Sum of 'level__amount' for completed (paid) matrix levels (1-6)
         total_paid_for_levels = user_levels.filter(
             status='paid',
-            level__order__lte=6  # <-- ADDED: Filter to levels 1 through 6
+            level__order__lte=6 
         ).aggregate(
             total=Sum('level__amount')
         )['total'] or Decimal(0)
-        receive_help = user_levels.filter(status='paid').count()
-        referral_count = CustomUser.objects.filter(sponsor_id=user.user_id).count()
-        total_income = total_received  # Total income is the total amount received by the user
-        pending_recevie_count = user_levels.filter(status='pending').count()
 
+        # 3. Levels Completed - Count of paid matrix levels (1-6)
+        completed_levels = user_levels.filter(
+            status='paid', 
+            level__order__lte=6
+        ).count()
+        
+        # 4. Pending Counts - Count of levels that are currently pending payment/approval.
+        pending_count = user_levels.filter(status='pending').count()
+        
+        # 5. Referral Count - FIXING THE AttributeError
+        # The correct, explicit query is needed here.
+        try:
+            # Assuming CustomUser is the model where 'sponsor_id' links to 'user_id'
+            referral_count = CustomUser.objects.filter(sponsor_id=user.user_id).count() 
+        except Exception as e:
+            logger.error(f"Error counting referrals for user {user.user_id}: {e}")
+            referral_count = 0
+
+        # --- Data Consolidation ---
+        
         data = {
             'username': f"{user.first_name} {user.last_name}".strip() or user.email,
             'level_completed': completed_levels,
-            'total_received': total_received,
-            'pending_send_count': pending_send_count,
-            'total_amount_generated': total_received,
-            'pending_receive_count': pending_recevie_count,
-            'total_income': total_income,
-            'send_help': total_paid_for_levels,
-            'receive_help': receive_help,
+            
+            # Income metrics (Total Received / Total Income / Total Amount Generated are all the same)
+            'total_received': total_income, 
+            'total_amount_generated': total_income, 
+            
+            # Pending metrics
+            'pending_send_count': pending_count,
+            'pending_receive_count': pending_count, # Assuming pending status covers both send/receive for simplicity
+            
+            # Payment metrics
+            'send_help': total_paid_for_levels, # Total amount paid by the user
+            'receive_help': completed_levels,   # Total count of levels purchased by the user
             'referral_count': referral_count
         }
         return Response(data)
 
+    # ----------------------------------------------------------------------
+
     @action(detail=False, methods=['get'], url_path='total-payment-info')
     def total_payment_info(self, request):
         user = request.user
-        user_levels = UserLevel.objects.filter(user=user)
-        total_amount_received = user_levels.aggregate(total=Sum('received'))['total'] or 0
-        total_amount_generated = user_levels.filter(status='paid').aggregate(total=Sum('level__amount'))['total'] or 0
-        balance_left = total_amount_received - total_amount_generated  # Preliminary calculation
-
+        # Use reverse relation
+        user_levels = user.userlevel_set.all() 
+        
+        # Total Amount Received (Total Income)
+        total_amount_received = user_levels.aggregate(total=Sum('received'))['total'] or Decimal(0)
+        
+        # Total Payments Made by the User (Send Help)
+        total_payments_made = user_levels.filter(
+            status='paid',
+            level__order__lte=6 
+        ).aggregate(
+            total=Sum('level__amount')
+        )['total'] or Decimal(0)
+        
+        # Balance Left (Net Profit/Loss)
+        balance_left = total_amount_received - total_payments_made
+        
         data = {
             'total_amount_received': total_amount_received,
-            'balance_left': max(balance_left, 0)  
+            'total_payments_made': total_payments_made,
+            'balance_left': balance_left
         }
         return Response(data)
 
