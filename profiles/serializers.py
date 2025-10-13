@@ -442,10 +442,15 @@ class AdminUserDetailSerializer(serializers.ModelSerializer):
 
         # --- Update UserAccountDetails (nested + flat form-data) ---
         if account_data or any(f in self.context["request"].data for f in [
-            "bank_name", "branch_name", "ifsc_code", "account_number"
+            "account_number", "ifsc", "account_holder_name",
+            "branch", "upi_number", "upi_type", "qr_code"
         ]):
             acc, _ = UserAccountDetails.objects.get_or_create(user=instance)
-            for field in ["bank_name", "branch_name", "ifsc_code", "account_number"]:
+            for field in [
+                "account_number", "ifsc", "account_holder_name",
+                "branch", "upi_number", "upi_type", "qr_code"
+            ]:
+                # Update from request data first (supports multipart/form-data)
                 if field in self.context["request"].data:
                     setattr(acc, field, self.context["request"].data.get(field))
                 elif field in account_data:
