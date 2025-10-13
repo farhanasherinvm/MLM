@@ -466,13 +466,16 @@ class UserReportViewSet(viewsets.ViewSet):
             level__order__lte=6
         ).count()
 
-        received_payments_count = UserLevel.objects.filter(
-            linked_user_id=current_user_id_str, 
-            status='paid' 
-        ).count()
-        
+        received_help_amount = user_levels.filter().exclude(
+                level__name='Refer Help'
+            ).aggregate(
+                    total=Sum('received')
+            )['total'] or Decimal(0)
+                
         # 4. Pending Counts - Count of levels that are currently pending payment/approval.
         pending_count = user_levels.filter(status='pending').count()
+
+        total_amount_generated= total_income  + total_referral_income
         
         # 5. Referral Count - FIXING THE AttributeError
         # The correct, explicit query is needed here.
@@ -491,7 +494,7 @@ class UserReportViewSet(viewsets.ViewSet):
             
             # Income metrics (Total Received / Total Income / Total Amount Generated are all the same)
             'total_received': total_income, 
-            'total_amount_generated': total_income,
+            'total_amount_generated': total_amount_generated,
             "total_referral_income":total_referral_income, 
             
             # Pending metrics
@@ -500,7 +503,7 @@ class UserReportViewSet(viewsets.ViewSet):
             
             # Payment metrics
             'send_help': total_paid_for_levels, # Total amount paid by the user
-            'receive_help': received_payments_count,   
+            'receive_help': received_help_amount,   
             'referral_count': referral_count
         }
         return Response(data)
