@@ -422,23 +422,38 @@ class AdminUserDetailSerializer(serializers.ModelSerializer):
                 setattr(profile, field, profile_data.get(field))
         profile.save()
 
-        # --- Update KYC ---
+        # --- Update KYC (including nominee fields) ---
         if kyc_data or any(f in self.context["request"].data for f in [
             "account_number", "pan_number", "pan_image",
-            "id_number", "id_card_image",
+            "id_number", "id_number_nominee", "id_card_image", "id_card_image_nominee",
             "nominee_name", "nominee_relation", "nominee_dob", "verified"
         ]):
             kyc, _ = KYC.objects.get_or_create(user=instance)
-            for field in [
-                "account_number", "pan_number", "pan_image",
-                "id_number", "id_card_image",
-                "nominee_name", "nominee_relation", "nominee_dob", "verified"
+            for field_map in [
+                ("account_number", "account_number"),
+                ("pan_number", "pan_number"),
+                ("pan_image", "pan_image"),
+                ("id_number_nominee", "id_number"),
+                ("id_card_image_nominee", "id_card_image"),
+                ("nominee_name", "nominee_name"),
+                ("nominee_relation", "nominee_relation"),
+                ("nominee_dob", "nominee_dob"),
+                ("verified", "verified"),
             ]:
-                if field in self.context["request"].data:
-                    setattr(kyc, field, self.context["request"].data.get(field))
-                elif field in kyc_data:
-                    setattr(kyc, field, kyc_data.get(field))
+                input_field, model_field = field_map
+                # Priority 1: request.data
+                if input_field in self.context["request"].data:
+                    setattr(kyc, model_field, self.context["request"].data.get(input_field))
+                # Priority 2: nested JSON
+                elif input_field in kyc_data:
+                    setattr(kyc, model_field, kyc_data.get(input_field))
+                # Priority 3: fallback to direct model field names
+                elif model_field in self.context["request"].data:
+                    setattr(kyc, model_field, self.context["request"].data.get(model_field))
+                elif model_field in kyc_data:
+                    setattr(kyc, model_field, kyc_data.get(model_field))
             kyc.save()
+
 
         # --- Update UserAccountDetails (nested + flat form-data) ---
         if account_data or any(f in self.context["request"].data for f in [
