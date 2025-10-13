@@ -392,10 +392,11 @@ class AdminUserDetailSerializer(serializers.ModelSerializer):
         fields = [
             "user_id", "first_name", "last_name", "email", "mobile",
             "whatsapp_number", "pincode", "payment_type", "upi_number",
+            "sponsor_id", "placement_id",
             "is_active", "blocked_status", "level",
             "profile", "kyc", "useraccountdetails"
         ]
-        read_only_fields = ["user_id", "level", "email"]
+        read_only_fields = ["user_id", "level", "email"] #remove "email" to make it editable
 
     def update(self, instance, validated_data):
         # --- Pop nested data ---
@@ -409,56 +410,47 @@ class AdminUserDetailSerializer(serializers.ModelSerializer):
         instance.save()
 
         # --- Update Profile (nested + flat form-data) ---
-        profile = instance.profile
-        request_data = self.context.get("request").data  # raw incoming data
-
-        for attr in [
+        profile, _ = Profile.objects.get_or_create(user=instance)
+        for field in [
             "district", "state", "address", "place",
-            "pincode", "whatsapp_number", "profile_image"
+            "pincode", "whatsapp_number", "profile_image",
+            "first_name", "last_name", "email", "mobile"
         ]:
-            if attr in request_data:
-                setattr(profile, attr, request_data.get(attr))
-            elif attr in profile_data:
-                setattr(profile, attr, profile_data.get(attr))
+            if field in self.context["request"].data:
+                setattr(profile, field, self.context["request"].data.get(field))
+            elif field in profile_data:
+                setattr(profile, field, profile_data.get(field))
         profile.save()
 
-        # --- Update KYC (nested + flat form-data) ---
-        if kyc_data is not None or any(
-            f in request_data for f in
-            ["account_number", "pan_number", "pan_image",
-             "id_number", "id_card_image",
-             "nominee_name", "nominee_relation", "verified", "nominee_dob"]
-        ):
+        # --- Update KYC ---
+        if kyc_data or any(f in self.context["request"].data for f in [
+            "account_number", "pan_number", "pan_image",
+            "id_number", "id_card_image",
+            "nominee_name", "nominee_relation", "nominee_dob", "verified"
+        ]):
             kyc, _ = KYC.objects.get_or_create(user=instance)
-            # Handle nested JSON
-            if kyc_data:
-                for attr, value in kyc_data.items():
-                    setattr(kyc, attr, value)
-            # Handle flat form-data
-            for attr in [
+            for field in [
                 "account_number", "pan_number", "pan_image",
                 "id_number", "id_card_image",
-                "nominee_name", "nominee_relation", "verified", "nominee_dob"
+                "nominee_name", "nominee_relation", "nominee_dob", "verified"
             ]:
-                if attr in request_data:
-                    setattr(kyc, attr, request_data.get(attr))
+                if field in self.context["request"].data:
+                    setattr(kyc, field, self.context["request"].data.get(field))
+                elif field in kyc_data:
+                    setattr(kyc, field, kyc_data.get(field))
             kyc.save()
 
         # --- Update UserAccountDetails (nested + flat form-data) ---
-        if account_data is not None or any(
-            f in request_data for f in
-            ["bank_name", "branch_name", "ifsc_code", "account_number"]
-        ):
-            account, _ = UserAccountDetails.objects.get_or_create(user=instance)
-            # Handle nested JSON
-            if account_data:
-                for attr, value in account_data.items():
-                    setattr(account, attr, value)
-            # Handle flat form-data
-            for attr in ["bank_name", "branch_name", "ifsc_code", "account_number"]:
-                if attr in request_data:
-                    setattr(account, attr, request_data.get(attr))
-            account.save()
+        if account_data or any(f in self.context["request"].data for f in [
+            "bank_name", "branch_name", "ifsc_code", "account_number"
+        ]):
+            acc, _ = UserAccountDetails.objects.get_or_create(user=instance)
+            for field in ["bank_name", "branch_name", "ifsc_code", "account_number"]:
+                if field in self.context["request"].data:
+                    setattr(acc, field, self.context["request"].data.get(field))
+                elif field in account_data:
+                    setattr(acc, field, account_data.get(field))
+            acc.save()
 
         return instance
 
