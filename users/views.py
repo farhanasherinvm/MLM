@@ -417,34 +417,37 @@ class AdminVerifyPaymentView(APIView):
                     payment.status = "Verified"
                     payment.save(update_fields=["status"])
 
+                    # --- Replacement: Always create a new user on admin verification by default ---
                     reg_data = payment.get_registration_data() or {}
                     email = reg_data.get("email")
 
-                    user = None
-                    if email:
+                    # Allow admin to explicitly link to an existing user by passing ?link_existing=true (optional)
+                    link_existing = str(request.query_params.get("link_existing", "")).lower() == "true" \
+                                    or str(request.data.get("link_existing", "")).lower() == "true"
+
+                    if link_existing and email:
+                        # preserve current behavior if admin explicitly wants to link to existing user
                         user = CustomUser.objects.filter(email=email).first()
+                        if user:
+                            user.is_active = True
+                            user.save(update_fields=["is_active"])
+                            payment.user = user
+                            payment.save(update_fields=["user"])
+                            RegistrationRequest.objects.filter(token=payment.registration_token).update(is_completed=True)
 
-                    if user:
-                        # link & activate existing user
-                        user.is_active = True
-                        user.save(update_fields=["is_active"])
-                        payment.user = user
-                        payment.save(update_fields=["user"])
-                        RegistrationRequest.objects.filter(token=payment.registration_token).update(is_completed=True)
+                            safe_send_mail(
+                                subject="Your MLM User ID",
+                                message=f"Hello {user.first_name},\nYour payment is verified. Your User ID is: {user.user_id}",
+                                recipient_list=[user.email],
+                                html_message=f"<p>Hello <strong>{user.first_name}</strong>,</p><p>Your payment is verified. Your User ID is: <strong>{user.user_id}</strong>.</p>",
+                            )
 
-                        safe_send_mail(
-                            subject="Your MLM User ID",
-                            message=f"Hello {user.first_name},\nYour payment is verified. Your User ID is: {user.user_id}",
-                            recipient_list=[user.email],
-                            html_message=f"<p>Hello <strong>{user.first_name}</strong>,</p><p>Your payment is verified. Your User ID is: <strong>{user.user_id}</strong>.</p>",
-                        )
+                            return Response({
+                                "message": "Payment verified, UserId is send to your email.",
+                                "user_id": user.user_id
+                            }, status=status.HTTP_200_OK)
 
-                        return Response({
-                            "message": "Payment verified, UserId is send to your email.",
-                            "user_id": user.user_id
-                        }, status=status.HTTP_200_OK)
-
-                    # User does not exist — try creating from RegistrationRequest if present
+                    # Otherwise: always create a new user from RegistrationRequest (if present) or from registration_data
                     reg_req = RegistrationRequest.objects.filter(token=payment.registration_token).first()
 
                     if reg_req:
@@ -463,11 +466,11 @@ class AdminVerifyPaymentView(APIView):
                             placement_id=reg_req.placement_id or reg_data.get("placement_id"),
                             is_active=True,
                         )
+                        # assign hashed password directly if stored on reg_req
                         if getattr(reg_req, "password", None):
-                            # password is already hashed, assign directly
                             user.password = reg_req.password
                         else:
-                            # fallback: if raw password exists in reg_data (unlikely) set it, else unusable
+                            # fallback to raw in registration_data (unlikely)
                             if reg_data.get("password"):
                                 user.set_password(reg_data.get("password"))
                             else:
@@ -476,10 +479,10 @@ class AdminVerifyPaymentView(APIView):
                         reg_req.is_completed = True
                         reg_req.save(update_fields=["is_completed"])
                     else:
-                        # fallback: try creating from reg_data (rare)
+                        # fallback: use registration_data to create user (rare case)
                         raw_pw = reg_data.get("password")
                         if not reg_data.get("email"):
-                            # email is required to create user
+                            # email required to create user: revert payment to Pending and error out
                             payment.status = "Pending"
                             payment.save(update_fields=["status"])
                             return Response({"error": "Registration data missing email; cannot create user."},
@@ -515,6 +518,7 @@ class AdminVerifyPaymentView(APIView):
                         "message": "Payment verified, UserId is send to your email.",
                         "user_id": user.user_id
                     }, status=status.HTTP_200_OK)
+
 
             except Exception as exc:
                 logger.exception("Unexpected error in admin verify payment: %s", exc)
