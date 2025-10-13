@@ -401,8 +401,8 @@ class AdminUserDetailSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         # --- Pop nested data ---
         profile_data = validated_data.pop("profile", {})
-        kyc_data = validated_data.pop("kyc", None)
-        account_data = validated_data.pop("useraccountdetails", None)
+        kyc_data = validated_data.pop("kyc", {}) or {}
+        account_data = validated_data.pop("useraccountdetails", {}) or {}
 
         # --- Update CustomUser fields ---
         for attr, value in validated_data.items():
