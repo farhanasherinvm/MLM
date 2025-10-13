@@ -465,6 +465,11 @@ class UserReportViewSet(viewsets.ViewSet):
             status='paid', 
             level__order__lte=6
         ).count()
+
+        received_payments_count = UserLevel.objects.filter(
+            linked_user_id=current_user_id_str, 
+            status='paid' 
+        ).count()
         
         # 4. Pending Counts - Count of levels that are currently pending payment/approval.
         pending_count = user_levels.filter(status='pending').count()
@@ -495,7 +500,7 @@ class UserReportViewSet(viewsets.ViewSet):
             
             # Payment metrics
             'send_help': total_paid_for_levels, # Total amount paid by the user
-            'receive_help': completed_levels,   # Total count of levels purchased by the user
+            'receive_help': received_payments_count,   
             'referral_count': referral_count
         }
         return Response(data)
