@@ -438,6 +438,19 @@ class UserReportViewSet(viewsets.ViewSet):
         # This is the most accurate definition of total income.
         # Use .aggregate() only once for efficiency if possible, or directly on the queryset
         total_income = user_levels.aggregate(total=Sum('received'))['total'] or Decimal(0)
+        current_user_id_str = str(user.user_id)
+        total_referral_income = UserLevel.objects.filter(
+                # Filter 1: Match the recipient ID (uses the CharField)
+                linked_user_id=current_user_id_str, 
+                
+                # Filter 2: The payment type is 'Refer Help'
+                level__name='Refer Help',
+                
+                # Filter 3: Only count completed payments
+                status='paid' 
+            ).aggregate(
+                total=Sum('received')
+            )['total'] or Decimal(0)
         
         # 2. Total Paid (Send Help) - Sum of 'level__amount' for completed (paid) matrix levels (1-6)
         total_paid_for_levels = user_levels.filter(
@@ -473,7 +486,8 @@ class UserReportViewSet(viewsets.ViewSet):
             
             # Income metrics (Total Received / Total Income / Total Amount Generated are all the same)
             'total_received': total_income, 
-            'total_amount_generated': total_income, 
+            'total_amount_generated': total_income,
+            "total_referral_income":total_referral_income, 
             
             # Pending metrics
             'pending_send_count': pending_count,
