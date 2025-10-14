@@ -73,10 +73,8 @@ class DashboardReportSerializer(serializers.Serializer):
 
 class SendRequestReportSerializer(serializers.ModelSerializer):
     from_user = serializers.SerializerMethodField()  # Current user's name
-    from_name = serializers.SerializerMethodField()  # Referred user's first_name + last_name
     username = serializers.SerializerMethodField()  #  user's user_id
     amount = serializers.SerializerMethodField()    # Amount from level
-    linked_username = serializers.SerializerMethodField()  # Referred user's user_id
     status = serializers.SerializerMethodField()    # Converted status
     requested_date = serializers.SerializerMethodField()  # DateTime from UserLevel
     payment_method = serializers.SerializerMethodField()  # Payment method or proof link
@@ -84,7 +82,7 @@ class SendRequestReportSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = UserLevel
-        fields = ['from_user', 'username', 'from_name', 'amount', 'status', 'requested_date', 'payment_method', 'level','linked_username']
+        fields = ['from_user', 'username', 'amount', 'status', 'requested_date', 'payment_method', 'level']
         extra_kwargs = {
             'requested_date': {'required': False, 'allow_null': True},
         }
@@ -99,14 +97,6 @@ class SendRequestReportSerializer(serializers.ModelSerializer):
         return data
 
     def get_from_user(self, obj):
-        """Get the current user's full name."""
-        user = getattr(obj, 'user', None)
-        if user:
-            full_name = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip()
-            return full_name if full_name else 'N/A'
-        return 'N/A'
-
-    def get_from_name(self, obj):
         """Get the linked user's full name."""
         linked_user_id = getattr(obj, 'linked_user_id', None)
         if linked_user_id:
@@ -118,11 +108,16 @@ class SendRequestReportSerializer(serializers.ModelSerializer):
                 return 'Unknown'
         return 'N/A'
 
+
     def get_username(self, obj):
-        """Get the current user's user_id."""
-        user = getattr(obj, 'user', None)
-        if user:
-            return getattr(user, 'user_id', 'N/A')
+        """Get the referred user's user_id (assuming linked_user_id is the referred user)."""
+        linked_user_id = getattr(obj, 'linked_user_id', None)
+        if linked_user_id:
+            try:
+                linked_user = CustomUser.objects.get(user_id=linked_user_id)
+                return getattr(linked_user, 'user_id', 'Unknown')
+            except ObjectDoesNotExist:
+                return 'Unknown'
         return 'N/A'
 
     def get_amount(self, obj):
@@ -153,16 +148,7 @@ class SendRequestReportSerializer(serializers.ModelSerializer):
                 return 'Manual'
         return 'N/A'
 
-    def get_linked_username(self, obj):
-        """Get the referred user's user_id (assuming linked_user_id is the referred user)."""
-        linked_user_id = getattr(obj, 'linked_user_id', None)
-        if linked_user_id:
-            try:
-                linked_user = CustomUser.objects.get(user_id=linked_user_id)
-                return getattr(linked_user, 'user_id', 'Unknown')
-            except ObjectDoesNotExist:
-                return 'Unknown'
-        return 'N/A'
+   
 
     def get_level(self, obj):
         """Get the level name from the associated level."""
@@ -400,24 +386,36 @@ class BonusSummaryDataSerializer(serializers.Serializer):
             status='paid',
         ).exclude(level__name='Refer Help').aggregate(Sum('level__amount'))['level__amount__sum'] or Decimal('0.00')
 
-        received_total = UserLevel.objects.filter(
-            user=user
-        ).aggregate(Sum('received'))['received__sum'] or Decimal('0.00')
+
+
+        referral_bonus_sum = UserLevel.objects.filter(
+            user=user,
+            level__name='Refer Help' 
+        ).aggregate(
+            referral_sum=Sum('received')
+        )['referral_sum'] or Decimal('0.00')
         
         # Placeholders for breakdown (modify with your actual logic if available)
-        referral_bonus = Decimal('0.00')
-        level_help = Decimal('0.00')
-        rank_bonus = Decimal('0.00')
+        level_help_sum = UserLevel.objects.filter(
+            user=user
+        ).exclude(
+            level__name='Refer Help'
+        ).aggregate(
+            level_sum=Sum('received')
+        )['level_sum'] or Decimal('0.00')
+
+        received_total = referral_bonus_sum + level_help_sum
+
+        net_amount=  received_total - sent_help_sum
         
         return {
             'user_id': user.user_id,
             'username': f"{user.first_name} {user.last_name}".strip(),
             'statement_date': timezone.now().strftime('%Y-%m-%d'),
-            'referral_bonus': referral_bonus,
-            'level_help': level_help,
-            'rank_bonus': rank_bonus,
+            'referral_bonus': referral_bonus_sum,
+            'level_help': level_help_sum,
             'send_help': sent_help_sum,
-            'net_amount': sent_help_sum,
+            'net_amount': net_amount,
             'received_total': received_total,
         }
 

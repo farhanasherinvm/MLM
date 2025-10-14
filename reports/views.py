@@ -1220,7 +1220,6 @@ class SingleUserBonusSummaryView(APIView):
             [Paragraph('Income', bold_style), Paragraph('Amount', bold_style)],
             ['Referral Bonus', f"{data['referral_bonus']:.2f}"],
             ['Level Help', f"{data['level_help']:.2f}"],
-            ['Rank Bonus', f"{data['rank_bonus']:.2f}"],
             ['Send Help', f"{data['send_help']:.2f}"],
             [Paragraph('Net Amount', bold_style), f"{data['net_amount']:.2f}"],
             [Paragraph('Received Total', bold_style), f"{data['received_total']:.2f}"],
