@@ -261,13 +261,22 @@ class Payment(models.Model):
 
     
 class AdminAccountDetails(models.Model):
-    account_number = models.CharField(max_length=50)
-    ifsc_code = models.CharField(max_length=20)
-    branch = models.CharField(max_length=100)
-    qr_code = models.ImageField(upload_to="payments/qr/", default="", storage=MediaCloudinaryStorage(), blank=True, null=True)
+    account_name = models.CharField(max_length=255, null=True, blank=True)
+    account_number = models.CharField(max_length=100, null=True, blank=True)
+    ifsc_code = models.CharField(max_length=20, null=True, blank=True)
+    branch = models.CharField(max_length=100, null=True, blank=True)
+    micr_code = models.CharField(max_length=20, null=True, blank=True)
+    swift_code = models.CharField(max_length=20, null=True, blank=True)
+    qr_code = models.FileField(
+        upload_to="admin_qr_codes/",
+        storage=MediaCloudinaryStorage(), 
+        null=True, 
+        blank=True,
+        help_text="Upload bank QR code (PDF or image)"
+    )
 
     def __str__(self):
-        return f"Admin Account {self.account_number}"
+        return f"{self.account_name or 'N/A'} - {self.account_number or 'N/A'}"
     
 class PasswordResetToken(models.Model):
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE)

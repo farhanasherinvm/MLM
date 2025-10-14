@@ -551,6 +551,13 @@ class AdminAccountAPIView(APIView):
             obj = serializer.save()
             return Response(AdminAccountSerializer(obj).data, status=200)
         return Response(serializer.errors, status=400)
+    
+    def delete(self, request):
+        details = AdminAccountDetails.objects.last()
+        if not details:
+            return Response({"error": "No account details found."}, status=404)
+        details.delete()
+        return Response({"message": "Admin account details deleted successfully."}, status=200)
 
 class LoginView(APIView):
     permission_classes = [permissions.AllowAny]
