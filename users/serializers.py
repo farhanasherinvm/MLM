@@ -334,10 +334,24 @@ class ChildRegistrationSerializer(serializers.Serializer):
     whatsapp_number = serializers.CharField(required=False, allow_blank=True)
     pincode = serializers.CharField(required=False, allow_blank=True)
     password = serializers.CharField(write_only=True)  # mandatory for child
+    placement_id = serializers.CharField()  # required field
+
+    def validate_placement_id(self, value):
+        # Check placement user exists
+        placement_user = CustomUser.objects.filter(user_id=value).first()
+        if not placement_user:
+            raise serializers.ValidationError(f"No user with ID {value} exists for placement.")
+
+        # Check placement limit (2 children max)
+        placed_count = CustomUser.objects.filter(placement_id=value).count()
+        if placed_count >= 2:
+            raise serializers.ValidationError("Placement limit reached for this user. Choose another placement.")
+        return value
 
     def create(self, validated_data):
         parent = self.context['request'].user
         password = validated_data.pop('password')
+        placement_user_id = validated_data.pop('placement_id')
 
         # Create child user
         child_user = CustomUser.objects.create(
@@ -359,4 +373,12 @@ class ChildRegistrationSerializer(serializers.Serializer):
         # Child must have password for individual login
         child_user.set_password(password)
         child_user.save()
+          # Assign placement_id
+        existing_children = CustomUser.objects.filter(placement_id=placement_user_id).order_by("id")[:2]
+        if len(existing_children) >= 2:
+         raise serializers.ValidationError("Placement limit reached for this user.")
+
+        child_user.placement_id = placement_user_id
+        child_user.save()
+
         return child_user

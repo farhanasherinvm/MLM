@@ -466,3 +466,31 @@ class CurrentUserProfileView(APIView):
 
         serializer = CurrentUserProfileSerializer(profile)
         return Response(serializer.data)
+
+
+
+
+    
+class FreePlacementListView(APIView):
+    permission_classes = [IsAuthenticated] 
+
+    def get(self, request):
+        """
+        Return users who have free placement slots.
+        Each user can have max 2 children. 
+        Output: user_id, placement_id, free_slots
+        """
+        free_list = []
+        users = CustomUser.objects.all()
+
+        for user in users:
+            child_count = CustomUser.objects.filter(placement_id=user.user_id).count()
+            free_slots = 2 - child_count
+            if free_slots > 0:
+                free_list.append({
+                    "user_id": user.user_id,
+                    "placement_id": user.user_id,
+                    "free_slots": free_slots
+                })
+
+        return Response(free_list)
