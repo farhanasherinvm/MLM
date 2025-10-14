@@ -17,7 +17,7 @@ class RegistrationSerializer(serializers.Serializer):
     sponsor_id = serializers.CharField(required=False, allow_blank=True)
     placement_id = serializers.CharField(required=False, allow_blank=True)
     first_name = serializers.CharField()
-    last_name = serializers.CharField()
+    last_name = serializers.CharField(required=False, allow_blank=True)
     email = serializers.EmailField()
     mobile = serializers.CharField()
     whatsapp_number = serializers.CharField()
