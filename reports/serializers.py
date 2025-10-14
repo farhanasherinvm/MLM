@@ -460,10 +460,11 @@ class LevelUsersSerializer(serializers.ModelSerializer):
     requested_date = serializers.SerializerMethodField()  
     total = serializers.SerializerMethodField()     
     payment_method = serializers.SerializerMethodField() 
+    placement_id_count = serializers.SerializerMethodField()
 
     class Meta:
         model = UserLevel
-        fields = ['from_user', 'username', 'from_name', 'linked_username', 'amount', 'status', 'level', 'requested_date', 'total', 'payment_method']
+        fields = ['from_user', 'username', 'from_name', 'linked_username', 'amount', 'status', 'level', 'requested_date', 'total', 'payment_method', 'placement_id_count']
         extra_kwargs = {
             'requested_date': {'required': False, 'allow_null': True},
         }
@@ -509,6 +510,17 @@ class LevelUsersSerializer(serializers.ModelSerializer):
 
 
     # --- General Level/Payment Getters (No change needed here) ---
+
+    def get_placement_id_count(self, obj):
+        
+        payer = getattr(obj, 'user', None)
+        if payer:
+            try:
+                count = CustomUser.objects.filter(placement_id=payer.user_id).count()
+                return count
+            except Exception:
+                return 0
+        return 0
 
     def get_amount(self, obj):
         """Get the required amount for the associated level."""
