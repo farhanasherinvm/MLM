@@ -533,24 +533,23 @@ class AdminVerifyPaymentView(APIView):
         return Response({"message": f"Payment status updated to {new_status}"}, status=status.HTTP_200_OK)
 
 class AdminAccountAPIView(APIView):
-    permission_classes = [AllowAny]
     def get_permissions(self):
-        if self.request.method in ["POST", "PUT", "PATCH", "DELETE"]:
-            return [permissions.IsAdminUser()]
-        return [permissions.AllowAny()]
+        if self.request.method == "GET":
+            return [permissions.AllowAny()]
+        return [IsProjectAdmin()]
 
     def get(self, request):
         details = AdminAccountDetails.objects.last()
         if not details:
             return Response({}, status=200)
-        return Response(AdminAccountSerializer(details).data)
+        return Response(AdminAccountSerializer(details).data, status=200)
 
     def post(self, request):
         details = AdminAccountDetails.objects.last()
         serializer = AdminAccountSerializer(instance=details, data=request.data, partial=True)
         if serializer.is_valid():
             obj = serializer.save()
-            return Response(AdminAccountSerializer(obj).data)
+            return Response(AdminAccountSerializer(obj).data, status=200)
         return Response(serializer.errors, status=400)
 
 class LoginView(APIView):
