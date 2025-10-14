@@ -262,6 +262,16 @@ def create_user_levels(sender, instance, created, **kwargs):
                 sponsor_id = instance.sponsor_id
                 logger.debug(f"Sponsor ID: {sponsor_id} for user {instance.user_id}")
 
+                upline_1 = None
+                if instance.placement_id:
+                    try:
+                        upline_1 = CustomUser.objects.get(user_id=instance.placement_id)
+                        logger.debug(f"Placement Upline (upline_1) ID: {upline_1.user_id} for user {instance.user_id}")
+                    except CustomUser.DoesNotExist:
+                        logger.warning(f"Placement user {instance.placement_id} not found for new user {instance.user_id}.")
+                else:
+                    logger.warning(f"No placement_id found for new user {instance.user_id}.")
+
                 referrer = None
                 if sponsor_id and CustomUser.objects.filter(user_id=sponsor_id).exists():
                     referrer = CustomUser.objects.get(user_id=sponsor_id)
@@ -293,29 +303,58 @@ def create_user_levels(sender, instance, created, **kwargs):
                     #         linked_user_id = upline_user.user_id
                     if 1 <= level.order <= 6:
                         depth = level.order
-                        upline_user = get_upline(instance, depth)
-                        
-                        # A. Try Placement Chain First
-                        if upline_user:
-                            linked_user_id = upline_user.user_id
+                        if depth == 1:
+                            # Level 1 payment goes to the immediate upline (Upline 1)
+                            upline_user = upline_1 
+                            
                         else:
-                            # Fallback/Master Node Logic
+                            # Levels 2-6 payment recipient is the user linked to Level N-1 
+                            # of the immediate upline (Upline 1)
+                            if upline_1:
+                                # Find the target level's order for the upline (e.g., Level 2 for New User looks at Level 1 of Upline 1)
+                                target_upline_level_order = depth - 1 
+                                
+                                try:
+                                    # 1. Look up the specific UserLevel record for the Upline 1
+                                    upline_level_record = UserLevel.objects.get(
+                                        user=upline_1,
+                                        level__order=target_upline_level_order
+                                    )
+                                    # 2. Assign the linked_user_id from that record as the recipient
+                                    linked_user_id = upline_level_record.linked_user_id
+                                    
+                                    # Note: We don't fetch upline_user object here, only the ID is needed.
+                                    # If we needed the object, we'd fetch it using CustomUser.objects.get(user_id=linked_user_id)
+                                    
+                                except UserLevel.DoesNotExist:
+                                    logger.error(
+                                        f"Missing UserLevel (Order {target_upline_level_order}) for Upline 1 ({upline_1.user_id}). Falling back to Master Node."
+                                    )
+                                    # linked_user_id remains None, which triggers Master Node fallback below.
+                            
+                            # If upline_user object is found for depth 1, or linked_user_id is found for depth 2+, 
+                            # we skip the Master Node fallback.
+                            
+                        # --- MASTER NODE FALLBACK (If linked_user_id is still None) ---
+                        if linked_user_id is None:
+                            # The Master Node fallback logic remains UNCHANGED, 
+                            # as it's the final catch-all for any failed link.
                             logger.warning(
-                                f"No upline found for {instance.user_id} at level {depth}. Falling back to Master Node."
+                                f"No upline or linked recipient found for {instance.user_id} at level {depth}. Falling back to Master Node."
                             )
                             try:
-                                # The Master Node lookup still requires the correct index (depth - 1)
-                                upline_user = CustomUser.objects.filter(
+                                # Get the appropriate Master Node (uses 0-based index)
+                                master_node = CustomUser.objects.filter(
                                     user_id__startswith='MASTER', is_active=True 
                                 ).order_by('user_id')[depth - 1] 
-                                linked_user_id = upline_user.user_id
+                                linked_user_id = master_node.user_id
                             except (IndexError, CustomUser.DoesNotExist):
                                 logger.warning(f"No Master Node found for depth {depth}.")
-                                linked_user_id = None
-                        
-                        linked_user_id = upline_user.user_id if upline_user else None
-                            
-                        # C. Set ID based on the result
+                                # linked_user_id stays None if no Master Node is found.
+                                
+                        # Ensure linked_user_id is set based on the result from the 'depth > 1' logic
+                        if depth == 1 and upline_user:
+                            linked_user_id = upline_user.user_id
                         
                     
                     # Logic for 'Refer Help' (linking to direct sponsor)
