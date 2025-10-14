@@ -447,16 +447,19 @@ class UserBonusListSerializer(serializers.ModelSerializer):
 
 
 class LevelUsersSerializer(serializers.ModelSerializer):
-    from_user = serializers.SerializerMethodField()  # Current user's user_id
-    from_name = serializers.SerializerMethodField()  # Referred user's first_name + last_name
-    username = serializers.SerializerMethodField()  # Referred user's user_id
-    linked_username = serializers.SerializerMethodField()  # Referred user's user_id
-    amount = serializers.SerializerMethodField()    # Amount from level
-    status = serializers.SerializerMethodField()    # Converted status
-    level = serializers.SerializerMethodField()    # Level name
-    requested_date = serializers.SerializerMethodField()  # Requested date
-    total = serializers.SerializerMethodField()     # Total amount
-    payment_method = serializers.SerializerMethodField()  # Payment method or proof link
+
+    
+    from_user = serializers.SerializerMethodField() 
+    from_name = serializers.SerializerMethodField()  
+    username = serializers.SerializerMethodField()  
+    linked_username = serializers.SerializerMethodField()  
+    
+    amount = serializers.SerializerMethodField()    
+    status = serializers.SerializerMethodField()    
+    level = serializers.SerializerMethodField()    
+    requested_date = serializers.SerializerMethodField()  
+    total = serializers.SerializerMethodField()     
+    payment_method = serializers.SerializerMethodField() 
 
     class Meta:
         model = UserLevel
@@ -465,57 +468,54 @@ class LevelUsersSerializer(serializers.ModelSerializer):
             'requested_date': {'required': False, 'allow_null': True},
         }
 
-    def validate(self, data):
-        """Validate the data to ensure consistency with frontend input."""
-        request = self.context.get('request')
-        if not request:
-            raise serializers.ValidationError("Request context is missing.")
-        return data
+    # --- Data Getters (Logic Adjusted for Payer/Recipient) ---
 
     def get_from_user(self, obj):
-        """Get the current user's full name."""
-        user = getattr(obj, 'user', None)
-        if user:
-            full_name = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip()
+        """Get the PAYER's (obj.user) full name (original field was Payer's name)."""
+        payer = getattr(obj, 'user', None)
+        if payer:
+            full_name = f"{getattr(payer, 'first_name', '')} {getattr(payer, 'last_name', '')}".strip()
             return full_name if full_name else 'N/A'
         return 'N/A'
 
+    def get_username(self, obj):
+        """Get the PAYER's (obj.user) user_id (original field was Payer's user_id)."""
+        payer = getattr(obj, 'user', None)
+        return getattr(payer, 'user_id', 'N/A') if payer else 'N/A'
+
     def get_from_name(self, obj):
-        """Get the linked user's full name."""
+        """Get the RECIPIENT's (current user's) full name (original field was Recipient's name)."""
         linked_user_id = getattr(obj, 'linked_user_id', None)
         if linked_user_id:
+            # Efficiently pull current user from context if available
+            user = self.context.get('current_user')
+            if user and str(user.user_id) == str(linked_user_id):
+                full_name = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip()
+                return full_name if full_name else 'N/A'
+            
+            # Fallback: Query the database
             try:
                 linked_user = CustomUser.objects.get(user_id=linked_user_id)
                 full_name = f"{getattr(linked_user, 'first_name', '')} {getattr(linked_user, 'last_name', '')}".strip()
-                return full_name if full_name else 'Unknown'
+                return full_name if full_name else 'N/A'
             except ObjectDoesNotExist:
-                return 'Unknown'
-        return 'N/A'
-
-    def get_username(self, obj):
-        """Get the current user's user_id."""
-        user = getattr(obj, 'user', None)
-        if user:
-            return getattr(user, 'user_id', 'N/A')
+                return 'N/A'
         return 'N/A'
 
     def get_linked_username(self, obj):
-        """Get the referred user's user_id (assuming linked_user_id is the referred user)."""
-        linked_user_id = getattr(obj, 'linked_user_id', None)
-        if linked_user_id:
-            try:
-                linked_user = CustomUser.objects.get(user_id=linked_user_id)
-                return getattr(linked_user, 'user_id', 'Unknown')
-            except ObjectDoesNotExist:
-                return 'Unknown'
-        return 'N/A'
+        """Get the RECIPIENT's user_id (The current user's ID)."""
+        # This is obj.linked_user_id, which holds the current user's ID
+        return str(getattr(obj, 'linked_user_id', 'N/A'))
+
+
+    # --- General Level/Payment Getters (No change needed here) ---
 
     def get_amount(self, obj):
-        """Get the amount from the associated level."""
-        return getattr(obj.level, 'amount', 0) if obj.level else 0
+        """Get the required amount for the associated level."""
+        return getattr(obj.level, 'amount', Decimal('0.00')) if obj.level else Decimal('0.00')
 
     def get_status(self, obj):
-        """Convert status to 'Completed' or 'Pending'."""
+        """Convert status to 'Completed' (paid) or 'Pending'."""
         return "Completed" if getattr(obj, 'status', '') == 'paid' else "Pending"
 
     def get_level(self, obj):
@@ -528,8 +528,8 @@ class LevelUsersSerializer(serializers.ModelSerializer):
         return requested_date.strftime("%Y-%m-%d %H:%M:%S") if requested_date else None
 
     def get_total(self, obj):
-        """Get the total amount (same as amount for now)."""
-        return getattr(obj.level, 'amount', 0) if obj.level else 0
+        """Get the total amount (same as amount for levels)."""
+        return self.get_amount(obj)
 
     def get_payment_method(self, obj):
         """Determine payment method with URL for proof if Manual."""
@@ -549,7 +549,15 @@ class LevelUsersSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         """Ensure all fields are present with fallbacks."""
         representation = super().to_representation(instance)
+        
+        # Clean up 'N/A' or default values for missing fields
         for field in self.fields:
-            if representation.get(field) is None:
-                representation[field] = 'N/A' if field not in ['amount', 'requested_date', 'total'] else 0 if field in ['amount', 'total'] else None
+            value = representation.get(field)
+            if value is None or value == 'N/A':
+                if field in ['amount', 'total']:
+                    representation[field] = Decimal('0.00')
+                elif field == 'requested_date':
+                    representation[field] = None
+                else:
+                    representation[field] = 'N/A'
         return representation
