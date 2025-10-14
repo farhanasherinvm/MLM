@@ -29,7 +29,7 @@ from django.db.models.functions import Concat
 from rest_framework.generics import ListAPIView
 from rest_framework.permissions import IsAuthenticated
 from decimal import Decimal
-
+from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
@@ -536,6 +536,89 @@ class UserReportViewSet(viewsets.ViewSet):
             'balance_left': balance_left
         }
         return Response(data)
+
+    @action(detail=False, methods=['get'], url_path='downline-level-count')
+    def downline_level_count(self, request):
+        """
+        Calculates the total count of *paid UserLevel entries* for each level (1-6) 
+        across all users in the current user's downline (via sponsor_id chain).
+        """
+        user = request.user
+        logger.debug("Downline total paid levels count hit for user %s", user.user_id)
+        
+        ADMIN_SPONSOR_ID = getattr(settings, 'ADMIN_USER_ID', 'ADMIN001')
+
+        # 1. --- EFFICIENTLY GET ALL DOWNLINE USER IDs ---
+        downline_user_ids = []
+        
+        # Start with direct referrals of the current user
+        direct_referrals_qs = CustomUser.objects.filter(
+            sponsor_id=user.user_id
+        ).exclude(sponsor_id=ADMIN_SPONSOR_ID)
+        
+        queue = list(direct_referrals_qs)
+        visited_ids = {user.user_id, ADMIN_SPONSOR_ID} 
+        
+        # Breadth-First Search (BFS) for the downline
+        while queue:
+            current_user = queue.pop(0)
+            user_id_str = str(current_user.user_id)
+
+            if user_id_str not in visited_ids:
+                downline_user_ids.append(user_id_str)
+                visited_ids.add(user_id_str)
+                
+                # Find the next level of referrals
+                next_level = CustomUser.objects.filter(
+                    sponsor_id=user_id_str
+                ).exclude(sponsor_id=ADMIN_SPONSOR_ID)
+                queue.extend(list(next_level))
+
+        # Handle case where downline is empty
+        if not downline_user_ids:
+            return Response({
+                'paid_level_entries_by_level': [{'level': i, 'count': 0} for i in range(1, 7)],
+                'total_downline_members': 0
+            })
+
+        # 2. --- COUNT TOTAL PAID LEVEL ENTRIES FOR DOWNLINE USERS ---
+        
+        # Query: Filter UserLevel for ALL downline members, only paid status, and only matrix levels (1-6)
+        # Then group by the level number (level__order) and count the entries.
+        paid_level_counts_qs = UserLevel.objects.filter(
+            user__user_id__in=downline_user_ids,
+            status='paid',
+            level__order__lte=6
+        ).values('level__order').annotate(
+            total_paid_entries=Count('id')
+        ).order_by('level__order')
+        
+        # 3. --- FORMAT THE OUTPUT ---
+        
+        # Initialize result with 0 for all levels 1-6
+        paid_level_entries_by_level = {i: 0 for i in range(1, 7)}
+        
+        # Populate the dictionary with actual counts
+        for item in paid_level_counts_qs:
+            level_num = item['level__order']
+            count = item['total_paid_entries']
+            
+            # Ensure the level is within the expected range 1-6 (though the filter should handle this)
+            if 1 <= level_num <= 6:
+                paid_level_entries_by_level[level_num] = count
+                
+        # Convert the dictionary back to the list format
+        paid_level_entries_by_level_list = [
+            {'level': lvl, 'count': count} 
+            for lvl, count in paid_level_entries_by_level.items()
+        ]
+        
+        total_downline_members = len(downline_user_ids)
+
+        return Response({
+            'paid_level_entries_by_level': paid_level_entries_by_level_list,
+            'total_downline_members': total_downline_members,
+        }, status=status.HTTP_200_OK)
 
 # Existing UserLatestReportView (unchanged)
 class UserLatestReportView(APIView):
