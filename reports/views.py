@@ -540,18 +540,17 @@ class UserReportViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['get'], url_path='downline-level-count')
     def downline_level_count(self, request):
         """
-        Calculates the total count of *paid UserLevel entries* for each level (1-6) 
-        across all users in the current user's downline (via sponsor_id chain).
+        Calculates the total count and percentage of *paid UserLevel entries* for 
+        each level (1-6) across all users in the current user's downline.
         """
         user = request.user
-        logger.debug("Downline total paid levels count hit for user %s", user.user_id)
+        # logger.debug("Downline total paid levels count hit for user %s", user.user_id) # Uncomment if logger is defined
         
         ADMIN_SPONSOR_ID = getattr(settings, 'ADMIN_USER_ID', 'ADMIN001')
 
-        # 1. --- EFFICIENTLY GET ALL DOWNLINE USER IDs ---
+        # 1. --- EFFICIENTLY GET ALL DOWNLINE USER IDs (BFS TRAVERSAL) ---
         downline_user_ids = []
         
-        # Start with direct referrals of the current user
         direct_referrals_qs = CustomUser.objects.filter(
             sponsor_id=user.user_id
         ).exclude(sponsor_id=ADMIN_SPONSOR_ID)
@@ -568,23 +567,23 @@ class UserReportViewSet(viewsets.ViewSet):
                 downline_user_ids.append(user_id_str)
                 visited_ids.add(user_id_str)
                 
-                # Find the next level of referrals
                 next_level = CustomUser.objects.filter(
                     sponsor_id=user_id_str
                 ).exclude(sponsor_id=ADMIN_SPONSOR_ID)
                 queue.extend(list(next_level))
 
+        # Get the total count of distinct downline members
+        total_downline_members = len(downline_user_ids)
+        
         # Handle case where downline is empty
-        if not downline_user_ids:
+        if total_downline_members == 0:
+            empty_data = [{'level': i, 'count': 0, 'percentage': 0.00} for i in range(1, 7)]
             return Response({
-                'paid_level_entries_by_level': [{'level': i, 'count': 0} for i in range(1, 7)],
+                'paid_level_entries_by_level': empty_data,
                 'total_downline_members': 0
             })
 
         # 2. --- COUNT TOTAL PAID LEVEL ENTRIES FOR DOWNLINE USERS ---
-        
-        # Query: Filter UserLevel for ALL downline members, only paid status, and only matrix levels (1-6)
-        # Then group by the level number (level__order) and count the entries.
         paid_level_counts_qs = UserLevel.objects.filter(
             user__user_id__in=downline_user_ids,
             status='paid',
@@ -593,9 +592,8 @@ class UserReportViewSet(viewsets.ViewSet):
             total_paid_entries=Count('id')
         ).order_by('level__order')
         
-        # 3. --- FORMAT THE OUTPUT ---
+        # 3. --- CALCULATE PERCENTAGE AND FORMAT OUTPUT ---
         
-        # Initialize result with 0 for all levels 1-6
         paid_level_entries_by_level = {i: 0 for i in range(1, 7)}
         
         # Populate the dictionary with actual counts
@@ -603,17 +601,20 @@ class UserReportViewSet(viewsets.ViewSet):
             level_num = item['level__order']
             count = item['total_paid_entries']
             
-            # Ensure the level is within the expected range 1-6 (though the filter should handle this)
             if 1 <= level_num <= 6:
                 paid_level_entries_by_level[level_num] = count
                 
-        # Convert the dictionary back to the list format
-        paid_level_entries_by_level_list = [
-            {'level': lvl, 'count': count} 
-            for lvl, count in paid_level_entries_by_level.items()
-        ]
-        
-        total_downline_members = len(downline_user_ids)
+        # Convert the dictionary to the final list format, including percentage
+        paid_level_entries_by_level_list = []
+        for lvl, count in paid_level_entries_by_level.items():
+            # **FIXED: Percentage calculation is now correctly defined here**
+            percentage = (count / total_downline_members) * 100.0
+            
+            paid_level_entries_by_level_list.append({
+                'level': lvl, 
+                'count': count,
+                'percentage': round(percentage, 2)
+            })
 
         return Response({
             'paid_level_entries_by_level': paid_level_entries_by_level_list,
