@@ -41,6 +41,19 @@ import sib_api_v3_sdk
 from sib_api_v3_sdk.rest import ApiException
 from django.contrib.auth.hashers import make_password
 
+from io import BytesIO
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+
+from rest_framework import generics, status
+
+
+
+
+
+
+
+
 logger = logging.getLogger(__name__)
 
 # Safe Razorpay client initialization (only once)
@@ -1146,7 +1159,11 @@ class GetUserFullNameView(APIView):
         user_id = self.get_user_id(request)
         return self.handle_request(user_id)
 
-
+class ChildPagination(PageNumberPagination):
+    page_size = 12
+    page_query_param = 'page'
+    page_size_query_param = 'page_size'
+    max_page_size = 50
 
 
 
@@ -1171,23 +1188,111 @@ class ChildRegistrationView(APIView):
             }, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-class ChildListView(APIView):
+
+class ChildListView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
+    pagination_class = ChildPagination
+    queryset = CustomUser.objects.all()
 
     def get(self, request):
-        children = CustomUser.objects.filter(parent=request.user)
-        data = [
-            {
-                "user_id": c.user_id,
-                "first_name": c.first_name,
-                "last_name": c.last_name,
-                "email": c.email,
-                "mobile": c.mobile,
-            }
-            for c in children
-        ]
-        return Response({"children": data}, status=status.HTTP_200_OK)
+        user = request.user
+        query_params = request.query_params
 
+        # Base queryset
+        if user.is_staff:
+            children = CustomUser.objects.filter(parent__isnull=False)
+        else:
+            children = CustomUser.objects.filter(parent=user)
+
+        # Filters (admin only)
+        if user.is_staff:
+            parent_user_id = query_params.get("parent_user_id")
+            child_user_id = query_params.get("user_id")
+            email = query_params.get("email")
+            mobile = query_params.get("mobile")
+            date_joined = query_params.get("date_joined")  # format: YYYY-MM-DD
+
+            if parent_user_id:
+                children = children.filter(parent__user_id=parent_user_id)
+            if child_user_id:
+                children = children.filter(user_id=child_user_id)
+            if email:
+                children = children.filter(email__icontains=email)
+            if mobile:
+                children = children.filter(mobile__icontains=mobile)
+            if date_joined:
+                children = children.filter(date_of_joining__date=date_joined)
+
+        # Check for PDF export
+        export_pdf = query_params.get("export_pdf", "false").lower() == "true"
+        if export_pdf and user.is_staff:
+            return self.export_pdf(children)
+
+        # Paginate queryset
+        page = self.paginate_queryset(children)
+        if page is not None:
+            data = self.serialize_children(page, user)
+            return self.get_paginated_response(data)
+
+        # If pagination not applied
+        data = self.serialize_children(children, user)
+        return Response(data, status=status.HTTP_200_OK)
+
+    def serialize_children(self, queryset, user):
+        """Helper function to build response data"""
+        data = []
+        for c in queryset:
+            if user.is_staff:
+                data.append({
+                    "user_id": c.user_id,
+                    "first_name": c.first_name,
+                    "last_name": c.last_name,
+                    "email": c.email,
+                    "mobile": c.mobile,
+                    "whatsapp_number": c.whatsapp_number,
+                    "role": c.role,
+                    "parent_user_id": c.parent.user_id if c.parent else None,
+                    "date_of_joining": c.date_of_joining,
+                    "is_active": c.is_active,
+                })
+            else:
+                data.append({
+                    "user_id": c.user_id,
+                    "first_name": c.first_name,
+                    "last_name": c.last_name,
+                    "email": c.email,
+                    "mobile": c.mobile,
+                })
+        return data
+
+    def export_pdf(self, queryset):
+        buffer = BytesIO()
+        p = canvas.Canvas(buffer, pagesize=A4)
+        width, height = A4
+        y = height - 50
+
+        p.setFont("Helvetica-Bold", 14)
+        p.drawString(200, y, "Child User List")
+        y -= 30
+        p.setFont("Helvetica", 10)
+
+        for c in queryset:
+            line = (
+                f"User ID: {c.user_id}, Name: {c.first_name} {c.last_name}, "
+                f"Email: {c.email}, Mobile: {c.mobile}, "
+                f"Parent ID: {c.parent.user_id if c.parent else 'N/A'}, "
+                f"Joined: {c.date_of_joining.strftime('%Y-%m-%d') if c.date_of_joining else 'N/A'}, "
+                f"Role: {c.role}, Active: {c.is_active}"
+            )
+            p.drawString(50, y, line)
+            y -= 20
+            if y < 50:
+                p.showPage()
+                y = height - 50
+
+        p.save()
+        buffer.seek(0)
+        return FileResponse(buffer, as_attachment=True, filename="child_users.pdf")
 
 class SwitchToChildView(APIView):
     permission_classes = [IsAuthenticated]
