@@ -449,13 +449,13 @@ class AdminUserDetailSerializer(serializers.ModelSerializer):
 
         # --- Update KYC (including nominee fields) ---
         if kyc_data or any(f in self.context["request"].data for f in [
-            "account_number", "pan_number", "pan_image",
+            "aadhaar_number", "pan_number", "pan_image",
             "id_number", "id_number_nominee", "id_card_image", "id_card_image_nominee",
             "nominee_name", "nominee_relation", "nominee_dob", "verified"
         ]):
             kyc, _ = KYC.objects.get_or_create(user=instance)
             for field_map in [
-                ("account_number", "account_number"),
+                ("aadhaar_number", "aadhaar_number"),
                 ("pan_number", "pan_number"),
                 ("pan_image", "pan_image"),
                 ("id_number_nominee", "id_number"),
