@@ -288,6 +288,7 @@ class KYCSerializer(serializers.ModelSerializer):
     id_number_nominee = serializers.CharField(source='id_number', allow_blank=False)
     id_card_image_nominee = serializers.ImageField(source='id_card_image')
     nominee_dob = serializers.DateField(required=False, allow_null=True)
+    pan_number = serializers.CharField(required=True, allow_blank=False)
     class Meta:
         model = KYC
         fields = [
@@ -340,7 +341,13 @@ class KYCSerializer(serializers.ModelSerializer):
         if KYC.objects.exclude(user=user).filter(id_number=value).exists():
             raise serializers.ValidationError("This ID number is already used by another user.")
         return value
-
+    def validate_pan_number(self, value):
+        if not value:
+         raise serializers.ValidationError("PAN number cannot be empty.")
+        user = self.context['request'].user
+        if KYC.objects.exclude(user=user).filter(pan_number=value).exists():
+           raise serializers.ValidationError("This PAN number is already used by another user.")
+        return value
 
 class ReferralSerializer(serializers.Serializer):
     referral_id = serializers.CharField()

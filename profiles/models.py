@@ -39,7 +39,7 @@ class KYC(models.Model):
 
 
     # PAN details
-    pan_number = models.CharField(max_length=20, unique=True)
+    pan_number = models.CharField(max_length=20, unique=True, blank=False, null=False)
     pan_image = models.ImageField(upload_to=upload_to_kyc, default="", storage=MediaCloudinaryStorage(), null=True, blank=True)
 
     # ID details

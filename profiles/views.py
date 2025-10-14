@@ -10,6 +10,7 @@ from django.db.models import Q
 from django.contrib.auth import get_user_model
 from datetime import datetime, timedelta
 
+from django.shortcuts import get_object_or_404
 
 from rest_framework.exceptions import PermissionDenied
 
@@ -54,34 +55,42 @@ class ProfileView(generics.RetrieveUpdateAPIView):
         # Fetch profile of currently logged-in user
         return self.request.user.profile
 
-
 class KYCView(generics.RetrieveUpdateAPIView):
     serializer_class = KYCSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_object(self):
-        # Always get the existing KYC for the user
+        user = self.request.user
+
+        if user.is_staff:
+            # Admin: fetch by pk or user_id
+            kyc_id = self.kwargs.get('pk')
+            if kyc_id:
+                return get_object_or_404(KYC, pk=kyc_id)
+
+            user_id = self.request.query_params.get('user_id')
+            if user_id:
+                return get_object_or_404(KYC, user__user_id=user_id)
+            
+            raise PermissionDenied("Provide KYC id or user_id to fetch KYC.")
+
+        # Regular user: fetch their own KYC
         try:
-            obj = KYC.objects.get(user=self.request.user)
+            return KYC.objects.get(user=user)
         except KYC.DoesNotExist:
-            # Allow creating only if user doesn't have one
-            obj = KYC(user=self.request.user)
-        return obj
+            # Only create if request has all required fields
+            serializer = self.get_serializer(data=self.request.data, context={'request': self.request})
+            serializer.is_valid(raise_exception=True)
+            return serializer.save(user=user)
 
     def update(self, request, *args, **kwargs):
         obj = self.get_object()
 
-        # Users can only update once; after verified, only admin can update
+        # Users can only update once, admins can always update
         if obj.pk is not None and not request.user.is_staff:
             raise PermissionDenied("You cannot update KYC again. Please contact admin.")
 
-        # If obj exists in DB, update; if it's new, save first
         return super().update(request, *args, **kwargs)
-
-
-    def perform_update(self, serializer):
-        # Save serializer normally
-        serializer.save()
 
 class ReferralView(APIView):
     permission_classes = [permissions.IsAuthenticated]
