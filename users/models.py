@@ -63,7 +63,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     sponsor_id = models.CharField(max_length=255, blank=True, null=True)
     placement_id = models.CharField(max_length=255, blank=True, null=True)
     first_name = models.CharField(max_length=255)
-    last_name = models.CharField(max_length=255)
+    last_name = models.CharField(max_length=255, blank=True, null=True)
 
     email = models.EmailField(null=True, blank=True)
     mobile = models.CharField(max_length=15)
@@ -162,7 +162,7 @@ class RegistrationRequest(models.Model):
     placement_id = models.CharField(max_length=255, blank=True, null=True)
 
     first_name = models.CharField(max_length=50)
-    last_name = models.CharField(max_length=50)
+    last_name = models.CharField(max_length=50, blank=True, null=True)
 
     email = models.EmailField()
     mobile = models.CharField(max_length=20)
