@@ -755,8 +755,8 @@ def compute_user_levels():
         visited.add(uid)
         user = users_map.get(uid)
         if not user or not user["sponsor_id"]:
-            levels[uid] = 1
-            return 1
+            levels[uid] = 0
+            return 0
         sponsor_uid = user["sponsor_id"]
         sponsor_level = get_level(sponsor_uid, visited)
         if sponsor_level is None:
@@ -822,17 +822,14 @@ def apply_search_and_filters(queryset, request,user_levels=None):
 
     # --- Level filter ---
     level_filter = get_param("level")
-    if level_filter:
+    if level_filter is not None:
         try:
             target_level = int(level_filter)
-            if target_level > 0:
-                # user_levels = compute_user_levels()
-                valid_ids = [
-                    uid for uid, lvl in user_levels.items() if lvl == target_level
-                ]
-                queryset = queryset.filter(user_id__in=valid_ids)
+            valid_ids = [uid for uid, lvl in user_levels.items() if lvl == target_level]
+            queryset = queryset.filter(user_id__in=valid_ids)
         except (ValueError, TypeError):
             pass
+
     
     sort_by = get_param("sort_by") or "date_of_joining"  # default sort field
     sort_order = (get_param("sort_order") or "desc").lower()
@@ -873,19 +870,21 @@ class AdminListUsersView(APIView):
 
     def handle_request(self, request):
         queryset = self.get_queryset(request)
-        queryset = apply_search_and_filters(queryset, request)
+        user_levels = compute_user_levels()
+        queryset = apply_search_and_filters(queryset, request, user_levels=user_levels)
         export_format = self.get_export_format(request)
 
         if export_format == "csv":
-            return export_users_csv(queryset, filename="users.csv")
+            return export_users_csv(queryset, filename="users.csv", user_levels=user_levels)
         elif export_format == "pdf":
-            return export_users_pdf(queryset, filename="users.pdf")
+            return export_users_pdf(queryset, filename="users.pdf", user_levels=user_levels)
 
         # Pagination
         paginator = AdminUserPagination()
         page = paginator.paginate_queryset(queryset, request)
-        serializer = AdminUserListSerializer(page, many=True, context={"request": request})
-
+        serializer = AdminUserListSerializer(
+            page, many=True, context={"request": request, "level_map": user_levels}
+        )
         return paginator.get_paginated_response(serializer.data)
 
 class AdminUserListView(APIView):
@@ -931,7 +930,10 @@ class AdminUserListView(APIView):
         # Paginate
         paginator = AdminUserPagination()
         page = paginator.paginate_queryset(users, request)
-        serializer = AdminUserListSerializer(page, many=True, context={"request": request})
+        serializer = AdminUserListSerializer(
+            page, many=True, context={"level_map": user_levels}
+        )
+
         return paginator.get_paginated_response(serializer.data)
         
 class AdminUserDetailView(APIView):

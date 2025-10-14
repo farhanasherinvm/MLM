@@ -357,20 +357,25 @@ class AdminUserListSerializer(serializers.ModelSerializer):
         return None
 
     def get_level(self, obj):
-        try:
-            level = 0
-            visited = set()
-            current = obj
-            while getattr(current, "referred_by", None):
-                rid = getattr(current.referred_by, "user_id", None)
-                if not rid or rid in visited:
-                    break
-                visited.add(rid)
-                level += 1
-                current = current.referred_by
-            return level
-        except Exception:
-            return 0
+        # try:
+        #     level = 0
+        #     sponsor_id = obj.sponsor_id
+        #     visited = set()
+        #     # current = obj
+        #     while sponsor_id:
+        #         if sponsor_id in visited:
+        #             break
+        #         visited.add(sponsor_id)
+        #         sponsor = CustomUser.objects.filter(user_id=sponsor_id).first()
+        #         if not sponsor:
+        #             break
+        #         level += 1
+        #         sponsor_id = sponsor.sponsor_id
+        #     return level
+        # except Exception:
+        #     return 1
+        level_map = self.context.get("level_map", {})
+        return level_map.get(obj.user_id, 0)
 
     def get_status(self, obj):
         return "Active" if obj.is_active else "Blocked"
