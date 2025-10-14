@@ -475,7 +475,7 @@ class UserReportViewSet(viewsets.ViewSet):
         # 4. Pending Counts - Count of levels that are currently pending payment/approval.
         pending_count = user_levels.filter(status='pending').count()
 
-        total_amount_generated= total_income  + total_referral_income
+        total_amount_generated= total_income  - total_paid_for_levels
         
         # 5. Referral Count - FIXING THE AttributeError
         # The correct, explicit query is needed here.

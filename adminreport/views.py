@@ -690,11 +690,16 @@ class AdminAnalyticsView(APIView):
                 count=Count('id')
             ).values('count')[:1] 
             
-            
+            placement_count_subquery = CustomUser.objects.filter(
+                    placement_id=OuterRef('user_id')
+                ).values('placement_id').annotate(
+                    count=Count('id')
+                ).values('count')[:1]
             # 2. Add Annotations
             queryset = queryset.annotate(
                 # FIX: Explicit output_field=models.IntegerField()
                 total_referrals=Subquery(referral_count_subquery, output_field=IntegerField()), 
+                current_level_placement_count=Subquery(placement_count_subquery, output_field=IntegerField()),
                 
                 # Income: Aggregating 'received' from UserLevel
                 total_income_generated=Sum(
@@ -767,6 +772,7 @@ class AdminAnalyticsView(APIView):
                     'full_name': final_full_name,
                     'total_income_generated': user.total_income_generated or Decimal('0.00'),
                     'total_referrals': user.total_referrals or 0,
+                    'current_level': user.current_level_placement_count or 0,
                     'levels_completed': user.levels_completed or 0,
                     'total_payments_made': user.total_payments_made or Decimal('0.00'),
                     

@@ -266,5 +266,6 @@ class UserAnalyticsSerializer(serializers.Serializer):
     total_income_generated = serializers.DecimalField(max_digits=12, decimal_places=2)
     total_referrals = serializers.IntegerField()
     levels_completed = serializers.IntegerField() 
+    current_level = serializers.IntegerField()
     total_payments_made = serializers.DecimalField(max_digits=12, decimal_places=2)
     
