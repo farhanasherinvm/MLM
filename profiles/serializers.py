@@ -3,6 +3,8 @@ from .models import Profile,KYC
 from users.models import CustomUser, UserAccountDetails
 from users.serializers import UserAccountDetailsSerializer
 from datetime import date
+from .utils import verhoeff_validate
+import re
 
 
 
@@ -290,7 +292,7 @@ class KYCSerializer(serializers.ModelSerializer):
         model = KYC
         fields = [
             "id",
-            "account_number",
+            "aadhaar_number",
             "pan_number",
             "pan_image",
             "id_number_nominee",
@@ -312,6 +314,24 @@ class KYCSerializer(serializers.ModelSerializer):
         if value and value > required_age_date:
             raise serializers.ValidationError("Nominee must be at least 18 years old.")
         
+        return value
+
+    def validate_aadhaar_number(self, value):
+        value = value.replace(" ", "")  # Remove spaces
+
+        # Check 12-digit format
+        if not re.fullmatch(r'\d{12}', value):
+            raise serializers.ValidationError("Aadhaar number must be a 12-digit number.")
+
+        # Verhoeff checksum
+        if not verhoeff_validate(value):
+            raise serializers.ValidationError("Invalid Aadhaar number (failed checksum).")
+
+        # Check uniqueness
+        user = self.context['request'].user
+        if KYC.objects.exclude(user=user).filter(aadhaar_number=value).exists():
+            raise serializers.ValidationError("This Aadhaar number is already used by another user.")
+
         return value
 
     def validate_id_number(self, value):
