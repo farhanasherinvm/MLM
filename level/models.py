@@ -187,15 +187,18 @@ class PmfPayment(models.Model):
 
 def get_upline(user, depth):
     """Get the upline user at the specified depth."""
+    current_upline_id = user.placement_id
+
     current = user
     for _ in range(depth):
         if not current or not current.placement_id:
             return None
+        # This line fetches the *next* upline user
         try:
             current = CustomUser.objects.get(user_id=current.placement_id)
         except CustomUser.DoesNotExist:
             return None
-    return current
+    return current 
 
 def check_upline_fully_paid(upline_id):
     """
@@ -290,26 +293,25 @@ def create_user_levels(sender, instance, created, **kwargs):
                     #         linked_user_id = upline_user.user_id
                     if 1 <= level.order <= 6:
                         depth = level.order
+                        upline_user = get_upline(instance, depth)
                         
                         # A. Try Placement Chain First
-                        if instance.placement_id:
-                            placement_user = CustomUser.objects.get(user_id=instance.placement_id)
-                            upline_user = get_upline(placement_user, depth - 1) 
-                        
-                        
-                        # B. If Placement Fails or is Missing, Try Dummy Upline
-                        if not upline_user and not instance.placement_id:
+                        if upline_user:
+                            linked_user_id = upline_user.user_id
+                        else:
+                            # Fallback/Master Node Logic
                             logger.warning(
-                                f"No placement or upline found for {instance.user_id}. Falling back to Master Node."
+                                f"No upline found for {instance.user_id} at level {depth}. Falling back to Master Node."
                             )
                             try:
-                                # Get the appropriate Master Node
+                                # The Master Node lookup still requires the correct index (depth - 1)
                                 upline_user = CustomUser.objects.filter(
-                                    user_id__startswith='MASTER',
-                                    is_active=True  
+                                    user_id__startswith='MASTER', is_active=True 
                                 ).order_by('user_id')[depth - 1] 
-                            except IndexError:
-                                upline_user = None
+                                linked_user_id = upline_user.user_id
+                            except (IndexError, CustomUser.DoesNotExist):
+                                logger.warning(f"No Master Node found for depth {depth}.")
+                                linked_user_id = None
                         
                         linked_user_id = upline_user.user_id if upline_user else None
                             
