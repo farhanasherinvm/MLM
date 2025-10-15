@@ -1264,7 +1264,7 @@ class SingleUserBonusSummaryView(APIView):
         
         # --- 1. Header/User Info ---
         user_info_table = Table([
-            [Paragraph('<font size=20>LIO CLUB X</font>', styles['Title']), '', f"UserID: {data['user_id']}"],
+            [Paragraph('<font size=20>WINNERS CLUBX</font>', styles['Title']), '', f"UserID: {data['user_id']}"],
             ['', '', f"UserName: {data['username']}"],
         ], colWidths=[2.5*inch, 2*inch, 2*inch])
         
