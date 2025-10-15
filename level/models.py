@@ -114,7 +114,7 @@ class LevelPayment(models.Model):
     payment_proof = models.FileField(upload_to='payment_proofs/', storage=MediaCloudinaryStorage(), null=True, blank=True)
     payment_data = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
-
+  
     def set_payment_data(self, data):
         """Set payment_data as JSON string without saving."""
         if not isinstance(data, dict):
