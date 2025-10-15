@@ -367,7 +367,7 @@ OTP_EXPIRY_MINUTES = 10     # OTP validity in minutes (configurable)
 OTP_LENGTH = 6              # number of digits in OTP
 OTP_MAX_ATTEMPTS = 5        # max verification attempts allowed
 
-ADMIN_USER_ID= 'adm'
+ADMIN_USER_ID= 'admwinners'
 
 # ------------------ LOGGING ------------------
 LOGGING = {
