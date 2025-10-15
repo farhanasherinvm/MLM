@@ -519,6 +519,8 @@ class AdminMasterUserSerializer(serializers.ModelSerializer):
     # Fields pulled directly from the CustomUser model (the source object)
     user_id = serializers.CharField(max_length=20, read_only=True)
     first_name = serializers.CharField(max_length=100, read_only=True)
+    last_name = serializers.CharField(max_length=100, read_only=True)
+
     email = serializers.EmailField(read_only=True)
     mobile = serializers.CharField(read_only=True)
     whatsapp_number = serializers.CharField(read_only=True)
@@ -538,7 +540,7 @@ class AdminMasterUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser # <--- CRITICAL CHANGE: Base model is CustomUser
         fields = (
-            'user_id', 'first_name', 'email', 'pk', 'admin_level_linked', 
+            'user_id', 'first_name', 'last_name','email', 'pk', 'admin_level_linked', 
             'current_status_display', 'linked_user_id', 'is_active', 'node_type', 
             'total_income', 'mobile', 'whatsapp_number', 'pincode', 'upi_number', 
             'sponsor_id', 'placement_id'

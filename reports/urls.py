@@ -1,7 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import PaymentReportViewSet, DashboardReportViewSet, UserReportViewSet, UserLatestReportView
-from .views import SendRequestReport, AUCReport, PaymentReport, LevelUsersReport,AllUserBonusSummaryListView, SingleUserBonusSummaryView
+from .views import SendRequestReport, AUCReport, PaymentReport, LevelUsersReport,AllUserBonusSummaryListView, SingleUserBonusSummaryView, CurrentUserBonusSummaryView
 
 router = DefaultRouter()
 router.register(r'payments', PaymentReportViewSet)
@@ -18,6 +18,7 @@ urlpatterns = [
     path('level-users-report/', LevelUsersReport.as_view(), name='level-users-report'),
     path('listbonus/', AllUserBonusSummaryListView.as_view(), name='all-user-bonus-list'),
     path('singlebonus/<str:user_id>/', SingleUserBonusSummaryView.as_view(), name='single-user-bonus-detail'),
+    path('api/bonus/summary/me/', CurrentUserBonusSummaryView.as_view(), name='my-bonus-summary'),
 
 
     

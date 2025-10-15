@@ -1365,6 +1365,15 @@ class SingleUserBonusSummaryView(APIView):
         # 4. Standard JSON Response
         return Response(summary_data)
 
+class CurrentUserBonusSummaryView(SingleUserBonusSummaryView):
+    """Endpoint for the currently authenticated user to view their own bonus summary."""
+    
+    # Override get to use the request.user's ID instead of the URL parameter
+    def get(self, request, *args, **kwargs):
+        # We replace the user_id lookup with the current authenticated user's ID
+        current_user_id = request.user.user_id # Assuming user_id is an attribute
+        return super().get(request, user_id=current_user_id)
+
 
 class LevelUsersReport(APIView):
     pagination_class = PageNumberPagination
