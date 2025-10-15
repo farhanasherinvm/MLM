@@ -53,7 +53,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'profiles',
     'users',
-    'level',
+    'level.apps.LevelConfig',
     'reports',
     'notifications',
     'adminreport',
