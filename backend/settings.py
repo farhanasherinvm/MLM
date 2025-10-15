@@ -95,20 +95,37 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': 'neondb',
+#         'USER': 'neondb_owner',
+#         'PASSWORD': 'npg_OAZPrjz8Mp0w',
+#         'HOST': 'ep-floral-resonance-adgcweml-pooler.c-2.us-east-1.aws.neon.tech',
+#         'PORT': '5432',
+#         'OPTIONS': {
+#             'sslmode': 'require',
+#         },
+#         'CONN_MAX_AGE': 600,
+#     }
+# }
+
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'neondb',
-        'USER': 'neondb_owner',
-        'PASSWORD': 'npg_OAZPrjz8Mp0w',
-        'HOST': 'ep-floral-resonance-adgcweml-pooler.c-2.us-east-1.aws.neon.tech',
-        'PORT': '5432',
+        'NAME': 'neondb',  # Database name from the URL
+        'USER': 'neondb_owner',  # User from the URL
+        'PASSWORD': 'npg_nbJlqwf7VkX8',  # Password from the URL
+        'HOST': 'ep-super-sound-a1oqfye2-pooler.ap-southeast-1.aws.neon.tech',  # Host from the URL
+        'PORT': '5432',  # Standard PostgreSQL port
         'OPTIONS': {
-            'sslmode': 'require',
+            'sslmode': 'require',  # Required for secure connection to Neon
         },
-        'CONN_MAX_AGE': 600,
+        'CONN_MAX_AGE': 600,  # Optional: Connection timeout
     }
 }
+#psql 'postgresql://neondb_owner:npg_nbJlqwf7VkX8@ep-super-sound-a1oqfye2-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require'
 
 # DATABASES = {
 #     'default': {
@@ -280,13 +297,22 @@ SERVER_EMAIL = DEFAULT_FROM_EMAIL
 
 
 # Cloudinary Settings
-CLOUDINARY_CLOUD_NAME = "dunlntdy3"
-CLOUDINARY_API_KEY = "454341219174761"
-CLOUDINARY_API_SECRET = "NIhM0PgdElTPwPg6dZr2LQmBprE"
+# CLOUDINARY_CLOUD_NAME = "dunlntdy3"
+# CLOUDINARY_API_KEY = "454341219174761"
+# CLOUDINARY_API_SECRET = "NIhM0PgdElTPwPg6dZr2LQmBprE"
+# CLOUDINARY_STORAGE = {
+#     'CLOUD_NAME': 'dunlntdy3',
+#     'API_KEY': '454341219174761',
+#     'API_SECRET': 'NIhM0PgdElTPwPg6dZr2LQmBprE',
+# }
+
+CLOUDINARY_CLOUD_NAME = "dcg1oupb4"
+CLOUDINARY_API_KEY = "896236223569227"
+CLOUDINARY_API_SECRET = "f838TWHFcF0Vc-nGCHnAE0U7exs"
 CLOUDINARY_STORAGE = {
-    'CLOUD_NAME': 'dunlntdy3',
-    'API_KEY': '454341219174761',
-    'API_SECRET': 'NIhM0PgdElTPwPg6dZr2LQmBprE',
+    'CLOUD_NAME': 'dcg1oupb4',
+    'API_KEY': '896236223569227',
+    'API_SECRET': 'f838TWHFcF0Vc-nGCHnAE0U7exs',
 }
 # Set Cloudinary as the default storage backend for media files
 DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
