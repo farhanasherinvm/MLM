@@ -18,8 +18,10 @@ class LevelConfig(AppConfig):
         # This block prevents crashes if the database table hasn't been created yet (e.g., during the initial 'migrate')
         try:
             # Check if the Level table exists. Using introspection is a more robust check.
-            if Level._meta.db_table not in self.get_models()[0]._meta.db_connection.introspection.table_names():
-                 return 
+            all_models = list(self.get_models())
+
+            if all_models and Level._meta.db_table not in all_models[0]._meta.db_connection.introspection.table_names():
+                return
         except ProgrammingError:
             # Catch exceptions that occur if the database connection isn't fully ready
             return
