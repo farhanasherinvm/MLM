@@ -539,42 +539,47 @@ class UserReportViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=['get'], url_path='downline-level-count')
     def downline_level_count(self, request):
-        """
-        Calculates the total count and percentage of *paid UserLevel entries* for 
-        each level (1-6) across all users in the current user's downline.
-        """
         user = request.user
-        # logger.debug("Downline total paid levels count hit for user %s", user.user_id) # Uncomment if logger is defined
-        
         ADMIN_SPONSOR_ID = getattr(settings, 'ADMIN_USER_ID', 'ADMIN001')
 
-        # 1. --- EFFICIENTLY GET ALL DOWNLINE USER IDs (BFS TRAVERSAL) ---
-        downline_user_ids = []
+        # 1. --- EFFICIENTLY GET ALL DOWNLINE USER IDs (Iterative Bulk Query) ---
         
-        direct_referrals_qs = CustomUser.objects.filter(
-            sponsor_id=user.user_id
-        ).exclude(sponsor_id=ADMIN_SPONSOR_ID)
+        # Use a set for O(1) lookups and to guarantee unique IDs
+        downline_user_ids = set()
         
-        queue = list(direct_referrals_qs)
-        visited_ids = {user.user_id, ADMIN_SPONSOR_ID} 
+        # Start the list of IDs to process with the current user's direct referrals
+        current_level_ids = list(
+            CustomUser.objects.filter(sponsor_id=user.user_id)
+            .exclude(sponsor_id=ADMIN_SPONSOR_ID)
+            .values_list('user_id', flat=True)
+        )
         
-        # Breadth-First Search (BFS) for the downline
-        while queue:
-            current_user = queue.pop(0)
-            user_id_str = str(current_user.user_id)
+        processed_ids = {user.user_id, ADMIN_SPONSOR_ID}
 
-            if user_id_str not in visited_ids:
-                downline_user_ids.append(user_id_str)
-                visited_ids.add(user_id_str)
-                
-                next_level = CustomUser.objects.filter(
-                    sponsor_id=user_id_str
+        # Loop until no new referrals are found in the next level
+        while current_level_ids:
+            # Add the IDs found in the current level to the overall set
+            new_ids = set(current_level_ids) - processed_ids
+            
+            # Stop processing if no genuinely new users were found
+            if not new_ids:
+                break
+
+            downline_user_ids.update(new_ids)
+            processed_ids.update(new_ids)
+            
+            # Get the next level of referrals in ONE bulk query
+            current_level_ids = list(
+                CustomUser.objects.filter(
+                    sponsor_id__in=new_ids
                 ).exclude(sponsor_id=ADMIN_SPONSOR_ID)
-                queue.extend(list(next_level))
+                .values_list('user_id', flat=True)
+            )
 
-        # Get the total count of distinct downline members
-        total_downline_members = len(downline_user_ids)
-        
+        # Convert the set back to a list for compatibility with __in query
+        downline_user_ids_list = list(downline_user_ids)
+        total_downline_members = len(downline_user_ids_list)
+
         # Handle case where downline is empty
         if total_downline_members == 0:
             empty_data = [{'level': i, 'count': 0, 'percentage': 0.00} for i in range(1, 7)]
@@ -583,32 +588,27 @@ class UserReportViewSet(viewsets.ViewSet):
                 'total_downline_members': 0
             })
 
-        # 2. --- COUNT TOTAL PAID LEVEL ENTRIES FOR DOWNLINE USERS ---
+        # 2. --- COUNT TOTAL PAID LEVEL ENTRIES FOR DOWNLINE USERS (UNCHANGED) ---
         paid_level_counts_qs = UserLevel.objects.filter(
-            user__user_id__in=downline_user_ids,
+            user__user_id__in=downline_user_ids_list, # Use the computed list
             status='paid',
             level__order__lte=6
         ).values('level__order').annotate(
             total_paid_entries=Count('id')
         ).order_by('level__order')
-        
-        # 3. --- CALCULATE PERCENTAGE AND FORMAT OUTPUT ---
+
+        # 3. --- CALCULATE PERCENTAGE AND FORMAT OUTPUT (UNCHANGED) ---
         
         paid_level_entries_by_level = {i: 0 for i in range(1, 7)}
         
-        # Populate the dictionary with actual counts
         for item in paid_level_counts_qs:
             level_num = item['level__order']
-            count = item['total_paid_entries']
-            
             if 1 <= level_num <= 6:
-                paid_level_entries_by_level[level_num] = count
+                paid_level_entries_by_level[level_num] = item['total_paid_entries']
                 
-        # Convert the dictionary to the final list format, including percentage
         paid_level_entries_by_level_list = []
         for lvl, count in paid_level_entries_by_level.items():
-            # **FIXED: Percentage calculation is now correctly defined here**
-            percentage = (count / total_downline_members) * 100.0
+            percentage = (count / total_downline_members) * 100.0 if total_downline_members else 0.00
             
             paid_level_entries_by_level_list.append({
                 'level': lvl, 
