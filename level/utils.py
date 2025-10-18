@@ -10,6 +10,9 @@ logger = logging.getLogger(__name__)
 
 
 def check_and_enforce_payment_lock(receiving_user, level_amount_to_credit):
+
+    if receiving_user.user_id.startswith('MASTER'):
+        return True, "Payment allowed: Receiving user is the Master Node."
     
     FEE_LEVEL_NAMES = [
         constants.LOCK_LEVEL_NAME, 
