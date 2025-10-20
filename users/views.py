@@ -984,55 +984,64 @@ class AdminUserDetailView(APIView):
         return Response(serializer.errors, status=400)
     
     def delete(self, request, user_id):
-        """Project admin can permanently delete a user.
-        """
+        """Project admin can permanently delete a user — never another admin."""
         try:
             user = CustomUser.objects.select_related('profile').get(user_id=user_id)
         except CustomUser.DoesNotExist:
             return Response({"error": "User not found"}, status=404)
 
-        # Prevent self-delete via admin endpoint
+        # Prevent admin from deleting themselves
         if request.user and getattr(request.user, 'user_id', None) == user.user_id:
             return Response({"error": "You cannot delete your own account via this endpoint."}, status=400)
 
+        # --- Stronger protection against deleting admin users ---
+        # Block deletion if user has *any* admin privileges
+        admin_flags = [
+            getattr(user, "is_superuser", False),
+            getattr(user, "is_staff", False),
+            getattr(user, "is_admin_user", False),
+            getattr(user, "is_project_admin", False),
+            getattr(user, "role", "").lower() in ["admin", "superadmin", "projectadmin"],
+            getattr(user, "user_type", "").lower() in ["admin", "superadmin"],
+        ]
+        if any(admin_flags):
+            return Response(
+                {"error": "Deletion blocked: admin/superuser accounts cannot be deleted via this endpoint."},
+                status=403,
+            )
+
         try:
             with transaction.atomic():
-                # Delete profile image from storage if present
+                # Delete profile image if present
                 profile = getattr(user, 'profile', None)
-                if profile:
+                if profile and getattr(profile, 'profile_image', None):
                     try:
-                        if getattr(profile, 'profile_image', None):
-                            profile.profile_image.delete(save=False)
+                        profile.profile_image.delete(save=False)
                     except Exception:
                         pass
 
                 # Delete KYC images if present
                 kyc = getattr(user, 'kyc', None)
                 if kyc:
-                    try:
-                        if getattr(kyc, 'pan_image', None):
-                            kyc.pan_image.delete(save=False)
-                    except Exception:
-                        pass
-                    try:
-                        if getattr(kyc, 'id_card_image', None):
-                            kyc.id_card_image.delete(save=False)
-                    except Exception:
-                        pass
+                    for field in ['pan_image', 'id_card_image']:
+                        image = getattr(kyc, field, None)
+                        if image:
+                            try:
+                                image.delete(save=False)
+                            except Exception:
+                                pass
 
-                # Delete payment receipts (if Payment model has receipt FileField)
-                try:
-                    for pay in getattr(user, 'payments', []).all():
-                        try:
+                # Delete payment receipts if any
+                payments = getattr(user, 'payments', None)
+                if payments is not None:
+                    try:
+                        for pay in payments.all():
                             if getattr(pay, 'receipt', None):
                                 pay.receipt.delete(save=False)
-                        except Exception:
-                            pass
-                except Exception:
-                    # payments relation may not exist or error - ignore and continue
-                    pass
+                    except Exception:
+                        pass
 
-                # Finally delete the user (cascades to related models where FK on_delete is CASCADE)
+                # Finally delete user
                 user.delete()
 
         except Exception as exc:
