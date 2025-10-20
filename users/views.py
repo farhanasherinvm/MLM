@@ -982,6 +982,67 @@ class AdminUserDetailView(APIView):
             serializer.save()
             return Response({"message": f"User {user.user_id} updated successfully"})
         return Response(serializer.errors, status=400)
+    
+    def delete(self, request, user_id):
+        """Project admin can permanently delete a user.
+        """
+        try:
+            user = CustomUser.objects.select_related('profile').get(user_id=user_id)
+        except CustomUser.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+
+        # Prevent self-delete via admin endpoint
+        if request.user and getattr(request.user, 'user_id', None) == user.user_id:
+            return Response({"error": "You cannot delete your own account via this endpoint."}, status=400)
+
+        # Disallow deleting superusers/admin users via this endpoint
+        if getattr(user, 'is_superuser', False) or getattr(user, 'is_staff', False) or getattr(user, 'is_admin_user', False):
+            return Response({"error": "Cannot delete admin/superuser accounts via this endpoint."}, status=403)
+
+        try:
+            with transaction.atomic():
+                # Delete profile image from storage if present
+                profile = getattr(user, 'profile', None)
+                if profile:
+                    try:
+                        if getattr(profile, 'profile_image', None):
+                            profile.profile_image.delete(save=False)
+                    except Exception:
+                        pass
+
+                # Delete KYC images if present
+                kyc = getattr(user, 'kyc', None)
+                if kyc:
+                    try:
+                        if getattr(kyc, 'pan_image', None):
+                            kyc.pan_image.delete(save=False)
+                    except Exception:
+                        pass
+                    try:
+                        if getattr(kyc, 'id_card_image', None):
+                            kyc.id_card_image.delete(save=False)
+                    except Exception:
+                        pass
+
+                # Delete payment receipts (if Payment model has receipt FileField)
+                try:
+                    for pay in getattr(user, 'payments', []).all():
+                        try:
+                            if getattr(pay, 'receipt', None):
+                                pay.receipt.delete(save=False)
+                        except Exception:
+                            pass
+                except Exception:
+                    # payments relation may not exist or error - ignore and continue
+                    pass
+
+                # Finally delete the user (cascades to related models where FK on_delete is CASCADE)
+                user.delete()
+
+        except Exception as exc:
+            return Response({"error": f"Failed to delete user: {str(exc)}"}, status=500)
+
+        return Response({"message": f"User {user_id} deleted successfully"}, status=200)
 
 class AdminToggleUserActiveView(APIView):
     """
