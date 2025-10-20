@@ -995,10 +995,6 @@ class AdminUserDetailView(APIView):
         if request.user and getattr(request.user, 'user_id', None) == user.user_id:
             return Response({"error": "You cannot delete your own account via this endpoint."}, status=400)
 
-        # Disallow deleting superusers/admin users via this endpoint
-        if getattr(user, 'is_superuser', False) or getattr(user, 'is_staff', False) or getattr(user, 'is_admin_user', False):
-            return Response({"error": "Cannot delete admin/superuser accounts via this endpoint."}, status=403)
-
         try:
             with transaction.atomic():
                 # Delete profile image from storage if present
