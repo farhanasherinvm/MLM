@@ -623,7 +623,7 @@ class AdminAnalyticsView(APIView):
 
             levels_completed=Count(
                 'userlevel',
-                filter=Q(userlevel__status='paid'),
+                filter=Q(userlevel__status='paid') & ~Q(userlevel__level__name='Refer Help'),
                 distinct=True
             ),
             
