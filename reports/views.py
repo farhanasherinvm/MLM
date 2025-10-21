@@ -449,7 +449,7 @@ class UserReportViewSet(viewsets.ViewSet):
                 # Filter 3: Only count completed payments
                 status='paid' 
             ).aggregate(
-                total=Sum('received')
+                total=Sum('level__amount')
             )['total'] or Decimal(0)
         
         # 2. Total Paid (Send Help) - Sum of 'level__amount' for completed (paid) matrix levels (1-6)
