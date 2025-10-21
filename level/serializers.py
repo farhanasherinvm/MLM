@@ -900,12 +900,18 @@ class PmfPaymentSerializer(serializers.ModelSerializer):
     # Use pmf_type as the level/part name
     pmf_part_name = serializers.CharField(source='get_pmf_type_display', read_only=True)
     payment_proof = serializers.FileField(required=False, allow_null=True) 
+    sender_user_id = serializers.CharField(source='user.user_id', read_only=True)
+
+    sender_full_name = serializers.SerializerMethodField()
     
     class Meta:
         model = PmfPayment
         # Minimal data for general listing/detail
-        fields = ['id', 'user', 'pmf_part_name', 'status', 'created_at','payment_method','payment_proof']
-        read_only_fields = fields # Usually read-only in this admin vie
+        fields = ['id', 'user', 'pmf_part_name', 'status', 'created_at','payment_method','payment_proof', 'sender_user_id', 'sender_full_name']
+        read_only_fields = fields 
+
+    def get_sender_full_name(self, obj):
+        return f"{obj.user.first_name or ''} {obj.user.last_name or ''}".strip() or obj.user.user_id
 
 class AdminPendingPmfPaymentsSerializer(serializers.ModelSerializer):
     """
