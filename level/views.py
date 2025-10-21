@@ -53,7 +53,15 @@ class UserLevelViewSet(viewsets.ModelViewSet):
     # permission_classes = [IsAdminOrReadOnly]
 
     def get_queryset(self):
-        return self.queryset.filter(user=self.request.user)
+        # 🟢 OPTIMIZATION: Use select_related and prefetch_related
+        queryset = self.queryset.filter(user=self.request.user).select_related(
+            'level', # For level.name and level.amount (UserLevelStatusSerializer)
+            'user',  # For user.user_id (UserLevelStatusSerializer, UserInfoSerializer)
+        ).prefetch_related(
+            'payments', 
+
+        )
+        return queryset
 
     def get_serializer_class(self):
         if getattr(self, 'action', '') == 'financial':
@@ -84,7 +92,20 @@ class UserLevelViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def user_info(self, request):
-        serializer = UserInfoSerializer({'user': request.user})
+        user = request.user
+        user_levels_qs = UserLevel.objects.filter(user=user).select_related(
+            'level'
+        ).prefetch_related(
+
+            'payments' 
+        )
+
+        context = {
+            'user_levels': user_levels_qs,
+            'user': user
+        }
+        serializer = UserInfoSerializer(context) 
+        
         return Response(serializer.data)
 
     @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])

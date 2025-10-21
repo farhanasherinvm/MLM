@@ -449,7 +449,7 @@ class UserReportViewSet(viewsets.ViewSet):
                 # Filter 3: Only count completed payments
                 status='paid' 
             ).aggregate(
-                total=Sum('received')
+                total=Sum('level__amount')
             )['total'] or Decimal(0)
         
         # 2. Total Paid (Send Help) - Sum of 'level__amount' for completed (paid) matrix levels (1-6)
@@ -539,42 +539,47 @@ class UserReportViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=['get'], url_path='downline-level-count')
     def downline_level_count(self, request):
-        """
-        Calculates the total count and percentage of *paid UserLevel entries* for 
-        each level (1-6) across all users in the current user's downline.
-        """
         user = request.user
-        # logger.debug("Downline total paid levels count hit for user %s", user.user_id) # Uncomment if logger is defined
-        
         ADMIN_SPONSOR_ID = getattr(settings, 'ADMIN_USER_ID', 'ADMIN001')
 
-        # 1. --- EFFICIENTLY GET ALL DOWNLINE USER IDs (BFS TRAVERSAL) ---
-        downline_user_ids = []
+        # 1. --- EFFICIENTLY GET ALL DOWNLINE USER IDs (Iterative Bulk Query) ---
         
-        direct_referrals_qs = CustomUser.objects.filter(
-            sponsor_id=user.user_id
-        ).exclude(sponsor_id=ADMIN_SPONSOR_ID)
+        # Use a set for O(1) lookups and to guarantee unique IDs
+        downline_user_ids = set()
         
-        queue = list(direct_referrals_qs)
-        visited_ids = {user.user_id, ADMIN_SPONSOR_ID} 
+        # Start the list of IDs to process with the current user's direct referrals
+        current_level_ids = list(
+            CustomUser.objects.filter(sponsor_id=user.user_id)
+            .exclude(sponsor_id=ADMIN_SPONSOR_ID)
+            .values_list('user_id', flat=True)
+        )
         
-        # Breadth-First Search (BFS) for the downline
-        while queue:
-            current_user = queue.pop(0)
-            user_id_str = str(current_user.user_id)
+        processed_ids = {user.user_id, ADMIN_SPONSOR_ID}
 
-            if user_id_str not in visited_ids:
-                downline_user_ids.append(user_id_str)
-                visited_ids.add(user_id_str)
-                
-                next_level = CustomUser.objects.filter(
-                    sponsor_id=user_id_str
+        # Loop until no new referrals are found in the next level
+        while current_level_ids:
+            # Add the IDs found in the current level to the overall set
+            new_ids = set(current_level_ids) - processed_ids
+            
+            # Stop processing if no genuinely new users were found
+            if not new_ids:
+                break
+
+            downline_user_ids.update(new_ids)
+            processed_ids.update(new_ids)
+            
+            # Get the next level of referrals in ONE bulk query
+            current_level_ids = list(
+                CustomUser.objects.filter(
+                    sponsor_id__in=new_ids
                 ).exclude(sponsor_id=ADMIN_SPONSOR_ID)
-                queue.extend(list(next_level))
+                .values_list('user_id', flat=True)
+            )
 
-        # Get the total count of distinct downline members
-        total_downline_members = len(downline_user_ids)
-        
+        # Convert the set back to a list for compatibility with __in query
+        downline_user_ids_list = list(downline_user_ids)
+        total_downline_members = len(downline_user_ids_list)
+
         # Handle case where downline is empty
         if total_downline_members == 0:
             empty_data = [{'level': i, 'count': 0, 'percentage': 0.00} for i in range(1, 7)]
@@ -583,32 +588,27 @@ class UserReportViewSet(viewsets.ViewSet):
                 'total_downline_members': 0
             })
 
-        # 2. --- COUNT TOTAL PAID LEVEL ENTRIES FOR DOWNLINE USERS ---
+        # 2. --- COUNT TOTAL PAID LEVEL ENTRIES FOR DOWNLINE USERS (UNCHANGED) ---
         paid_level_counts_qs = UserLevel.objects.filter(
-            user__user_id__in=downline_user_ids,
+            user__user_id__in=downline_user_ids_list, # Use the computed list
             status='paid',
             level__order__lte=6
         ).values('level__order').annotate(
             total_paid_entries=Count('id')
         ).order_by('level__order')
-        
-        # 3. --- CALCULATE PERCENTAGE AND FORMAT OUTPUT ---
+
+        # 3. --- CALCULATE PERCENTAGE AND FORMAT OUTPUT (UNCHANGED) ---
         
         paid_level_entries_by_level = {i: 0 for i in range(1, 7)}
         
-        # Populate the dictionary with actual counts
         for item in paid_level_counts_qs:
             level_num = item['level__order']
-            count = item['total_paid_entries']
-            
             if 1 <= level_num <= 6:
-                paid_level_entries_by_level[level_num] = count
+                paid_level_entries_by_level[level_num] = item['total_paid_entries']
                 
-        # Convert the dictionary to the final list format, including percentage
         paid_level_entries_by_level_list = []
         for lvl, count in paid_level_entries_by_level.items():
-            # **FIXED: Percentage calculation is now correctly defined here**
-            percentage = (count / total_downline_members) * 100.0
+            percentage = (count / total_downline_members) * 100.0 if total_downline_members else 0.00
             
             paid_level_entries_by_level_list.append({
                 'level': lvl, 
@@ -621,58 +621,93 @@ class UserReportViewSet(viewsets.ViewSet):
             'total_downline_members': total_downline_members,
         }, status=status.HTTP_200_OK)
 
-# Existing UserLatestReportView (unchanged)
 class UserLatestReportView(APIView):
+    # Pagination is defined but not used here since we are only fetching 'first()' elements.
     pagination_class = PageNumberPagination
     pagination_class.page_size = 10
+
     def get(self, request, *args, **kwargs):
-        logger.debug("User latest report endpoint hit for user %s", request.user.user_id)
+        # logger.debug("User latest report endpoint hit for user %s", request.user.user_id)
         if not request.user.is_authenticated:
             return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
 
         user = request.user
-        # Find users referred by the current user using sponsor_id
-        referred_users = CustomUser.objects.filter(sponsor_id=user.user_id)
-        user_levels = UserLevel.objects.filter(user__in=[user] + list(referred_users)).order_by('-requested_date')
+        user_id_str = user.user_id
+        
+        # 1. EFFICIENTLY GET ALL TARGET USER IDs (User + Direct Referrals)
+        # Use Q object to fetch all IDs in a single query.
+        target_user_ids = list(
+            CustomUser.objects.filter(
+                Q(user_id=user_id_str) | Q(sponsor_id=user_id_str)
+            ).values_list('user_id', flat=True)
+        )
+        
+        # 2. OPTIMIZED LEVEL HELP QUERY (Refer Help + Latest Level Help)
+        # Filter all relevant UserLevels in one go, pre-fetching related data.
+        # This addresses multiple N+1 hazards in the final dictionary creation.
+        
+        user_levels_qs = UserLevel.objects.filter(
+            user__user_id__in=target_user_ids
+        ).select_related(
+            'level',  # Pre-fetch Level details (name, amount)
+            'user'    # Pre-fetch CustomUser details (first_name, last_name, email)
+        ).order_by('-requested_date')
+        
+        # Find the latest requested date for all Level-based entries
+        latest_level_help = user_levels_qs.filter(
+            level__name__contains='Level'
+        ).first()
 
-        latest_refer_help = user_levels.filter(level__name='Refer Help').first()
-        latest_level_help = user_levels.filter(level__name__contains='Level').order_by('-requested_date').first()
-        latest_level_payment = LevelPayment.objects.filter(user_level__user__in=[user] + list(referred_users)).order_by('-created_at').first()
+        # Find the latest Refer Help entry
+        latest_refer_help = user_levels_qs.filter(
+            level__name='Refer Help'
+        ).first()
+        
+        # 3. OPTIMIZED LEVEL PAYMENT QUERY
+        # Fetch the latest LevelPayment record.
+        latest_level_payment = LevelPayment.objects.filter(
+            user_level__user__user_id__in=target_user_ids
+        ).order_by('-created_at').first()
+        
+        # --- Data Construction (Unchanged Logic, but now fast due to pre-fetching) ---
+
+        # Helper function to safely format date
+        def format_date(date_obj):
+            return date_obj.strftime('%Y-%m-%d %H:%M:%S') if date_obj else 'N/A'
+        
+        # Helper function to safely get user data
+        def get_user_data(ul_instance, default_amount, default_level):
+            if ul_instance:
+                user_instance = ul_instance.user
+                level_instance = ul_instance.level
+                return {
+                    'name': f"{user_instance.first_name or ''} {user_instance.last_name or ''}".strip(),
+                    'email_id': user_instance.email or 'admin@gmail.com',
+                    'first_name': user_instance.first_name or '',
+                    'last_name': user_instance.last_name or '',
+                    'amount': level_instance.amount,
+                    'time': format_date(ul_instance.requested_date),
+                    'user_id': user_instance.user_id
+                }
+            return {
+                'name': '', 'email_id': 'admin@gmail.com', 'first_name': '', 'last_name': '', 
+                'amount': default_amount, 'time': 'N/A', 'user_id': 'N/A'
+            }
 
         latest_report = {
             'latest_refer_help': latest_refer_help.level.name if latest_refer_help else 'N/A',
-            'latest_refer_user': {
-                'name': f"{latest_refer_help.user.first_name} {latest_refer_help.user.last_name}".strip() if latest_refer_help else '',
-                'email_id': latest_refer_help.user.email if latest_refer_help else 'admin@gmail.com',
-                'first_name': latest_refer_help.user.first_name if latest_refer_help else '',
-                'last_name': latest_refer_help.user.last_name if latest_refer_help else '',
-                'amount': latest_refer_help.level.amount if latest_refer_help else 1000.0,
-                'time': latest_refer_help.requested_date.strftime('%Y-%m-%d %H:%M:%S') if latest_refer_help and latest_refer_help.requested_date else 'N/A',
-                'user_id': latest_refer_help.user.user_id if latest_refer_help else 'N/A'
-            } if latest_refer_help else {
-                'name': '', 'email_id': 'admin@gmail.com', 'first_name': '', 'last_name': '', 'amount': 1000.0, 'time': 'N/A', 'user_id': 'N/A'
-            },
+            'latest_refer_user': get_user_data(latest_refer_help, 1000.0, 'Refer Help'),
+            
             'latest_level_help': latest_level_help.level.name if latest_level_help else 'Level 2',
-            'latest_level_user': {
-                'name': f"{latest_level_help.user.first_name} {latest_level_help.user.last_name}".strip() if latest_level_help else '',
-                'email_id': latest_level_help.user.email if latest_level_help else 'admin@gmail.com',
-                'first_name': latest_level_help.user.first_name if latest_level_help else '',
-                'last_name': latest_level_help.user.last_name if latest_level_help else '',
-                'amount': latest_level_help.level.amount if latest_level_help else 200.0,
-                'time': latest_level_help.requested_date.strftime('%Y-%m-%d %H:%M:%S') if latest_level_help and latest_level_help.requested_date else 'N/A',
-                'user_id': latest_level_help.user.user_id if latest_level_help else 'N/A'
-            } if latest_level_help else {
-                'name': '', 'email_id': 'admin@gmail.com', 'first_name': '', 'last_name': '', 'amount': 200.0, 'time': 'N/A', 'user_id': 'N/A'
-            },
+            'latest_level_user': get_user_data(latest_level_help, 200.0, 'Level 2'),
+            
             'latest_level_payment': {
                 'amount': latest_level_payment.amount if latest_level_payment else 200.0,
-                'time': latest_level_payment.created_at.strftime('%Y-%m-%d %H:%M:%S') if latest_level_payment else '2025-09-18 16:15:19'
-            } if latest_level_payment else {'amount': 200.0, 'time': '2025-09-18 16:15:19'}
+                'time': format_date(latest_level_payment.created_at) if latest_level_payment else '2025-09-18 16:15:19'
+            }
         }
 
-        data = {
-            'latest_report': latest_report
-        }
+        data = {'latest_report': latest_report}
         return Response(data, status=status.HTTP_200_OK)
 
 # New Report Views
@@ -1264,7 +1299,7 @@ class SingleUserBonusSummaryView(APIView):
         
         # --- 1. Header/User Info ---
         user_info_table = Table([
-            [Paragraph('<font size=20>LIO CLUB X</font>', styles['Title']), '', f"UserID: {data['user_id']}"],
+            [Paragraph('<font size=20>WINNERS CLUBX</font>', styles['Title']), '', f"UserID: {data['user_id']}"],
             ['', '', f"UserName: {data['username']}"],
         ], colWidths=[2.5*inch, 2*inch, 2*inch])
         
@@ -1365,6 +1400,15 @@ class SingleUserBonusSummaryView(APIView):
         # 4. Standard JSON Response
         return Response(summary_data)
 
+class CurrentUserBonusSummaryView(SingleUserBonusSummaryView):
+    """Endpoint for the currently authenticated user to view their own bonus summary."""
+    
+    # Override get to use the request.user's ID instead of the URL parameter
+    def get(self, request, *args, **kwargs):
+        # We replace the user_id lookup with the current authenticated user's ID
+        current_user_id = request.user.user_id # Assuming user_id is an attribute
+        return super().get(request, user_id=current_user_id)
+
 
 class LevelUsersReport(APIView):
     pagination_class = PageNumberPagination
@@ -1372,7 +1416,7 @@ class LevelUsersReport(APIView):
     # permission_classes = [IsAdminUser]
 
     def get(self, request):
-        queryset = UserLevel.objects.select_related('user', 'level').filter(linked_user_id=request.user.user_id).order_by('-approved_at')
+        queryset = UserLevel.objects.select_related('user', 'level').prefetch_related('payments').filter(linked_user_id=request.user.user_id).order_by('-approved_at')
         
     # Query params
         email = request.query_params.get("email")

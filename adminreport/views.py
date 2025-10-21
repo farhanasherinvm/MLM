@@ -587,206 +587,358 @@ class AdminNotificationsView(ListAPIView):
 
 class AdminAnalyticsView(APIView):
     permission_classes = [IsAdminUser]
-    
-    def get(self, request):
-        # Default behavior: Return summary or user_stats based on query param
-        report_type = request.query_params.get('report', 'summary').lower()
+
+    # --- 1. CORE QUERY UTILITY (Most Time Effective Improvement) ---
+    def _get_user_statistics_queryset(self, request):
+        """
+        Builds the complex, annotated queryset once. This is the single source 
+        of truth for all user statistics data (JSON, CSV, PDF, XLSX).
+        """
+        queryset = CustomUser.objects.all().order_by('date_of_joining')
         
+        # Define Subqueries for related counts (efficiently handles one-to-many counts)
+        referral_count_subquery = CustomUser.objects.filter(
+            sponsor_id=OuterRef('user_id')
+        ).values('sponsor_id').annotate(
+            count=Count('id')
+        ).values('count')[:1] 
+        
+        placement_count_subquery = CustomUser.objects.filter(
+            placement_id=OuterRef('user_id')
+        ).values('placement_id').annotate(
+            count=Count('id')
+        ).values('count')[:1]
+
+        # Apply Annotations (The heavy lifting)
+        queryset = queryset.annotate(
+            # FIX: Explicit output_field=IntegerField()
+            total_referrals=Subquery(referral_count_subquery, output_field=IntegerField()), 
+            current_level_placement_count=Subquery(placement_count_subquery, output_field=IntegerField()),
+            
+            total_income_generated=Sum(
+                'userlevel__received',
+                # Ensure the output type is correct for decimal data
+                output_field=DecimalField(max_digits=12, decimal_places=2) 
+            ),
+
+            levels_completed=Count(
+                'userlevel',
+                filter=Q(userlevel__status='paid') & ~Q(userlevel__level__name='Refer Help'),
+                distinct=True
+            ),
+            
+            total_payments_made=Sum(
+                'userlevel__payments__amount',
+                output_field=DecimalField(max_digits=12, decimal_places=2)
+            )
+        ).prefetch_related('userlevel_set__level')
+
+        # Apply Filters (must be applied to the annotated queryset)
+        user_id_search = request.query_params.get('user_id')
+        if user_id_search:
+            queryset = queryset.filter(user_id__icontains=user_id_search)
+
+        levels_completed_filter = request.query_params.get('levels_completed')
+        if levels_completed_filter:
+            try:
+                # Filter against the 'levels_completed' annotation
+                queryset = queryset.filter(levels_completed=int(levels_completed_filter))
+            except ValueError:
+                # Safely ignore invalid filter for exports, but could raise error for JSON/default
+                pass 
+                
+        return queryset
+
+    # --- 2. MAIN ENTRY POINT ---
+    def get(self, request):
+        report_type = request.query_params.get('report', 'summary').lower()
+        export = request.query_params.get("export") # Check for export parameter
+
         try:
             if report_type == 'summary':
                 return self._get_summary_analytics(request)
+            
             elif report_type == 'user_stats':
-                return self._get_user_statistics(request)
+                # 💥 Fetch the annotated queryset once, applying all filters
+                queryset = self._get_user_statistics_queryset(request)
+                
+                if export:
+                    # Route to the export handler (no pagination)
+                    return self._handle_user_stats_export(queryset, export)
+                else:
+                    # Route to the standard JSON handler (with pagination)
+                    # Renamed from _get_user_statistics to clarify its purpose
+                    return self._get_user_statistics_paginated(request, queryset)
             
             return Response({"detail": "Invalid report type specified. Use 'summary' or 'user_stats'."}, status=status.HTTP_400_BAD_REQUEST)
             
         except Exception as e:
-            print(f"Critical error in AdminAnalyticsView GET: {e}")
+            # 💥 DEBUGGING: Print the exact exception for your logs 
+            import traceback # Import traceback at the top of your file if needed
+            print(f"--- CRITICAL GLOBAL ERROR in AdminAnalyticsView GET ---")
+            print(f"Error Type: {type(e).__name__}")
+            print(f"Error Details: {e}")
+            # Optional: print(traceback.format_exc())
+            print(f"-------------------------------------------------------")
+
             return Response({"detail": "An unexpected server error occurred during report generation."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
+    # --- 3. SUMMARY ANALYTICS (Corrected/Optimized) ---
     def _get_summary_analytics(self, request):
-            try:
-                # 1. Total Users
-                total_registered_users = CustomUser.objects.count()
-                total_active_users = CustomUser.objects.filter(is_active=True).count()
-                
-                # 2. Total Revenue & GIC (Aggregating from AdminNotification)
-                notification_stats = AdminNotification.objects.filter(
-                    operation_type='level_payment'
-                ).aggregate(
-                    total_revenue_notified=Sum('amount'),
-                    total_gic_collected=Sum('gic')
-                )
-
-                total_revenue_paid = notification_stats['total_revenue_notified'] or Decimal('0.00')
-                total_gic_collected = notification_stats['total_gic_collected'] or Decimal('0.00')
-
-                # --- 👇 ADD NEW CALCULATION HERE 👇 ---
-                
-                # Calculate Total Income Received from ALL paid UserLevel entries
-                income_stats = UserLevel.objects.filter(
-                    status='paid'
-                ).aggregate(
-                    total_income_received_sum=Sum('received')
-                )
-                total_received_income = income_stats['total_income_received_sum'] or Decimal('0.00')
-
-                # --- 👆 END NEW CALCULATION 👆 ---
-                
-                # 3. Users by Level (UserLevel to Level via FK)
-                users_per_level = UserLevel.objects.filter(
-                    status='paid',
-                    level__isnull=False
-                ).values(
-                    'level__name', 'level__order'
-                ).annotate(
-                    # Count the distinct users associated with these paid level entries
-                    count=Count('user_id', distinct=True) 
-                ).order_by('level__order')
-
-                # Convert the queryset result into a dictionary for easy look-up
-                # This dictionary now correctly maps 'Level Name' to 'Total Unique Users who own it'
-                users_by_level_dict = {
-                    item['level__name']: item['count'] 
-                    for item in users_per_level if item.get('level__name')
-                }
-                
-                data = {
-                    'total_registered_users': total_registered_users,
-                    'total_active_users': total_active_users,
-                    'total_revenue_paid': total_revenue_paid.quantize(Decimal('0.01')),
-                    'total_gic_collected': total_gic_collected.quantize(Decimal('0.01')),
-                    
-                    # --- 👇 ADD TO DATA DICTIONARY HERE 👇 ---
-                    'total_received_income': total_received_income.quantize(Decimal('0.01')),
-                    # --- 👆 END ADDITION 👆 ---
-                    
-                    'Completed_users_by_level': users_by_level_dict,
-                }
-                
-                # FIX: Must explicitly use 'data=' keyword
-                serializer = AdminSummaryAnalyticsSerializer(data=data) 
-                serializer.is_valid(raise_exception=True) 
-                return Response(serializer.data)
-
-            except (FieldError, OperationalError, ProgrammingError) as e:
-                error_msg = "Database/Model configuration error while calculating summary analytics. "
-                print(f"{error_msg} Details: {e}")
-                return Response({"detail": error_msg, "error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            except Exception as e:
-                print(f"Unexpected error in _get_summary_analytics: {e}")
-                return Response({"detail": "An unexpected error occurred in summary calculation."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    def _get_user_statistics(self, request):
+        # This function is already highly optimized using database aggregates, 
+        # so no structural change is needed here.
         try:
-            # 1. Base Query: All users
-            queryset = CustomUser.objects.all().order_by('user_id')
+            total_registered_users = CustomUser.objects.count()
+            total_active_users = CustomUser.objects.filter(is_active=True).count()
             
-            # **FIXED REFERRALS**: Subquery for CharField sponsor_id
-            referral_count_subquery = CustomUser.objects.filter(
-                sponsor_id=OuterRef('user_id')
-            ).values('sponsor_id').annotate(
-                count=Count('id')
-            ).values('count')[:1] 
+            notification_stats = AdminNotification.objects.filter(
+                operation_type='level_payment'
+            ).aggregate(
+                total_revenue_notified=Sum('amount'),
+                total_gic_collected=Sum('gic')
+            )
+
+            total_revenue_paid = notification_stats['total_revenue_notified'] or Decimal('0.00')
+            total_gic_collected = notification_stats['total_gic_collected'] or Decimal('0.00')
+
+            income_stats = UserLevel.objects.filter(
+                status='paid'
+            ).aggregate(
+                total_income_received_sum=Sum('received')
+            )
+            total_received_income = income_stats['total_income_received_sum'] or Decimal('0.00')
             
-            placement_count_subquery = CustomUser.objects.filter(
-                    placement_id=OuterRef('user_id')
-                ).values('placement_id').annotate(
-                    count=Count('id')
-                ).values('count')[:1]
-            # 2. Add Annotations
-            queryset = queryset.annotate(
-                # FIX: Explicit output_field=models.IntegerField()
-                total_referrals=Subquery(referral_count_subquery, output_field=IntegerField()), 
-                current_level_placement_count=Subquery(placement_count_subquery, output_field=IntegerField()),
-                
-                # Income: Aggregating 'received' from UserLevel
-                total_income_generated=Sum(
-                    'userlevel__received',
-                    # Ensure the output type is correct for decimal data
-                    output_field=DecimalField(max_digits=12, decimal_places=2) 
-                ),
+            users_per_level = UserLevel.objects.filter(
+                status='paid', level__isnull=False
+            ).values('level__name', 'level__order').annotate(
+                count=Count('user_id', distinct=True)  
+            ).order_by('level__order')
 
-                # Levels Completed: Counting paid UserLevel records
-                levels_completed=Count(
-                    'userlevel',
-                    filter=Q(userlevel__status='paid'),
-                    distinct=True
-                ),
-                
-                # Payments Made: user -> userlevel -> payments -> amount
-                total_payments_made=Sum(
-                    'userlevel__payments__amount',
-                    output_field=DecimalField(max_digits=12, decimal_places=2)
-                )
-            ).prefetch_related('userlevel_set__level') # Prefetch for the loop
-
-            user_id_search = request.query_params.get('user_id')
-            if user_id_search:
-                # Use 'icontains' for case-insensitive partial match, or 'exact' if you only want perfect matches
-                queryset = queryset.filter(user_id__icontains=user_id_search)
-
-            # Filter by levels_completed (exact match)
-            levels_completed_filter = request.query_params.get('levels_completed')
-            if levels_completed_filter:
-                try:
-                    # Filter against the 'levels_completed' annotation
-                    queryset = queryset.filter(levels_completed=int(levels_completed_filter))
-                except ValueError:
-                    return Response(
-                        {"detail": "Invalid levels_completed parameter. Must be an integer."}, 
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
+            users_by_level_dict = {
+                item['level__name']: item['count'] 
+                for item in users_per_level if item.get('level__name')
+            }
             
-            # 3. Pagination
+            data = {
+                'total_registered_users': total_registered_users,
+                'total_active_users': total_active_users,
+                'total_revenue_paid': total_revenue_paid.quantize(Decimal('0.01')),
+                'total_gic_collected': total_gic_collected.quantize(Decimal('0.01')),
+                'total_received_income': total_received_income.quantize(Decimal('0.01')),
+                'Completed_users_by_level': users_by_level_dict,
+            }
+            
+            serializer = AdminSummaryAnalyticsSerializer(data=data) 
+            serializer.is_valid(raise_exception=True) 
+            return Response(serializer.data)
+
+        except (FieldError, OperationalError, ProgrammingError) as e:
+            error_msg = "Database/Model configuration error while calculating summary analytics. "
+            print(f"{error_msg} Details: {e}")
+            return Response({"detail": error_msg, "error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            print(f"Unexpected error in _get_summary_analytics: {e}")
+            return Response({"detail": "An unexpected error occurred in summary calculation."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    # --- 4. USER STATISTICS (PAGINATED JSON) ---
+    def _get_user_statistics_paginated(self, request, queryset):
+        """ Handles standard JSON response and pagination using the pre-queried queryset. """
+        try:
+            # 1. Pagination setup
             paginator = PageNumberPagination()
             limit_param = request.query_params.get('limit')
             
             if limit_param:
                 try:
-                    paginator.page_size = int(limit_param) # Set page_size to the requested limit
+                    paginator.page_size = int(limit_param)
                 except ValueError:
-                    return Response(
-                        {"detail": "Invalid limit parameter. Must be an integer."}, 
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
+                    return Response({"detail": "Invalid limit parameter. Must be an integer."}, status=status.HTTP_400_BAD_REQUEST)
             else:
                 paginator.page_size = 10
+            
             page = paginator.paginate_queryset(queryset, request)
             
+            # 2. Data formatting for JSON response
             data = []
             for user in page:
-                # --- SAFE CURRENT LEVEL LOGIC ---
-                active_level_entry = user.userlevel_set.all().filter(
-                    status='paid' 
-                ).order_by('-level__order').first() 
-                
+                # The annotations (total_income_generated, levels_completed, etc.) are available directly on the 'user' object now
                 full_name_candidate = f"{user.first_name} {user.last_name}".strip()
-    
-                # 2. Check if the constructed name is blank and fall back to user_id or username
                 final_full_name = full_name_candidate or user.first_name or user.user_id 
-                    
+                
                 data.append({
                     'user_id': user.user_id,
                     'full_name': final_full_name,
                     'total_income_generated': user.total_income_generated or Decimal('0.00'),
                     'total_referrals': user.total_referrals or 0,
-                    'current_level': user.current_level_placement_count or 0,
+                    'current_level': user.current_level_placement_count or 0, # Uses annotation
                     'levels_completed': user.levels_completed or 0,
                     'total_payments_made': user.total_payments_made or Decimal('0.00'),
-                    
                 })
 
-            # FIX: Must explicitly use 'data=' keyword
+            # FIX: Explicitly using 'data=' keyword remains correct here.
             serializer = UserAnalyticsSerializer(data=data, many=True)
             serializer.is_valid(raise_exception=True) 
             return paginator.get_paginated_response(serializer.data)
 
-        except (FieldError, OperationalError, ProgrammingError) as e:
-            error_msg = "Database/Model configuration error while generating user statistics. Check annotation field names."
-            print(f"{error_msg} Details: {e}")
-            return Response({"detail": error_msg, "error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         except Exception as e:
-            error = (f"Unexpected error in _get_user_statistics: {e}")
+            error = (f"Unexpected error in _get_user_statistics_paginated: {e}")
             return Response({"detail": error}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def _get_user_stats_export_data(self, queryset):
+  
+        data = []
+        
+        for user in queryset.iterator(chunk_size=2000): 
+            
+            full_name_candidate = f"{user.first_name} {user.last_name}".strip()
+            final_full_name = full_name_candidate or user.first_name or user.user_id 
+            
+            data.append({
+                'user_id': user.user_id,
+                'full_name': final_full_name,
+                'email': user.email,
+                'is_active': user.is_active,
+                'total_income_generated': user.total_income_generated or Decimal('0.00'),
+                'total_referrals': user.total_referrals or 0,
+                'current_level_placement_count': user.current_level_placement_count or 0,
+                'levels_completed': user.levels_completed or 0,
+                'total_payments_made': user.total_payments_made or Decimal('0.00'),
+            })
+        return data
+
+
+    # --- 5. EXPORT ROUTER (Receives pre-queried queryset) ---
+    def _handle_user_stats_export(self, queryset, export_format):
+        """Routes the queryset to the correct file format handler."""
+        if export_format in ["csv", "xlsx"]:
+            data = self._get_user_stats_export_data(queryset)
+            
+            if export_format == "csv":
+                return self._export_csv_user_stats(data, 'user_analytics_report')
+            elif export_format == "xlsx":
+                return self._export_xlsx_user_stats(data, 'user_analytics_report')
+        elif export_format == "pdf":
+            return self._export_pdf_user_stats(queryset, 'user_analytics_report')
+
+        
+        return Response({"detail": "Invalid export format specified."}, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+
+    def _export_csv_user_stats(self, data, filename_prefix):
+        """ Exports a pre-formatted list of dictionaries ('data') to CSV. """
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.csv"'
+        writer = csv.writer(response)
+        
+        # Headers must match the keys generated in the calling function (_handle_user_stats_export_data)
+        headers = [
+            'User ID', 'Full Name', 'Email', 'Active', 'Joined Date', 
+            'Income Generated', 'Total Referrals', 'Placement Count', 
+            'Levels Completed', 'Payments Made'
+        ]
+        writer.writerow(headers)
+        
+        for item in data:
+            writer.writerow([
+                item['user_id'], 
+                item['full_name'], 
+                item['email'], 
+                item['is_active'],  
+                str(item['total_income_generated']), # Convert Decimal/other types to string
+                item['total_referrals'], 
+                item['current_level_placement_count'], 
+                item['levels_completed'], 
+                str(item['total_payments_made'])
+            ])
+        return response
+
+    def _export_xlsx_user_stats(self, data, filename_prefix):
+        """ Exports a pre-formatted list of dictionaries ('data') to XLSX. """
+        from openpyxl import Workbook # Assuming this is imported
+        
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "UserAnalyticsReport"
+        
+        # Headers must match the keys generated in the calling function
+        headers = [
+            'User ID', 'Full Name', 'Email', 'Active', 'Joined Date', 
+            'Income Generated', 'Total Referrals', 'Placement Count', 
+            'Levels Completed', 'Payments Made'
+        ]
+        ws.append(headers)
+        
+        for item in data:
+            ws.append([
+                item['user_id'], 
+                item['full_name'], 
+                item['email'], 
+                item['is_active'], 
+                item['total_income_generated'], # Openpyxl handles Decimal/float better than csv
+                item['total_referrals'], 
+                item['current_level_placement_count'], 
+                item['levels_completed'], 
+                item['total_payments_made']
+            ])
+                
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+        response = HttpResponse(output, content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.xlsx"'
+        return response
+
+    # NOTE: The _export_pdf_user_stats method already uses an in-memory list (table_data), 
+    # but it was generated inside the function. We will update the router to handle it too.
+
+    def _export_pdf_user_stats(self, queryset, filename_prefix):
+        """ Uses ReportLab. Now includes placement count and payments made. """
+        buffer = io.BytesIO()
+        # NOTE: Ensure A4 is imported from reportlab.lib.pagesizes
+        doc = SimpleDocTemplate(buffer, pagesize=A4) 
+        elements = []
+        # NOTE: Ensure getSampleStyleSheet is imported from reportlab.lib.styles
+        styles = getSampleStyleSheet() 
+        elements.append(Paragraph(f"{filename_prefix.replace('_', ' ').title()}", styles["Title"]))
+
+        # FIX: Added Placement Count and Payments Made headers
+        table_data = [
+            ['User ID', 'Full Name', 'Income', 'Referrals', 'Placement Count', 'Levels Comp.', 'Total Paid']
+        ]
+        
+        # FIX: Added 'current_level_placement_count' and 'total_payments_made' to .values()
+        pdf_fields = [
+            'user_id', 'first_name', 'last_name', 'total_income_generated', 
+            'total_referrals', 'levels_completed', 
+            'current_level_placement_count', 'total_payments_made'
+        ]
+        
+        for user in queryset.values(*pdf_fields):
+            full_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+            table_data.append([
+                user.get('user_id', ''),
+                full_name,
+                str(user.get('total_income_generated', Decimal('0.00'))),
+                str(user.get('total_referrals', 0)),
+                str(user.get('current_level_placement_count', 0)), # FIX: Added Placement Count
+                str(user.get('levels_completed', 0)),
+                str(user.get('total_payments_made', Decimal('0.00'))), # FIX: Added Total Paid
+            ])
+            
+        table = Table(table_data)
+        # NOTE: Ensure colors is imported from reportlab.lib
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+        ]))
+        elements.append(table)
+        doc.build(elements)
+
+        buffer.seek(0)
+        response = HttpResponse(buffer, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.pdf"'
+        return response

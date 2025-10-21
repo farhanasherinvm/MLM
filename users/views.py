@@ -982,6 +982,72 @@ class AdminUserDetailView(APIView):
             serializer.save()
             return Response({"message": f"User {user.user_id} updated successfully"})
         return Response(serializer.errors, status=400)
+    
+    def delete(self, request, user_id):
+        """Project admin can permanently delete a user — never another admin."""
+        try:
+            user = CustomUser.objects.select_related('profile').get(user_id=user_id)
+        except CustomUser.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+
+        # Prevent admin from deleting themselves
+        if request.user and getattr(request.user, 'user_id', None) == user.user_id:
+            return Response({"error": "You cannot delete your own account via this endpoint."}, status=400)
+
+        # --- Stronger protection against deleting admin users ---
+        # Block deletion if user has *any* admin privileges
+        admin_flags = [
+            getattr(user, "is_superuser", False),
+            getattr(user, "is_staff", False),
+            getattr(user, "is_admin_user", False),
+            getattr(user, "is_project_admin", False),
+            getattr(user, "role", "").lower() in ["admin", "superadmin", "projectadmin"],
+            getattr(user, "user_type", "").lower() in ["admin", "superadmin"],
+        ]
+        if any(admin_flags):
+            return Response(
+                {"error": "Deletion blocked: admin/superuser accounts cannot be deleted via this endpoint."},
+                status=403,
+            )
+
+        try:
+            with transaction.atomic():
+                # Delete profile image if present
+                profile = getattr(user, 'profile', None)
+                if profile and getattr(profile, 'profile_image', None):
+                    try:
+                        profile.profile_image.delete(save=False)
+                    except Exception:
+                        pass
+
+                # Delete KYC images if present
+                kyc = getattr(user, 'kyc', None)
+                if kyc:
+                    for field in ['pan_image', 'id_card_image']:
+                        image = getattr(kyc, field, None)
+                        if image:
+                            try:
+                                image.delete(save=False)
+                            except Exception:
+                                pass
+
+                # Delete payment receipts if any
+                payments = getattr(user, 'payments', None)
+                if payments is not None:
+                    try:
+                        for pay in payments.all():
+                            if getattr(pay, 'receipt', None):
+                                pay.receipt.delete(save=False)
+                    except Exception:
+                        pass
+
+                # Finally delete user
+                user.delete()
+
+        except Exception as exc:
+            return Response({"error": f"Failed to delete user: {str(exc)}"}, status=500)
+
+        return Response({"message": f"User {user_id} deleted successfully"}, status=200)
 
 class AdminToggleUserActiveView(APIView):
     """

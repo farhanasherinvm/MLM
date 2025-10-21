@@ -494,16 +494,24 @@ class LinkedUserLevelSerializer(serializers.ModelSerializer):
     payer_user_id = serializers.CharField(source='user.user_id')
     payer_name = serializers.CharField(source='user.get_full_name', read_only=True)
     level_name = serializers.CharField(source='level.name')
+    payer_email = serializers.CharField(source='user.email', read_only=True)
+    payer_full_name = serializers.SerializerMethodField()
 
     class Meta:
         model = UserLevel
-        fields = ('id', 'payer_user_id', 'payer_name', 'level_name', 'requested_date')
+        fields = ('id', 'payer_user_id', 'payer_name', 'level_name', 'requested_date', 'status', 'payer_email', 'payer_full_name')
+
+    def get_payer_full_name(self, obj):
+        user = obj.user
+        full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+        return full_name if full_name else user.user_id
+
+    
 
 
 class RecipientLevelPaymentSerializer(serializers.ModelSerializer):
     user_level = LinkedUserLevelSerializer(read_only=True)
     payment_proof_url = serializers.FileField(source='payment_proof', read_only=True)
-    
     payment_token = serializers.UUIDField(read_only=True) 
 
     class Meta:
@@ -512,6 +520,8 @@ class RecipientLevelPaymentSerializer(serializers.ModelSerializer):
                   'razorpay_order_id', 'payment_proof_url', 'created_at', 'payment_data')
         read_only_fields = ('id', 'payment_token', 'user_level', 'amount', 'payment_method', 
                             'razorpay_order_id', 'payment_proof_url', 'created_at', 'payment_data')
+    
+    
 
                             
 
@@ -519,6 +529,8 @@ class AdminMasterUserSerializer(serializers.ModelSerializer):
     # Fields pulled directly from the CustomUser model (the source object)
     user_id = serializers.CharField(max_length=20, read_only=True)
     first_name = serializers.CharField(max_length=100, read_only=True)
+    last_name = serializers.CharField(max_length=100, read_only=True)
+
     email = serializers.EmailField(read_only=True)
     mobile = serializers.CharField(read_only=True)
     whatsapp_number = serializers.CharField(read_only=True)
@@ -538,7 +550,7 @@ class AdminMasterUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser # <--- CRITICAL CHANGE: Base model is CustomUser
         fields = (
-            'user_id', 'first_name', 'email', 'pk', 'admin_level_linked', 
+            'user_id', 'first_name', 'last_name','email', 'pk', 'admin_level_linked', 
             'current_status_display', 'linked_user_id', 'is_active', 'node_type', 
             'total_income', 'mobile', 'whatsapp_number', 'pincode', 'upi_number', 
             'sponsor_id', 'placement_id'
@@ -898,12 +910,18 @@ class PmfPaymentSerializer(serializers.ModelSerializer):
     # Use pmf_type as the level/part name
     pmf_part_name = serializers.CharField(source='get_pmf_type_display', read_only=True)
     payment_proof = serializers.FileField(required=False, allow_null=True) 
+    sender_user_id = serializers.CharField(source='user.user_id', read_only=True)
+
+    sender_full_name = serializers.SerializerMethodField()
     
     class Meta:
         model = PmfPayment
         # Minimal data for general listing/detail
-        fields = ['id', 'user', 'pmf_part_name', 'status', 'created_at','payment_method','payment_proof']
-        read_only_fields = fields # Usually read-only in this admin vie
+        fields = ['id', 'user', 'pmf_part_name', 'status', 'created_at','payment_method','payment_proof', 'sender_user_id', 'sender_full_name']
+        read_only_fields = fields 
+
+    def get_sender_full_name(self, obj):
+        return f"{obj.user.first_name or ''} {obj.user.last_name or ''}".strip() or obj.user.user_id
 
 class AdminPendingPmfPaymentsSerializer(serializers.ModelSerializer):
     """
