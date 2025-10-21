@@ -1416,7 +1416,7 @@ class LevelUsersReport(APIView):
     # permission_classes = [IsAdminUser]
 
     def get(self, request):
-        queryset = UserLevel.objects.select_related('user', 'level').filter(linked_user_id=request.user.user_id).order_by('-approved_at')
+        queryset = UserLevel.objects.select_related('user', 'level').prefetch_related('payments').filter(linked_user_id=request.user.user_id).order_by('-approved_at')
         
     # Query params
         email = request.query_params.get("email")

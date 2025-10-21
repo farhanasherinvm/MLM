@@ -461,10 +461,12 @@ class LevelUsersSerializer(serializers.ModelSerializer):
     total = serializers.SerializerMethodField()     
     payment_method = serializers.SerializerMethodField() 
     placement_id_count = serializers.SerializerMethodField()
+    sender_email = serializers.SerializerMethodField() 
+    sender_phone = serializers.SerializerMethodField()
 
     class Meta:
         model = UserLevel
-        fields = ['from_user', 'username', 'from_name', 'linked_username', 'amount', 'status', 'level', 'requested_date', 'total', 'payment_method', 'placement_id_count']
+        fields = ['from_user', 'username', 'from_name', 'linked_username', 'amount', 'status', 'level', 'requested_date', 'total', 'payment_method', 'placement_id_count', 'sender_email', 'sender_phone']
         extra_kwargs = {
             'requested_date': {'required': False, 'allow_null': True},
         }
@@ -544,19 +546,17 @@ class LevelUsersSerializer(serializers.ModelSerializer):
         return self.get_amount(obj)
 
     def get_payment_method(self, obj):
-        """Determine payment method with URL for proof if Manual."""
         latest_payment = getattr(obj, 'payments', []).order_by('-created_at').first()
-        if latest_payment:
-            if latest_payment.payment_method == 'Razorpay':
-                return 'Razorpay'
-            elif latest_payment.payment_method == 'Manual':
-                if hasattr(latest_payment, 'payment_proof') and latest_payment.payment_proof:
-                    request = self.context.get('request')
-                    if request:
-                        proof_url = request.build_absolute_uri(latest_payment.payment_proof.url)
-                        return proof_url if proof_url.startswith('http') else 'Manual'
-                return 'Manual'
-        return 'N/A'
+        return getattr(latest_payment, 'payment_method') if latest_payment else 'Manual'
+
+        
+    def get_sender_email(self, obj):
+        payer = getattr(obj, 'user', None)
+        return getattr(payer, 'email', 'N/A') if payer else 'N/A'
+
+    def get_sender_phone(self, obj):
+        payer = getattr(obj, 'user', None)
+        return getattr(payer, 'mobile', 'N/A') if payer else 'N/A'
 
     def to_representation(self, instance):
         """Ensure all fields are present with fallbacks."""
