@@ -463,10 +463,11 @@ class LevelUsersSerializer(serializers.ModelSerializer):
     placement_id_count = serializers.SerializerMethodField()
     sender_email = serializers.SerializerMethodField() 
     sender_phone = serializers.SerializerMethodField()
+    date_joined = serializers.SerializerMethodField()
 
     class Meta:
         model = UserLevel
-        fields = ['from_user', 'username', 'from_name', 'linked_username', 'amount', 'status', 'level', 'requested_date', 'total', 'payment_method', 'placement_id_count', 'sender_email', 'sender_phone']
+        fields = ['from_user', 'username', 'from_name', 'linked_username', 'amount', 'status', 'level', 'requested_date', 'total', 'payment_method', 'placement_id_count', 'sender_email', 'sender_phone','date_joined']
         extra_kwargs = {
             'requested_date': {'required': False, 'allow_null': True},
         }
@@ -557,6 +558,11 @@ class LevelUsersSerializer(serializers.ModelSerializer):
     def get_sender_phone(self, obj):
         payer = getattr(obj, 'user', None)
         return getattr(payer, 'mobile', 'N/A') if payer else 'N/A'
+
+    def get_date_joined(self, obj):
+        payer = getattr(obj, 'user', None)
+        date_joined = getattr(payer, 'date_of_joining', None)
+        return date_joined.strftime("%Y-%m-%d %H:%M:%S") if date_joined else 'N/A'
 
     def to_representation(self, instance):
         """Ensure all fields are present with fallbacks."""
