@@ -110,7 +110,7 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 #         'CONN_MAX_AGE': 600,
 #     }
 # }
-
+    
 #nn
 DATABASES = {
     'default': {
