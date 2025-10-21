@@ -494,16 +494,24 @@ class LinkedUserLevelSerializer(serializers.ModelSerializer):
     payer_user_id = serializers.CharField(source='user.user_id')
     payer_name = serializers.CharField(source='user.get_full_name', read_only=True)
     level_name = serializers.CharField(source='level.name')
+    payer_email = serializers.CharField(source='user.email', read_only=True)
+    payer_full_name = serializers.SerializerMethodField()
 
     class Meta:
         model = UserLevel
-        fields = ('id', 'payer_user_id', 'payer_name', 'level_name', 'requested_date')
+        fields = ('id', 'payer_user_id', 'payer_name', 'level_name', 'requested_date', 'status', 'payer_email', 'payer_full_name')
+
+    def get_payer_full_name(self, obj):
+        user = obj.user
+        full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+        return full_name if full_name else user.user_id
+
+    
 
 
 class RecipientLevelPaymentSerializer(serializers.ModelSerializer):
     user_level = LinkedUserLevelSerializer(read_only=True)
     payment_proof_url = serializers.FileField(source='payment_proof', read_only=True)
-    
     payment_token = serializers.UUIDField(read_only=True) 
 
     class Meta:
@@ -512,6 +520,8 @@ class RecipientLevelPaymentSerializer(serializers.ModelSerializer):
                   'razorpay_order_id', 'payment_proof_url', 'created_at', 'payment_data')
         read_only_fields = ('id', 'payment_token', 'user_level', 'amount', 'payment_method', 
                             'razorpay_order_id', 'payment_proof_url', 'created_at', 'payment_data')
+    
+    
 
                             
 
