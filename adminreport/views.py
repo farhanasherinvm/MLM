@@ -594,7 +594,7 @@ class AdminAnalyticsView(APIView):
         Builds the complex, annotated queryset once. This is the single source 
         of truth for all user statistics data (JSON, CSV, PDF, XLSX).
         """
-        queryset = CustomUser.objects.all().order_by('user_id')
+        queryset = CustomUser.objects.all().order_by('date_of_joining')
         
         # Define Subqueries for related counts (efficiently handles one-to-many counts)
         referral_count_subquery = CustomUser.objects.filter(
