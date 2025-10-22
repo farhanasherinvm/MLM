@@ -5,7 +5,7 @@ from level import constants
 from .models import UserLevel, LevelPayment 
 from users.models import CustomUser 
 import logging
-
+from users.utils import get_rebirth_cap_status
 logger = logging.getLogger(__name__)
 
 
@@ -25,6 +25,18 @@ def check_and_enforce_payment_lock(receiving_user, level_amount_to_credit):
         .aggregate(total_received=Sum('received'))
 
     total_received = aggregation_result['total_received'] or Decimal('0.00')
+
+    can_receive, value_or_msg, *child_info = get_rebirth_cap_status(receiving_user, total_received)
+    
+    if not can_receive:
+        # This is where the payment is restricted
+        cap_amount = value_or_msg
+        next_child_number = child_info[0] 
+        
+        return False, (
+            f"Payment restricted: R{cap_amount} Rebirth/Child Cap reached. "
+            f"Please create Child #{next_child_number} to unlock this payment."
+        )
 
     # -----------------------------------------------------------------
     # 2. CHECK CAP 2 (R30,000) - NEW PMF Part 2 Lock

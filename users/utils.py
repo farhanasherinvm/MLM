@@ -189,3 +189,23 @@ def check_child_creation_eligibility(user):
     else:
         required = cap_amount - total_received
         return False, f"Earn Rs{required} more to unlock child #{next_child_number} creation."
+
+def get_rebirth_cap_status(user, current_received_income):
+    
+    child_count = CustomUser.objects.filter(parent=user).count() 
+
+    caps = [Decimal('10000'), Decimal('20000'), Decimal('25000'), Decimal('35000')]
+    max_children = len(caps)
+
+    # If max children are created, no further lock applies based on this rule
+    if child_count >= max_children:
+        return True, "Max rebirth children reached."
+    
+    # Get the cap amount for the next child slot
+    next_child_number = child_count + 1
+    cap_amount = caps[child_count] 
+
+    if current_received_income >= cap_amount:
+        return False, cap_amount, next_child_number
+    
+    return True, "OK"
