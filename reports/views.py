@@ -442,11 +442,7 @@ class UserReportViewSet(viewsets.ViewSet):
         total_referral_income = UserLevel.objects.filter(
                 # Filter 1: Match the recipient ID (uses the CharField)
                 linked_user_id=current_user_id_str, 
-                
-                # Filter 2: The payment type is 'Refer Help'
                 level__name='Refer Help',
-                
-                # Filter 3: Only count completed payments
                 status='paid' 
             ).aggregate(
                 total=Sum('level__amount')
@@ -493,8 +489,8 @@ class UserReportViewSet(viewsets.ViewSet):
             'level_completed': completed_levels,
             
             # Income metrics (Total Received / Total Income / Total Amount Generated are all the same)
-            'total_received': total_income, 
-            'total_amount_generated': total_amount_generated,
+            'total_received': total_amount_generated, 
+            'total_amount_generated': total_income ,
             "total_referral_income":total_referral_income, 
             
             # Pending metrics
