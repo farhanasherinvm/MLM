@@ -428,7 +428,7 @@ class AdminUserDetailSerializer(serializers.ModelSerializer):
             "is_active", "blocked_status", "level",
             "profile", "kyc", "useraccountdetails"
         ]
-        read_only_fields = ["user_id", "level", "email"] #remove "email" to make it editable
+        # read_only_fields = ["user_id", "level"]
 
     def update(self, instance, validated_data):
         # --- Pop nested data ---
