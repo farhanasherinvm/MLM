@@ -3,7 +3,7 @@ from rest_framework import serializers
 from .models import *
 from django.contrib.auth import get_user_model
 from .utils import validate_sponsor
-
+from users.utils import check_child_creation_eligibility
 User = get_user_model()
 
 class SendOTPSerializer(serializers.Serializer):
@@ -352,6 +352,11 @@ class ChildRegistrationSerializer(serializers.Serializer):
         parent = self.context['request'].user
         password = validated_data.pop('password')
         placement_user_id = validated_data.pop('placement_id')
+
+         # 🔍 Check eligibility before allowing child creation
+        can_create, message = check_child_creation_eligibility(parent)
+        if not can_create:
+          raise serializers.ValidationError(message)
 
         # Create child user
         child_user = CustomUser.objects.create(

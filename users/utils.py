@@ -149,3 +149,43 @@ def export_users_pdf(queryset, filename="users.pdf", title="Users Report", user_
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     response.write(pdf)
     return response
+
+
+from decimal import Decimal
+from django.db.models import Sum
+from level.models import UserLevel 
+
+def check_child_creation_eligibility(user):
+    """
+    Determines if a user is eligible to create a new child based on their total received level income.
+    """
+
+    # Calculate total received income
+    total_received = (
+        UserLevel.objects.filter(user=user)
+        .aggregate(total=Sum('received'))
+        .get('total') or Decimal('0.00')
+    )
+
+    
+
+    # Count existing children
+    child_count = CustomUser.objects.filter(parent=user).count()  # safer than user.children.count()
+
+    # Define caps and maximum children
+    caps = [Decimal('10000'), Decimal('20000'), Decimal('25000'), Decimal('35000')]
+    max_children = len(caps)
+
+    # Check max children
+    if child_count >= max_children:
+        return False, f"Maximum limit of {max_children} child users already created."
+
+    # Determine eligibility
+    next_child_number = child_count + 1
+    cap_amount = caps[child_count]
+
+    if total_received >= cap_amount:
+        return True, f"Eligible to create child #{next_child_number}."
+    else:
+        required = cap_amount - total_received
+        return False, f"Earn Rs{required} more to unlock child #{next_child_number} creation."
