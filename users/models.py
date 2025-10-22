@@ -19,7 +19,7 @@ PAYMENT_CHOICES = [
     ("GPay", "GPay"),
     ("PhonePe", "PhonePe"),
     ("PhonePay", "PhonePay"),
-    ("Paytm", "Paytm"),
+    # ("Paytm", "Paytm"),
     ("Other", "Other"),
 ]
 
