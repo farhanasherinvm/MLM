@@ -42,4 +42,5 @@ urlpatterns = [
     path('child-list/', ChildListView.as_view(), name='child-list'),
     path('switch-to-child/<str:child_user_id>/', SwitchToChildView.as_view(), name='switch-to-child'),
     path('switch-back-to-parent/', SwitchBackToParentView.as_view(), name='switch-back-to-parent'),
+    path('child-eligibility/', EligibilityNotificationView.as_view(), name='child-eligibility'),
 ] 

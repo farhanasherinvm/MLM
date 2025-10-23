@@ -353,11 +353,14 @@ class ChildRegistrationSerializer(serializers.Serializer):
         password = validated_data.pop('password')
         placement_user_id = validated_data.pop('placement_id')
 
-         # 🔍 Check eligibility before allowing child creation
-        can_create, message = check_child_creation_eligibility(parent)
-        if not can_create:
-          raise serializers.ValidationError(message)
+         
+          #  Check eligibility before allowing child creation
+        eligibility = check_child_creation_eligibility(parent)
+        can_create = eligibility["eligible"]
+        message = eligibility["message"]
 
+        if not can_create:
+            raise serializers.ValidationError({"detail": message})
         # Create child user
         child_user = CustomUser.objects.create(
             parent=parent,

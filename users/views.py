@@ -47,10 +47,13 @@ from reportlab.lib.pagesizes import A4
 
 from rest_framework import generics, status
 
+from users.utils import check_child_creation_eligibility
 
 
+from level.models import UserLevel
 
 
+from django.db.models import Sum
 
 
 
@@ -1408,4 +1411,25 @@ class SwitchBackToParentView(APIView):
             "parent_user_id": parent.user_id,
             "refresh": str(refresh),
             "access": str(refresh.access_token),
+        }, status=status.HTTP_200_OK)
+
+
+
+
+class EligibilityNotificationView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        result = check_child_creation_eligibility(user)
+
+        return Response({
+            "total_received": str(
+                UserLevel.objects.filter(user=user)
+                .aggregate(total=Sum('received'))
+                .get('total') or Decimal('0.00')
+            ),
+            "eligible": result["eligible"],
+            "message": result["message"],
+            "notification": result["notification"],  # will be null if not yet reached next cap
         }, status=status.HTTP_200_OK)

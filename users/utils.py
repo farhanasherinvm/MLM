@@ -154,10 +154,13 @@ def export_users_pdf(queryset, filename="users.pdf", title="Users Report", user_
 from decimal import Decimal
 from django.db.models import Sum
 from level.models import UserLevel 
+from users.models import CustomUser 
+
 
 def check_child_creation_eligibility(user):
     """
-    Determines if a user is eligible to create a new child based on their total received level income.
+    Determines if a user is eligible to create a new child 
+    and whether any milestone notification should be triggered.
     """
 
     # Calculate total received income
@@ -167,45 +170,37 @@ def check_child_creation_eligibility(user):
         .get('total') or Decimal('0.00')
     )
 
-    
-
     # Count existing children
-    child_count = CustomUser.objects.filter(parent=user).count()  # safer than user.children.count()
+    child_count = CustomUser.objects.filter(parent=user).count()
 
     # Define caps and maximum children
     caps = [Decimal('10000'), Decimal('20000'), Decimal('25000'), Decimal('35000')]
     max_children = len(caps)
 
-    # Check max children
+    # If already reached max children
     if child_count >= max_children:
-        return False, f"Maximum limit of {max_children} child users already created."
+        return {
+            "eligible": False,
+            "message": f"Maximum limit of {max_children} child users already created.",
+            "notification": None
+        }
 
-    # Determine eligibility
     next_child_number = child_count + 1
     cap_amount = caps[child_count]
 
+    # Eligibility check
     if total_received >= cap_amount:
-        return True, f"Eligible to create child #{next_child_number}."
+        notification = f"🎉 You have reached ₹{cap_amount}! Eligible to create child #{next_child_number}."
+        return {
+            "eligible": True,
+            "message": f"Eligible to create child #{next_child_number}.",
+            "notification": notification
+        }
     else:
         required = cap_amount - total_received
-        return False, f"Earn Rs{required} more to unlock child #{next_child_number} creation."
+        return {
+            "eligible": False,
+            "message": f"Earn ₹{required} more to unlock child #{next_child_number} creation.",
+            "notification": None  # No notification yet
+        }
 
-def get_rebirth_cap_status(user, current_received_income):
-    
-    child_count = CustomUser.objects.filter(parent=user).count() 
-
-    caps = [Decimal('10000'), Decimal('20000'), Decimal('25000'), Decimal('35000')]
-    max_children = len(caps)
-
-    # If max children are created, no further lock applies based on this rule
-    if child_count >= max_children:
-        return True, "Max rebirth children reached."
-    
-    # Get the cap amount for the next child slot
-    next_child_number = child_count + 1
-    cap_amount = caps[child_count] 
-
-    if current_received_income >= cap_amount:
-        return False, cap_amount, next_child_number
-    
-    return True, "OK"
