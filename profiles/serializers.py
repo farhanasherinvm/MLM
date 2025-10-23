@@ -4,6 +4,7 @@ from users.models import CustomUser, UserAccountDetails
 from users.serializers import UserAccountDetailsSerializer
 from datetime import date
 from .utils import verhoeff_validate
+from level.models import UserLevel
 import re
 
 
@@ -384,25 +385,22 @@ class AdminUserListSerializer(serializers.ModelSerializer):
         return None
 
     def get_level(self, obj):
-        # try:
-        #     level = 0
-        #     sponsor_id = obj.sponsor_id
-        #     visited = set()
-        #     # current = obj
-        #     while sponsor_id:
-        #         if sponsor_id in visited:
-        #             break
-        #         visited.add(sponsor_id)
-        #         sponsor = CustomUser.objects.filter(user_id=sponsor_id).first()
-        #         if not sponsor:
-        #             break
-        #         level += 1
-        #         sponsor_id = sponsor.sponsor_id
-        #     return level
-        # except Exception:
-        #     return 1
-        level_map = self.context.get("level_map", {})
-        return level_map.get(obj.user_id, 0)
+        return UserLevel.objects.filter(user=obj, status='paid').count()
+
+    # if we want to igonre refer help then use this 
+
+    
+    # def get_level(self, obj):
+    # """
+    # Returns the count of levels completed (status='paid'), 
+    # EXCLUDING the level named 'Refer Help'.
+    # """
+    # return (
+    #     UserLevel.objects
+    #     .filter(user=obj, status='paid')  # Filtering by the literal string 'paid'
+    #     .exclude(level__name='Refer Help') # Excluding the level with name 'Refer Help'
+    #     .count()
+    # )
 
     def get_status(self, obj):
         return "Active" if obj.is_active else "Blocked"
