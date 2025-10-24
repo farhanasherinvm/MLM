@@ -979,10 +979,23 @@ class AdminUserListView(APIView):
     def get_export_format(self, request):
         return request.query_params.get("export", "").lower()  # "csv" or "pdf"
 
+    # def get(self, request):
+    #     search_query = self.get_search_query(request)
+    #     export_format = self.get_export_format(request)
+    #     return self.search_and_respond(search_query, export_format, request)
+
     def get(self, request):
-        search_query = self.get_search_query(request)
-        export_format = self.get_export_format(request)
-        return self.search_and_respond(search_query, export_format, request)
+        queryset = CustomUser.objects.all()
+
+        # Compute the paid user levels for each user
+        user_levels = compute_paid_user_levels()
+
+        paginator = AdminUserPagination()
+        page = paginator.paginate_queryset(queryset, request)
+        serializer = AdminUserListSerializer(
+            page, many=True, context={"request": request, "user_levels": user_levels}
+        )
+        return paginator.get_paginated_response(serializer.data)
 
     def post(self, request):
         search_query = self.get_search_query(request)

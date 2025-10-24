@@ -385,10 +385,15 @@ class AdminUserListSerializer(serializers.ModelSerializer):
         return None
 
     def get_level(self, obj):
-        # Fetch the highest paid level for the user
-        user_levels = self.context.get("user_levels", {})
-        return user_levels.get(obj.user_id, "")
-
+        """
+        Return the level for the user from the UserLevel model.
+        """
+        # Get the user level associated with the user
+        try:
+            user_level = UserLevel.objects.get(user=obj, status='paid')  # Only fetch the 'paid' level
+            return user_level.level.name  # You can return level name or level order as per your needs
+        except UserLevel.DoesNotExist:
+            return ""  # Return an empty string if no level found
 
     def get_status(self, obj):
         return "Active" if obj.is_active else "Blocked"
