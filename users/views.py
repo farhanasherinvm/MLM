@@ -851,7 +851,7 @@ def compute_paid_user_levels():
             mapping[ul.user.user_id] = ul.level.name  # Or order based on preference
     return mapping
 
-def apply_search_and_filters(queryset, request,user_levels=None):
+def apply_search_and_filters(queryset, request, user_levels=None):
     """Reusable function for search, status, date filters"""
     if user_levels is None:
         user_levels = compute_paid_user_levels()
@@ -878,6 +878,7 @@ def apply_search_and_filters(queryset, request,user_levels=None):
                 Q(first_name__icontains=search) |
                 Q(last_name__icontains=search)
             )
+
     # --- Status filter ---
     status_filter = (get_param("status") or "").lower()
     if status_filter == "active":
@@ -913,11 +914,10 @@ def apply_search_and_filters(queryset, request,user_levels=None):
         except (ValueError, TypeError):
             pass
 
-    
+    # --- Sorting ---
     sort_by = get_param("sort_by") or "date_of_joining"  # default sort field
     sort_order = (get_param("sort_order") or "desc").lower()
 
-    # Only allow sorting by safe fields
     allowed_fields = {
         "first_name": "first_name",
         "last_name": "last_name",
@@ -986,9 +986,7 @@ class AdminUserListView(APIView):
 
     def get(self, request):
         queryset = CustomUser.objects.all()
-
-        # Precompute paid user levels
-        user_levels = compute_paid_user_levels()  # Make sure this function is correct
+        user_levels = compute_paid_user_levels()  # Ensure the levels are precomputed
 
         paginator = AdminUserPagination()
         page = paginator.paginate_queryset(queryset, request)
@@ -1014,22 +1012,16 @@ class AdminUserListView(APIView):
         if end_date:
             users = users.filter(date_of_joining__lte=end_date)
 
-        # Apply search / status / level filters    
         users = apply_search_and_filters(users, request, user_levels=user_levels)
 
-        # Export if requested
         if export_format == "csv":
             return export_users_csv(users, filename="users.csv", user_levels=user_levels)
         elif export_format == "pdf":
             return export_users_pdf(users, filename="users.pdf", user_levels=user_levels)
 
-        # Paginate
         paginator = AdminUserPagination()
         page = paginator.paginate_queryset(users, request)
-        serializer = AdminUserListSerializer(
-            page, many=True, context={"level_map": user_levels}
-        )
-
+        serializer = AdminUserListSerializer(page, many=True, context={"level_map": user_levels})
         return paginator.get_paginated_response(serializer.data)
         
 class AdminUserDetailView(APIView):
