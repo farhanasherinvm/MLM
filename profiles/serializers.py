@@ -94,21 +94,10 @@ class ReferralListSerializer(serializers.ModelSerializer):
         return None
 
     def get_level(self, obj):
-        """
-        Return the highest paid level for the user.
-        """
-        try:
-            # Get all levels for the user with 'paid' status
-            user_levels = UserLevel.objects.filter(user=obj, status='paid')
-            
-            if user_levels.exists():
-                # Get the highest level (assuming 'level.order' is the order of the levels)
-                highest_level = user_levels.order_by('-level__order').first()
-                return highest_level.level.name  # Or use level.order if you prefer the order
-            return ""
-        except Exception as e:
-            return ""  # Return an empty string if there's an error or no level found
-
+        """Return only level number (e.g., Level 1, Level 2)"""
+        level_map = self.context.get("level_map", {})
+        current_level = level_map.get(obj.user_id, 1)
+        return f"Level {current_level}"
 
     def get_referred_by_id(self, obj):
         return obj.sponsor_id
@@ -397,14 +386,20 @@ class AdminUserListSerializer(serializers.ModelSerializer):
 
     def get_level(self, obj):
         """
-        Return the level for the user from the UserLevel model.
+        Return the highest paid level for the user.
         """
-        # Get the user level associated with the user
         try:
-            user_level = UserLevel.objects.get(user=obj, status='paid')  # Only fetch the 'paid' level
-            return user_level.level.name  # You can return level name or level order as per your needs
-        except UserLevel.DoesNotExist:
-            return ""  # Return an empty string if no level found
+            # Get all 'paid' levels for the user
+            user_levels = UserLevel.objects.filter(user=obj, status='paid')
+            
+            if user_levels.exists():
+                # Get the highest level (assuming 'level.order' is the order of the levels)
+                highest_level = user_levels.order_by('-level__order').first()
+                return highest_level.level.name  # Or return level.order if you prefer the order
+            return ""
+        except Exception as e:
+            return ""  # Return an empty string if no level found or error occurs
+
 
     def get_status(self, obj):
         return "Active" if obj.is_active else "Blocked"
@@ -523,14 +518,20 @@ class AdminUserDetailSerializer(serializers.ModelSerializer):
     
     def get_level(self, obj):
         """
-        Return paid level for user detail view (Level {order}) or empty string.
-        Expects 'level_map' in serializer context (populated by views).
+        Return the highest paid level for the user.
         """
-        level_map = self.context.get("level_map", {})
-        order = level_map.get(obj.user_id, 0)
-        if order:
-            return f"Level {order}"
-        return ""
+        try:
+            # Get all 'paid' levels for the user
+            user_levels = UserLevel.objects.filter(user=obj, status='paid')
+            
+            if user_levels.exists():
+                # Get the highest level (assuming 'level.order' is the order of the levels)
+                highest_level = user_levels.order_by('-level__order').first()
+                return highest_level.level.name  # Or return level.order if you prefer the order
+            return ""
+        except Exception as e:
+            return ""  # Return an empty string if no level found or error occurs
+
 
     
 
