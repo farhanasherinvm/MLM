@@ -844,25 +844,12 @@ def compute_user_levels():
     return levels
 
 def compute_paid_user_levels():
-    """
-    Returns mapping {user_id: highest paid level name or order}.
-    Only includes users with at least one paid UserLevel.
-    """
     mapping = {}
-    qs = (
-        UserLevel.objects.filter(status="paid", level__isnull=False)
-        .select_related("user", "level")
-        .order_by("user__user_id", "-level__order")
-    )
-
+    qs = UserLevel.objects.filter(status='paid').select_related('user', 'level').order_by('user__user_id', '-level__order')
     for ul in qs:
-        uid = getattr(ul.user, "user_id", None)
-        if not uid or uid in mapping:
-            continue
-        # You can store name or order; using name for readability
-        mapping[uid] = ul.level.name
+        if ul.user.user_id not in mapping:
+            mapping[ul.user.user_id] = ul.level.name  # Or order based on preference
     return mapping
-
 
 def apply_search_and_filters(queryset, request,user_levels=None):
     """Reusable function for search, status, date filters"""
