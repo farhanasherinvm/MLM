@@ -437,7 +437,6 @@ class UserReportViewSet(viewsets.ViewSet):
         # 1. Total Income (Total Received) - Sum of 'received' across ALL UserLevel records.
         # This is the most accurate definition of total income.
         # Use .aggregate() only once for efficiency if possible, or directly on the queryset
-        total_income = user_levels.aggregate(total=Sum('received'))['total'] or Decimal(0)
         current_user_id_str = str(user.user_id)
         total_referral_income = UserLevel.objects.filter(
                 # Filter 1: Match the recipient ID (uses the CharField)
@@ -455,6 +454,8 @@ class UserReportViewSet(viewsets.ViewSet):
         ).aggregate(
             total=Sum('level__amount')
         )['total'] or Decimal(0)
+        total_income = total_paid_for_levels + total_referral_income
+
 
         # 3. Levels Completed - Count of paid matrix levels (1-6)
         completed_levels = user_levels.filter(
