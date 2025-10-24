@@ -1009,7 +1009,7 @@ class AdminUserListView(APIView):
         """
         mapping = {}
         qs = (
-            UserLevel.objects.filter(status="paid")
+            UserLevel.objects.all()
             .select_related("user", "level")
             .order_by("user__user_id", "-approved_at", "-id")
         )

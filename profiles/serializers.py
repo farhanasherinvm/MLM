@@ -386,22 +386,33 @@ class AdminUserListSerializer(serializers.ModelSerializer):
 
     def get_level(self, obj):
         """
-        Return the latest paid level name from context or fallback to DB lookup.
+        Return the latest 'paid' level if available,
+        otherwise fall back to the latest level of any status.
         """
-        # Prefer precomputed levels from context
         level_map = self.context.get("user_levels", {})
         cached = level_map.get(obj.user_id)
         if cached:
             return cached
 
-        # Fallback DB query (should rarely be needed)
+        # Try fetching the latest paid level first
         latest_paid = (
             UserLevel.objects.filter(user=obj, status="paid")
             .select_related("level")
-            .order_by("-approved_at", "-id")
+            .order_by("-approved_at", "-created_at", "-id")
             .first()
         )
-        return latest_paid.level.name if latest_paid and latest_paid.level else ""
+        if latest_paid and latest_paid.level:
+            return latest_paid.level.name
+
+        # Fallback: any level record (unpaid/pending)
+        latest_any = (
+            UserLevel.objects.filter(user=obj)
+            .select_related("level")
+            .order_by("-approved_at", "-created_at", "-id")
+            .first()
+        )
+        return latest_any.level.name if latest_any and latest_any.level else "N/A"
+
 
 
 
