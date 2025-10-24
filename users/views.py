@@ -985,15 +985,38 @@ class AdminUserListView(APIView):
     #     return self.search_and_respond(search_query, export_format, request)
 
     def get(self, request):
-        queryset = CustomUser.objects.all()
-        user_levels = compute_paid_user_levels()  # Ensure the levels are precomputed
+        queryset = CustomUser.objects.all().select_related("profile").order_by("-date_of_joining")
 
+        # Precompute latest paid user levels
+        user_levels = self.compute_latest_paid_user_levels()
+
+        # Apply filters, search, etc.
+        queryset = apply_search_and_filters(queryset, request, user_levels=user_levels)
+
+        # Pagination
         paginator = AdminUserPagination()
         page = paginator.paginate_queryset(queryset, request)
         serializer = AdminUserListSerializer(
             page, many=True, context={"request": request, "user_levels": user_levels}
         )
         return paginator.get_paginated_response(serializer.data)
+    
+    @staticmethod
+    def compute_latest_paid_user_levels():
+        """
+        Return a mapping of {user_id: latest_paid_level_name}.
+        Uses approved_at or id as fallback for 'latest' ordering.
+        """
+        mapping = {}
+        qs = (
+            UserLevel.objects.filter(status="paid")
+            .select_related("user", "level")
+            .order_by("user__user_id", "-approved_at", "-id")
+        )
+        for ul in qs:
+            if ul.user.user_id not in mapping:
+                mapping[ul.user.user_id] = ul.level.name
+        return mapping
 
     def post(self, request):
         search_query = self.get_search_query(request)

@@ -386,19 +386,23 @@ class AdminUserListSerializer(serializers.ModelSerializer):
 
     def get_level(self, obj):
         """
-        Return the highest paid level for the user.
+        Return the latest paid level name from context or fallback to DB lookup.
         """
-        try:
-            # Get all 'paid' levels for the user
-            user_levels = UserLevel.objects.filter(user=obj, status='paid')
-            
-            if user_levels.exists():
-                # Get the highest level (assuming 'level.order' is the order of the levels)
-                highest_level = user_levels.order_by('-level__order').first()
-                return highest_level.level.name  # Or return level.order if you prefer the order
-            return ""
-        except Exception as e:
-            return ""  # Return an empty string if no level found or error occurs
+        # Prefer precomputed levels from context
+        level_map = self.context.get("user_levels", {})
+        cached = level_map.get(obj.user_id)
+        if cached:
+            return cached
+
+        # Fallback DB query (should rarely be needed)
+        latest_paid = (
+            UserLevel.objects.filter(user=obj, status="paid")
+            .select_related("level")
+            .order_by("-approved_at", "-id")
+            .first()
+        )
+        return latest_paid.level.name if latest_paid and latest_paid.level else ""
+
 
 
     def get_status(self, obj):
