@@ -577,12 +577,20 @@ class AdminNetworkUserSerializer(serializers.ModelSerializer):
         return None
 
     def get_level(self, obj):
-        # Use paid-level mapping from context
-        level_map = self.context.get("level_map", {})
-        order = level_map.get(obj.user_id, 0)
-        if order:
-            return f"Level {order}"
-        return ""
+        """
+        Return the highest paid level for the user.
+        """
+        try:
+            # Get all 'paid' levels for the user
+            user_levels = UserLevel.objects.filter(user=obj, status='paid')
+            
+            if user_levels.exists():
+                # Get the highest level (assuming 'level.order' is the order of the levels)
+                highest_level = user_levels.order_by('-level__order').first()
+                return highest_level.level.name  # Or return level.order if you prefer the order
+            return ""
+        except Exception as e:
+            return ""  # Return an empty string if no level found or error occurs
 
 
 class CurrentUserProfileSerializer(serializers.ModelSerializer):
