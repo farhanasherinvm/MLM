@@ -6,7 +6,7 @@ from rest_framework import status, permissions
 from rest_framework.permissions import IsAuthenticated, BasePermission, AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework_simplejwt.tokens import RefreshToken
-from django.db.models import Q
+from django.db.models import Q, Max
 from datetime import datetime
 from reportlab.lib.pagesizes import A4
 from django.http import FileResponse
@@ -45,7 +45,7 @@ from io import BytesIO
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 
-from rest_framework import generics, status
+from rest_framework import generics, status, permissions
 
 from users.utils import check_child_creation_eligibility
 
@@ -845,31 +845,24 @@ def compute_user_levels():
 
 def compute_paid_user_levels():
     """
-    Returns mapping {user_id: highest_paid_level_order} from UserLevel.
-    Falls back to any existing levels if none have status='paid'.
+    Returns mapping {user_id: highest paid level name or order}.
+    Only includes users with at least one paid UserLevel.
     """
     mapping = {}
-    try:
-        qs = UserLevel.objects.all().select_related('user', 'level').order_by('user__user_id', '-level__order')
-        if hasattr(UserLevel, "status"):
-            paid_qs = qs.filter(status__iexact='paid')
-            if paid_qs.exists():
-                qs = paid_qs
-        for ul in qs:
-            uid = getattr(ul.user, "user_id", None)
-            if not uid or uid in mapping:
-                continue
-            level_obj = getattr(ul, "level", None)
-            order = getattr(level_obj, "order", None)
-            if order is not None:
-                mapping[uid] = order
-        if not mapping:
-            print("⚠️ compute_paid_user_levels: No user levels found.")
-        else:
-            print(f"✅ compute_paid_user_levels: Loaded {len(mapping)} entries.")
-    except Exception as e:
-        print("❌ compute_paid_user_levels failed:", e)
+    qs = (
+        UserLevel.objects.filter(status="paid", level__isnull=False)
+        .select_related("user", "level")
+        .order_by("user__user_id", "-level__order")
+    )
+
+    for ul in qs:
+        uid = getattr(ul.user, "user_id", None)
+        if not uid or uid in mapping:
+            continue
+        # You can store name or order; using name for readability
+        mapping[uid] = ul.level.name
     return mapping
+
 
 def apply_search_and_filters(queryset, request,user_levels=None):
     """Reusable function for search, status, date filters"""

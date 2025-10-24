@@ -385,11 +385,12 @@ class AdminUserListSerializer(serializers.ModelSerializer):
         return None
 
     def get_level(self, obj):
-        level_map = self.context.get("level_map", {})
-        order = level_map.get(obj.user_id, 0)
-        if order:
-            return f"Level {order}"
-        return ""
+        user_levels = self.context.get("user_levels", {})
+        # level_map = self.context.get("level_map", {})
+        # order = level_map.get(obj.user_id, 0)
+        # if order:
+        #     return f"Level {order}"
+        return user_levels.get(obj.user_id, "")
 
     def get_status(self, obj):
         return "Active" if obj.is_active else "Blocked"
