@@ -454,7 +454,7 @@ class UserReportViewSet(viewsets.ViewSet):
         ).aggregate(
             total=Sum('level__amount')
         )['total'] or Decimal(0)
-        total_income = total_paid_for_levels + total_referral_income
+        
 
 
         # 3. Levels Completed - Count of paid matrix levels (1-6)
@@ -471,6 +471,7 @@ class UserReportViewSet(viewsets.ViewSet):
                 
         # 4. Pending Counts - Count of levels that are currently pending payment/approval.
         pending_count = user_levels.filter(status='pending').count()
+        total_income = received_help_amount + total_referral_income
 
         total_amount_generated= received_help_amount  - total_paid_for_levels
         
