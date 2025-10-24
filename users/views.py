@@ -55,7 +55,7 @@ from level.models import UserLevel
 
 from django.db.models import Sum
 
-
+from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 
@@ -843,10 +843,34 @@ def compute_user_levels():
         get_level(u["user_id"])
     return levels
 
+def compute_paid_user_levels():
+    """
+    Build a mapping { user_id: highest_paid_level_order } for all users
+    based on UserLevel objects with status='paid'.
+    If a user has no paid UserLevel, they will NOT be present in the mapping
+    (callers can default to 0).
+    """
+    mapping = {}
+    # Query paid UserLevel rows; order descending by level.order so the first per user is highest
+    paid_levels_qs = UserLevel.objects.filter(status='paid', level__isnull=False).select_related('user', 'level').order_by('user__user_id', '-level__order')
+    # iterate and pick the first occurrence per user
+    for ul in paid_levels_qs:
+        uid = getattr(ul.user, "user_id", None)
+        if not uid:
+            continue
+        if uid in mapping:
+            # already set (we ordered descending by level order)
+            continue
+        try:
+            mapping[uid] = int(ul.level.order) if ul.level and ul.level.order is not None else 0
+        except Exception:
+            mapping[uid] = 0
+    return mapping
+
 def apply_search_and_filters(queryset, request,user_levels=None):
     """Reusable function for search, status, date filters"""
     if user_levels is None:
-        user_levels = compute_user_levels()
+        user_levels = compute_paid_user_levels()
 
     params = getattr(request, "query_params", {}) or {}
     data = getattr(request, "data", {}) or {}
@@ -945,7 +969,7 @@ class AdminListUsersView(APIView):
 
     def handle_request(self, request):
         queryset = self.get_queryset(request)
-        user_levels = compute_user_levels()
+        user_levels = compute_paid_user_levels()
         queryset = apply_search_and_filters(queryset, request, user_levels=user_levels)
         export_format = self.get_export_format(request)
 
@@ -983,7 +1007,7 @@ class AdminUserListView(APIView):
 
     def search_and_respond(self, search_query, export_format, request):
         users = CustomUser.objects.select_related("profile").all()
-        user_levels = compute_user_levels()
+        user_levels = compute_paid_user_levels()
 
         # Filter by start_date / end_date
         start_date = request.query_params.get("start_date") or request.data.get("start_date")
@@ -1023,8 +1047,9 @@ class AdminUserDetailView(APIView):
             user = CustomUser.objects.select_related("profile").get(user_id=user_id)
         except CustomUser.DoesNotExist:
             return Response({"error": "User not found"}, status=404)
-
-        serializer = AdminUserDetailSerializer(user, context={"request": request})
+        
+        user_levels = compute_paid_user_levels()
+        serializer = AdminUserDetailSerializer(user, context={"request": request, "level_map": user_levels})
         return Response(serializer.data, status=200)
 
     def put(self, request, user_id):
@@ -1161,8 +1186,9 @@ class AdminExportUsersCSVView(APIView):
 
     def get(self, request, *args, **kwargs):
         users = CustomUser.objects.select_related("profile").all()
-        users = apply_search_and_filters(users, request)
-        return export_users_csv(users, filename="admin_users_export.csv")
+        user_levels = compute_paid_user_levels()
+        users = apply_search_and_filters(users, request, user_levels=user_levels)
+        return export_users_csv(users, filename="admin_users_export.csv", user_levels=user_levels)
 
 class AdminExportUsersPDFView(APIView):
     """
@@ -1172,8 +1198,9 @@ class AdminExportUsersPDFView(APIView):
 
     def get(self, request, *args, **kwargs):
         users = CustomUser.objects.select_related("profile").all()
-        users = apply_search_and_filters(users, request)
-        return export_users_pdf(users, filename="admin_users_export.pdf", title="Admin Users Report")
+        user_levels = compute_paid_user_levels()
+        users = apply_search_and_filters(users, request, user_levels=user_levels)
+        return export_users_pdf(users, filename="admin_users_export.pdf", title="Admin Users Report", user_levels=user_levels)
      
 class AdminViewProfileImageView(APIView):
     permission_classes = [IsAuthenticated]
@@ -1207,7 +1234,7 @@ class AdminNetworkView(APIView):
         export_format = request.query_params.get("export", "").lower()
 
         # Precompute levels once
-        user_levels = compute_user_levels()
+        user_levels = compute_paid_user_levels()
 
         # ✅ If export requested, skip pagination and return immediately
         # if export_format in ["csv", "pdf"]:
@@ -1229,7 +1256,7 @@ class AdminNetworkView(APIView):
         paginator.page_size = int(request.query_params.get("page_size", 10))
         page = paginator.paginate_queryset(queryset, request)
 
-        serializer = AdminNetworkUserSerializer(page, many=True, context={"request": request})
+        serializer = AdminNetworkUserSerializer(page, many=True, context={"request": request, "level_map": user_levels})
 
         # ✅ Custom paginated response with counts
         return Response({

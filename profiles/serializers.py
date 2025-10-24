@@ -385,25 +385,11 @@ class AdminUserListSerializer(serializers.ModelSerializer):
         return None
 
     def get_level(self, obj):
-        # try:
-        #     level = 0
-        #     sponsor_id = obj.sponsor_id
-        #     visited = set()
-        #     # current = obj
-        #     while sponsor_id:
-        #         if sponsor_id in visited:
-        #             break
-        #         visited.add(sponsor_id)
-        #         sponsor = CustomUser.objects.filter(user_id=sponsor_id).first()
-        #         if not sponsor:
-        #             break
-        #         level += 1
-        #         sponsor_id = sponsor.sponsor_id
-        #     return level
-        # except Exception:
-        #     return 1
         level_map = self.context.get("level_map", {})
-        return level_map.get(obj.user_id, 0)
+        order = level_map.get(obj.user_id, 0)
+        if order:
+            return f"Level {order}"
+        return ""
 
     def get_status(self, obj):
         return "Active" if obj.is_active else "Blocked"
@@ -419,6 +405,7 @@ class AdminUserDetailSerializer(serializers.ModelSerializer):
     kyc = KYCSerializer(required=False)
     useraccountdetails = UserAccountDetailsSerializer(required=False)
     blocked_status = serializers.SerializerMethodField()
+    level = serializers.SerializerMethodField()
 
     class Meta:
         model = CustomUser
@@ -518,6 +505,17 @@ class AdminUserDetailSerializer(serializers.ModelSerializer):
 
     def get_blocked_status(self, obj):
         return "Unblocked" if obj.is_active else "Blocked"
+    
+    def get_level(self, obj):
+        """
+        Return paid level for user detail view (Level {order}) or empty string.
+        Expects 'level_map' in serializer context (populated by views).
+        """
+        level_map = self.context.get("level_map", {})
+        order = level_map.get(obj.user_id, 0)
+        if order:
+            return f"Level {order}"
+        return ""
 
     
 
@@ -563,24 +561,12 @@ class AdminNetworkUserSerializer(serializers.ModelSerializer):
         return None
 
     def get_level(self, obj):
-        """Recalculate level by walking up the referral chain using sponsor_id"""
-        try:
-            level = 1
-            visited = set()
-            current = obj
-            while current.sponsor_id:
-                if current.sponsor_id in visited:
-                    break
-                visited.add(current.sponsor_id)
-                try:
-                    sponsor = CustomUser.objects.get(user_id=current.sponsor_id)
-                    level += 1
-                    current = sponsor
-                except CustomUser.DoesNotExist:
-                    break
-            return level
-        except Exception:
-            return 1
+        # Use paid-level mapping from context
+        level_map = self.context.get("level_map", {})
+        order = level_map.get(obj.user_id, 0)
+        if order:
+            return f"Level {order}"
+        return ""
 
 
 class CurrentUserProfileSerializer(serializers.ModelSerializer):
