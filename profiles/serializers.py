@@ -379,6 +379,10 @@ class AdminUserListSerializer(serializers.ModelSerializer):
         try:
             profile = getattr(obj, "profile", None)
             if profile and profile.profile_image:
+                # don't assume request present, but return URL if so
+                request = self.context.get("request")
+                if request:
+                    return request.build_absolute_uri(profile.profile_image.url)
                 return profile.profile_image.url
         except Exception:
             return None
@@ -388,33 +392,37 @@ class AdminUserListSerializer(serializers.ModelSerializer):
         """
         Return the latest 'paid' level if available,
         otherwise fall back to the latest level of any status.
+        We also accept a precomputed mapping in context to avoid DB hits.
         """
-        level_map = self.context.get("user_levels", {})
+        # First, see if view provided a precomputed map
+        level_map = self.context.get("user_levels") or self.context.get("level_map") or {}
+
         cached = level_map.get(obj.user_id)
         if cached:
             return cached
 
-        # Try fetching the latest paid level first
+        # Fetch latest 'paid' level for this user (prefer approved records)
         latest_paid = (
-            UserLevel.objects.filter(user=obj, status="paid")
+            UserLevel.objects.filter(user=obj, status="paid", level__isnull=False)
             .select_related("level")
-            .order_by("-approved_at", "-created_at", "-id")
+            .order_by("-approved_at", "-requested_date", "-id")
             .first()
         )
         if latest_paid and latest_paid.level:
             return latest_paid.level.name
 
-        # Fallback: any level record (unpaid/pending)
+        # Fallback to any level record (maybe unpaid/pending). pick the latest by timestamps
         latest_any = (
-            UserLevel.objects.filter(user=obj)
+            UserLevel.objects.filter(user=obj, level__isnull=False)
             .select_related("level")
-            .order_by("-approved_at", "-created_at", "-id")
+            .order_by("-approved_at", "-requested_date", "-id")
             .first()
         )
-        return latest_any.level.name if latest_any and latest_any.level else "N/A"
+        if latest_any and latest_any.level:
+            return latest_any.level.name
 
-
-
+        # No level found
+        return ""
 
     def get_status(self, obj):
         return "Active" if obj.is_active else "Blocked"
@@ -422,9 +430,9 @@ class AdminUserListSerializer(serializers.ModelSerializer):
     def get_date_of_joining(self, obj):
         doj = getattr(obj, "date_of_joining", None)
         if doj:
-            # format as YYYY-MM-DD
             return doj.strftime("%Y-%m-%d")
         return None
+    
 class AdminUserDetailSerializer(serializers.ModelSerializer):
     profile = ProfileSerializer(required=False)
     kyc = KYCSerializer(required=False)
@@ -533,19 +541,40 @@ class AdminUserDetailSerializer(serializers.ModelSerializer):
     
     def get_level(self, obj):
         """
-        Return the highest paid level for the user.
+        Return the latest paid level (Level X) or empty string.
+        Uses 'level_map' if present in context; otherwise queries DB safely.
         """
+        level_map = self.context.get("level_map") or self.context.get("user_levels") or {}
+        order_or_name = level_map.get(obj.user_id)
+        if order_or_name:
+            return order_or_name
+
         try:
-            # Get all 'paid' levels for the user
-            user_levels = UserLevel.objects.filter(user=obj, status='paid')
-            
-            if user_levels.exists():
-                # Get the highest level (assuming 'level.order' is the order of the levels)
-                highest_level = user_levels.order_by('-level__order').first()
-                return highest_level.level.name  # Or return level.order if you prefer the order
-            return ""
-        except Exception as e:
-            return ""  # Return an empty string if no level found or error occurs
+            latest_paid = (
+                UserLevel.objects.filter(user=obj, status="paid", level__isnull=False)
+                .select_related("level")
+                .order_by("-approved_at", "-requested_date", "-id")
+                .first()
+            )
+            if latest_paid and latest_paid.level:
+                return latest_paid.level.name
+        except Exception:
+            pass
+        return ""
+    
+    def get_profile(self, obj):
+        # If you have an actual ProfileSerializer, use it here. This is a simple fallback.
+        profile = getattr(obj, "profile", None)
+        if not profile:
+            return {}
+        return {
+            "first_name": getattr(profile, "first_name", ""),
+            "last_name": getattr(profile, "last_name", ""),
+            "profile_image": profile.profile_image.url if getattr(profile, "profile_image", None) else None,
+            "place": getattr(profile, "place", ""),
+            "district": getattr(profile, "district", ""),
+            "state": getattr(profile, "state", ""),
+        }
 
 
     

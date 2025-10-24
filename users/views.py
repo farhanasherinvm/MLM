@@ -844,11 +844,22 @@ class AdminUserPagination(PageNumberPagination):
 #     return levels
 
 def compute_paid_user_levels():
+    """
+    Legacy function left for other codepaths: returns mapping {user_id: highest_paid_level_name}.
+    We order UserLevel records by user and then -level.order so first occurrence is highest-order paid level.
+    """
     mapping = {}
-    qs = UserLevel.objects.filter(status='paid').select_related('user', 'level').order_by('user__user_id', '-level__order')
+    qs = (
+        UserLevel.objects.filter(status="paid", level__isnull=False)
+        .select_related("user", "level")
+        .order_by("user__user_id", "-level__order")
+    )
     for ul in qs:
-        if ul.user.user_id not in mapping:
-            mapping[ul.user.user_id] = ul.level.name  # Or order based on preference
+        uid = getattr(ul.user, "user_id", None)
+        if not uid:
+            continue
+        if uid not in mapping:
+            mapping[uid] = ul.level.name
     return mapping
 
 def apply_search_and_filters(queryset, request, user_levels=None):
@@ -906,16 +917,23 @@ def apply_search_and_filters(queryset, request, user_levels=None):
 
     # --- Level filter ---
     level_filter = get_param("level")
-    if level_filter is not None:
+    if level_filter is not None and level_filter != "":
+        # Accept either "Level 3" or just "3"
+        lf = str(level_filter).strip()
         try:
-            target_level = int(level_filter)
-            valid_ids = [uid for uid, lvl in user_levels.items() if lvl == target_level]
+            if lf.lower().startswith("level"):
+                # parse "Level 3"
+                target = int(lf.split()[1])
+            else:
+                target = int(lf)
+            valid_ids = [uid for uid, lvl in user_levels.items() if str(lvl).strip().lower().endswith(str(target).lower()) or str(lvl).strip() == f"Level {target}"]
             queryset = queryset.filter(user_id__in=valid_ids)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, IndexError):
+            # if parse fails, ignore level filter
             pass
 
     # --- Sorting ---
-    sort_by = get_param("sort_by") or "date_of_joining"  # default sort field
+    sort_by = get_param("sort_by") or "date_of_joining"
     sort_order = (get_param("sort_order") or "desc").lower()
 
     allowed_fields = {
@@ -965,13 +983,15 @@ class AdminListUsersView(APIView):
         # Pagination
         paginator = AdminUserPagination()
         page = paginator.paginate_queryset(queryset, request)
+        from profiles.serializers import AdminUserListSerializer
         serializer = AdminUserListSerializer(
-            page, many=True, context={"request": request, "level_map": user_levels}
+            page, many=True, context={"request": request, "user_levels": user_levels}
         )
         return paginator.get_paginated_response(serializer.data)
 
 class AdminUserListView(APIView):
     permission_classes = [IsProjectAdmin]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_search_query(self, request):
         return (request.query_params.get("search") or request.data.get("search") or "").strip()
@@ -985,46 +1005,29 @@ class AdminUserListView(APIView):
     #     return self.search_and_respond(search_query, export_format, request)
 
     def get(self, request):
-        queryset = CustomUser.objects.all().select_related("profile").order_by("-date_of_joining")
-
+        queryset = CustomUser.objects.select_related("profile").all().order_by("-date_of_joining", "-id")
         # Precompute latest paid user levels
         user_levels = self.compute_latest_paid_user_levels()
 
-        # Apply filters, search, etc.
+        # Apply filters/search/sort using the helper (note: helper will re-order if 'sort_by' provided)
         queryset = apply_search_and_filters(queryset, request, user_levels=user_levels)
 
         # Pagination
         paginator = AdminUserPagination()
         page = paginator.paginate_queryset(queryset, request)
+        from profiles.serializers import AdminUserListSerializer
         serializer = AdminUserListSerializer(
-            page, many=True, context={"request": request, "user_levels": user_levels}
+            page, many=True, context={"request": request, "user_levels": user_levels, "level_map": user_levels}
         )
         return paginator.get_paginated_response(serializer.data)
     
-    @staticmethod
-    def compute_latest_paid_user_levels():
-        """
-        Return a mapping of {user_id: latest_paid_level_name}.
-        Uses approved_at or id as fallback for 'latest' ordering.
-        """
-        mapping = {}
-        qs = (
-            UserLevel.objects.all()
-            .select_related("user", "level")
-            .order_by("user__user_id", "-approved_at", "-id")
-        )
-        for ul in qs:
-            if ul.user.user_id not in mapping:
-                mapping[ul.user.user_id] = ul.level.name
-        return mapping
-
     def post(self, request):
         search_query = self.get_search_query(request)
         export_format = self.get_export_format(request)
         return self.search_and_respond(search_query, export_format, request)
 
     def search_and_respond(self, search_query, export_format, request):
-        users = CustomUser.objects.select_related("profile").all()
+        users = CustomUser.objects.select_related("profile").all().order_by("-date_of_joining", "-id")
         user_levels = compute_paid_user_levels()
 
         # Filter by start_date / end_date
@@ -1044,8 +1047,36 @@ class AdminUserListView(APIView):
 
         paginator = AdminUserPagination()
         page = paginator.paginate_queryset(users, request)
-        serializer = AdminUserListSerializer(page, many=True, context={"level_map": user_levels})
+        from profiles.serializers import AdminUserListSerializer
+        serializer = AdminUserListSerializer(page, many=True, context={"level_map": user_levels, "user_levels": user_levels})
         return paginator.get_paginated_response(serializer.data)
+    
+    @staticmethod
+    def compute_latest_paid_user_levels():
+        """
+        Return a mapping of {user_id: latest_paid_level_name}.
+        Uses 'approved_at' (newest verified payments) as primary ordering, then created timestamp, then id.
+        If multiple paid records exist, the latest by approved_at is picked.
+        """
+        mapping = {}
+        # Include all userlevel rows but order so the latest paid per user comes first when iterating
+        qs = (
+            UserLevel.objects.select_related("user", "level")
+            .filter(level__isnull=False)
+            .order_by("user__user_id", "-approved_at", "-requested_date", "-id")
+        )
+
+        for ul in qs:
+            uid = getattr(ul.user, "user_id", None)
+            if not uid:
+                continue
+            # Prefer only paid statuses for mapping. If there is already an entry, skip.
+            if uid in mapping:
+                continue
+            if ul.status == "paid" and ul.level:
+                mapping[uid] = ul.level.name
+
+        return mapping
         
 class AdminUserDetailView(APIView):
     """
