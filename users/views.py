@@ -291,6 +291,59 @@ class RazorpayVerifyView(APIView):
         # Create user from registration data
         reg_data = payment.get_registration_data()
 
+         # ✅ NEW: Check if this payment belongs to a CHILD registration
+        if reg_data and reg_data.get("parent_user_id"):
+            try:
+                parent = CustomUser.objects.filter(user_id=reg_data["parent_user_id"]).first()
+                if not parent:
+                    raise ValueError("Parent user not found for child registration")
+
+                child_user = CustomUser.objects.create(
+                    parent=parent,
+                    sponsor_id=parent.user_id,
+                    placement_id=reg_data.get("placement_id"),
+                    first_name=reg_data.get("first_name", ""),
+                    last_name=reg_data.get("last_name", ""),
+                    email=reg_data.get("email", ""),
+                    mobile=reg_data.get("mobile", ""),
+                    whatsapp_number=reg_data.get("whatsapp_number", ""),
+                    pincode=reg_data.get("pincode", ""),
+                    payment_type="Other",
+                    is_active=True,
+                    pmf_status=False,
+                )
+                # Set password from registration data
+                if reg_data.get("password"):
+                    child_user.set_password(reg_data.get("password"))
+                else:
+                    child_user.set_unusable_password()
+                child_user.save()
+
+                # Link payment to created child
+                payment.user = child_user
+                payment.save(update_fields=["user"])
+
+                 # Send confirmation mail
+                safe_send_mail(
+                    subject="Child Account Created Successfully",
+                    message=f"Hello {parent.first_name}, your child '{child_user.first_name}' has been registered successfully.\nChild User ID: {child_user.user_id}",
+                    recipient_list=[parent.email],
+                    html_message=f"<p>Hello <strong>{parent.first_name}</strong>,</p><p>Your child <strong>{child_user.first_name}</strong> has been successfully registered.</p><p>Child User ID: <strong>{child_user.user_id}</strong></p>",
+                )
+
+                logger.info("Child user %s created successfully for parent %s", child_user.user_id, parent.user_id)
+
+                return Response({
+                    "message": "Child account created successfully after payment verification.",
+                    "child_user_id": child_user.user_id,
+                    "parent_user_id": parent.user_id,
+                }, status=200)
+
+            except Exception as e:
+                logger.exception("Failed to create child user for Payment %s: %s", payment.id, e)
+                return Response({"error": "Failed to create child user after payment verification"}, status=500)
+
+
         # >>> CHANGED: Instead of assuming plaintext password is in reg_data,
         # fetch the corresponding RegistrationRequest which stores the hashed password.
         try:
@@ -1237,26 +1290,28 @@ class ChildPagination(PageNumberPagination):
 
 
 
-
 class ChildRegistrationView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         serializer = ChildRegistrationSerializer(
-            data=request.data, 
+            data=request.data,
             context={'request': request}
         )
-        if serializer.is_valid():
-            child = serializer.save()
-            return Response({
-                "message": "Child user created successfully",
-                "user_id": child.user_id, 
-                "child_password": request.data.get("password"),      
-                "parent_user_id": request.user.user_id,
-                
-            }, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+        if serializer.is_valid():
+            # Serializer handles payment creation
+            payment_data = serializer.save()
+
+            return Response({
+                "message": payment_data.get("message"),
+                "registration_token": payment_data.get("registration_token"),
+                "amount": payment_data.get("amount"),
+                "payment_status": payment_data.get("payment_status"),
+                "parent_user_id": request.user.user_id,
+            }, status=status.HTTP_201_CREATED)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class ChildListView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]

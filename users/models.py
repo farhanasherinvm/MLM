@@ -117,17 +117,19 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     def save(self, *args, **kwargs):
     # Ensure unique user_id
         if not self.user_id:
-         while True:
-            uid = f"USR{uuid.uuid4().hex[:6].upper()}"
-            if not CustomUser.objects.filter(user_id=uid).exists():
-                self.user_id = uid
-                break
+        # Get the last numeric part of existing WCC user_ids
+            last_user = CustomUser.objects.filter(user_id__startswith="WCC").order_by("-id").first()
+            if last_user and last_user.user_id[3:].isdigit():
+                last_number = int(last_user.user_id[3:])
+            else:
+                last_number = 0
+        # Increment for new user
+                self.user_id = f"WCC{last_number + 1:06d}"  # e.g., WCC000001, WCC000002
 
     # Set role
         self.role = "child" if self.parent else "parent"
 
         super().save(*args, **kwargs)
-
 
     def __str__(self):
         return self.user_id

@@ -162,7 +162,6 @@ def check_child_creation_eligibility(user):
     Determines if a user is eligible to create a new child 
     and whether any milestone notification should be triggered.
     """
-
     # Calculate total received income
     total_received = (
         UserLevel.objects.filter(user=user)

@@ -361,32 +361,42 @@ class ChildRegistrationSerializer(serializers.Serializer):
 
         if not can_create:
             raise serializers.ValidationError({"detail": message})
-        # Create child user
-        child_user = CustomUser.objects.create(
-            parent=parent,
-            sponsor_id=parent.user_id,
-            placement_id=None,
-            first_name=validated_data.get('first_name', ''),
-            last_name=validated_data.get('last_name', ''),
-            email=validated_data.get('email', ''),
-            mobile=validated_data.get('mobile', ''),
-            whatsapp_number=validated_data.get('whatsapp_number', ''),
-            pincode=validated_data.get('pincode', ''),
-            payment_type='Other',  # child doesn’t pay
-            upi_number='',
-            is_active=True,
-            pmf_status=False,
-        )
 
-        # Child must have password for individual login
-        child_user.set_password(password)
-        child_user.save()
-          # Assign placement_id
-        existing_children = CustomUser.objects.filter(placement_id=placement_user_id).order_by("id")[:2]
-        if len(existing_children) >= 2:
-         raise serializers.ValidationError("Placement limit reached for this user.")
+         # ✅ Step 2: Create pending Payment record
+        from users.models import Payment  # adjust import based on your structure
+        from django.db import transaction
 
-        child_user.placement_id = placement_user_id
-        child_user.save()
+        amount = 100  # ₹100 child registration fee
 
-        return child_user
+        with transaction.atomic():
+            # Create payment entry (not linked to child yet)
+            payment = Payment.objects.create(amount=amount)
+
+         # Store child data in payment for later creation after payment success
+            registration_data = {
+                "first_name": validated_data.get('first_name', ''),
+                "last_name": validated_data.get('last_name', ''),
+                "email": validated_data.get('email', ''),
+                "mobile": validated_data.get('mobile', ''),
+                "whatsapp_number": validated_data.get('whatsapp_number', ''),
+                "pincode": validated_data.get('pincode', ''),
+                "placement_id": placement_user_id,
+                "password": password,
+                "parent_user_id": parent.user_id,  # to link back later
+            }
+            payment.set_registration_data(registration_data)
+            payment.save()
+
+
+           # ✅ Step 3: Return payment info to frontend
+        # Frontend will now call Razorpay/receipt upload using `registration_token`
+        return {
+            "message": "Child registration initialized. Please complete ₹100 payment.",
+            "registration_token": str(payment.registration_token),
+            "amount": str(payment.amount),
+            "payment_status": payment.status,
+        }
+
+
+class ChildPaymentInitSerializer(serializers.Serializer):
+    child_data = ChildRegistrationSerializer()
