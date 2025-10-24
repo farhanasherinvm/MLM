@@ -845,26 +845,30 @@ def compute_user_levels():
 
 def compute_paid_user_levels():
     """
-    Build a mapping { user_id: highest_paid_level_order } for all users
-    based on UserLevel objects with status='paid'.
-    If a user has no paid UserLevel, they will NOT be present in the mapping
-    (callers can default to 0).
+    Returns mapping {user_id: highest_paid_level_order} from UserLevel.
+    Falls back to any existing levels if none have status='paid'.
     """
     mapping = {}
-    # Query paid UserLevel rows; order descending by level.order so the first per user is highest
-    paid_levels_qs = UserLevel.objects.filter(status='paid', level__isnull=False).select_related('user', 'level').order_by('user__user_id', '-level__order')
-    # iterate and pick the first occurrence per user
-    for ul in paid_levels_qs:
-        uid = getattr(ul.user, "user_id", None)
-        if not uid:
-            continue
-        if uid in mapping:
-            # already set (we ordered descending by level order)
-            continue
-        try:
-            mapping[uid] = int(ul.level.order) if ul.level and ul.level.order is not None else 0
-        except Exception:
-            mapping[uid] = 0
+    try:
+        qs = UserLevel.objects.all().select_related('user', 'level').order_by('user__user_id', '-level__order')
+        if hasattr(UserLevel, "status"):
+            paid_qs = qs.filter(status__iexact='paid')
+            if paid_qs.exists():
+                qs = paid_qs
+        for ul in qs:
+            uid = getattr(ul.user, "user_id", None)
+            if not uid or uid in mapping:
+                continue
+            level_obj = getattr(ul, "level", None)
+            order = getattr(level_obj, "order", None)
+            if order is not None:
+                mapping[uid] = order
+        if not mapping:
+            print("⚠️ compute_paid_user_levels: No user levels found.")
+        else:
+            print(f"✅ compute_paid_user_levels: Loaded {len(mapping)} entries.")
+    except Exception as e:
+        print("❌ compute_paid_user_levels failed:", e)
     return mapping
 
 def apply_search_and_filters(queryset, request,user_levels=None):
