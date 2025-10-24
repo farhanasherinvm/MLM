@@ -94,10 +94,21 @@ class ReferralListSerializer(serializers.ModelSerializer):
         return None
 
     def get_level(self, obj):
-        """Return only level number (e.g., Level 1, Level 2)"""
-        level_map = self.context.get("level_map", {})
-        current_level = level_map.get(obj.user_id, 1)
-        return f"Level {current_level}"
+        """
+        Return the highest paid level for the user.
+        """
+        try:
+            # Get all levels for the user with 'paid' status
+            user_levels = UserLevel.objects.filter(user=obj, status='paid')
+            
+            if user_levels.exists():
+                # Get the highest level (assuming 'level.order' is the order of the levels)
+                highest_level = user_levels.order_by('-level__order').first()
+                return highest_level.level.name  # Or use level.order if you prefer the order
+            return ""
+        except Exception as e:
+            return ""  # Return an empty string if there's an error or no level found
+
 
     def get_referred_by_id(self, obj):
         return obj.sponsor_id

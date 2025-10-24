@@ -811,37 +811,37 @@ class AdminUserPagination(PageNumberPagination):
     page_size_query_param = "page_size"
     max_page_size = 100
 
-def compute_user_levels():
-    """
-    Precompute levels for all users (based on sponsor chain).
-    Returns a dict {user_id: level}.
-    """
-    users = CustomUser.objects.values("id", "user_id", "sponsor_id")
-    users_map = {u["user_id"]: u for u in users}
-    levels = {}
+# def compute_user_levels():
+#     """
+#     Precompute levels for all users (based on sponsor chain).
+#     Returns a dict {user_id: level}.
+#     """
+#     users = CustomUser.objects.values("id", "user_id", "sponsor_id")
+#     users_map = {u["user_id"]: u for u in users}
+#     levels = {}
 
-    def get_level(uid, visited=None):
-        if uid in levels:
-            return levels[uid]
-        if visited is None:
-            visited = set()
-        if uid in visited:
-            return None  # cycle
-        visited.add(uid)
-        user = users_map.get(uid)
-        if not user or not user["sponsor_id"]:
-            levels[uid] = 0
-            return 0
-        sponsor_uid = user["sponsor_id"]
-        sponsor_level = get_level(sponsor_uid, visited)
-        if sponsor_level is None:
-            return None
-        levels[uid] = sponsor_level + 1
-        return levels[uid]
+#     def get_level(uid, visited=None):
+#         if uid in levels:
+#             return levels[uid]
+#         if visited is None:
+#             visited = set()
+#         if uid in visited:
+#             return None  # cycle
+#         visited.add(uid)
+#         user = users_map.get(uid)
+#         if not user or not user["sponsor_id"]:
+#             levels[uid] = 0
+#             return 0
+#         sponsor_uid = user["sponsor_id"]
+#         sponsor_level = get_level(sponsor_uid, visited)
+#         if sponsor_level is None:
+#             return None
+#         levels[uid] = sponsor_level + 1
+#         return levels[uid]
 
-    for u in users:
-        get_level(u["user_id"])
-    return levels
+#     for u in users:
+#         get_level(u["user_id"])
+#     return levels
 
 def compute_paid_user_levels():
     mapping = {}
@@ -987,8 +987,8 @@ class AdminUserListView(APIView):
     def get(self, request):
         queryset = CustomUser.objects.all()
 
-        # Compute the paid user levels for each user
-        user_levels = compute_paid_user_levels()
+        # Precompute paid user levels
+        user_levels = compute_paid_user_levels()  # Make sure this function is correct
 
         paginator = AdminUserPagination()
         page = paginator.paginate_queryset(queryset, request)
