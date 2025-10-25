@@ -34,6 +34,8 @@ from django.db.models.expressions import OuterRef, Subquery
 from users.models import Payment
 from level.models import PmfPayment
 from operator import attrgetter
+from decimal import Decimal
+
 logger = logging.getLogger(__name__)
 
 # Helper function for safe date conversion (used in both views)
@@ -174,11 +176,11 @@ class AdminAUCReportView(APIView):
         full_serialized_data = AUCReportSerializer(filtered_data, many=True).data
 
         # 4. Calculate Total Payments and GST
-        total_payments = sum(Decimal(item['amount']) for item in full_serialized_data)
-        total_gst = sum(Decimal(item['gst_total']) for item in full_serialized_data)
-        total_cgst = sum(Decimal(item['cgst']) for item in full_serialized_data)
-        total_sgst = sum(Decimal(item['sgst']) for item in full_serialized_data)
-        
+        total_payments = sum((Decimal(item['amount']) for item in full_serialized_data), Decimal('0.00'))
+        total_gst = sum((Decimal(item['gst_total']) for item in full_serialized_data), Decimal('0.00'))
+        total_cgst = sum((Decimal(item['cgst']) for item in full_serialized_data), Decimal('0.00'))
+        total_sgst = sum((Decimal(item['sgst']) for item in full_serialized_data), Decimal('0.00'))
+                
         totals = {
             'total_payments': total_payments.quantize(Decimal('0.01')),
             'total_gst': total_gst.quantize(Decimal('0.01')),
@@ -193,8 +195,8 @@ class AdminAUCReportView(APIView):
                 return self.export_csv(filtered_data, totals, 'auc_report')
             elif export == "pdf":
                 return self.export_pdf(filtered_data, totals, 'auc_report')
-            # elif export == "xlsx":
-            #     return self.export_xlsx(filtered_data, totals, 'auc_report') 
+            elif export == "xlsx":
+                return self.export_xlsx(filtered_data, totals, 'auc_report') 
 
         # 6. Handle Pagination (for JSON response)
         paginator = self.pagination_class()
@@ -243,33 +245,43 @@ class AdminAUCReportView(APIView):
 
     def export_pdf(self, queryset, totals, filename_prefix):
         buffer = io.BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30)
+        doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=40, leftMargin=40)
         elements = []
         styles = getSampleStyleSheet()
         elements.append(Paragraph(f"{filename_prefix.replace('_', ' ').upper()} REPORT", styles["Title"]))
         elements.append(Spacer(1, 12))
 
         # --- Data Table ---
-        data = [['User ID', 'Name', 'Phone', 'Email', 'Type', 'Amount', 'Status', 'Date', 'GST Total', 'CGST', 'SGST']]
+        # 1. CORRECTED HEADER (10 Columns - Email removed)
+        data = [['User ID', 'Name', 'Phone', 'Type', 'Amount', 'Status', 'Date', 'GST Total', 'CGST', 'SGST']]
         
         serializer = AUCReportSerializer(queryset, many=True)
         for data_item in serializer.data:
+            # 2. CORRECTED DATA ROW (10 Items - Email removed)
             data.append([
-                data_item['user_id'], data_item['user_name'], data_item['phone_number'], data_item['email'], 
-                data_item['transaction_type'], str(data_item['amount']), data_item['status'], 
+                data_item['user_id'], 
+                data_item['user_name'], 
+                data_item['phone_number'],
+                # data_item['email'], <-- REMOVED THIS LINE
+                data_item['transaction_type'], 
+                str(data_item['amount']), 
+                data_item['status'], 
                 str(data_item['date']) if data_item['date'] else '', 
-                str(data_item['gst_total']), str(data_item['cgst']), str(data_item['sgst'])
+                str(data_item['gst_total']), 
+                str(data_item['cgst']),     
+                str(data_item['sgst'])      
             ])
 
-        table_width = A4[0] - 60 
-        col_widths = [table_width * w for w in [0.09, 0.15, 0.11, 0.17, 0.11, 0.08, 0.08, 0.10, 0.11, 0.09, 0.09]]
+        table_width = A4[0] - 80 
+        # 3. RECALCULATED ColWidths for 10 columns (Approximate widths for better fit)
+        col_widths = [table_width * w for w in [0.10, 0.18, 0.12, 0.10, 0.08, 0.08, 0.12, 0.09, 0.06, 0.07]]
         table = Table(data, colWidths=col_widths)
         
         table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#CCCCCC')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
             ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('ALIGN', (5, 1), (10, -1), 'RIGHT'), # Align amounts to the right
+            ('ALIGN', (4, 1), (-1, -1), 'RIGHT'), # Align Amount and all GST columns to the right (Index 4 is 'Amount')
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
         ]))
@@ -300,6 +312,55 @@ class AdminAUCReportView(APIView):
         buffer.seek(0)
         response = HttpResponse(buffer, content_type='application/pdf')
         response['Content-Disposition'] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.pdf"'
+        return response
+
+
+    def export_xlsx(self, queryset, totals, filename_prefix):
+        from openpyxl import Workbook # Local import inside method for clarity
+        
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "AUCReportSimple"
+        
+        # Headers based on your example structure, excluding GST fields
+        ws.append(['User ID', 'User Name', 'Phone', 'Type', 'Amount', 'Status', 'Date', 'Total Payment', 'Total GST', 'Total CGST', 'Total SGST'])
+        
+        serializer = AUCReportSerializer(queryset, many=True)
+        for data in serializer.data:
+            ws.append([
+                data.get('user_id', 'N/A'),
+                data.get('user_name', 'N/A'),
+                data.get('phone_number', 'N/A'),
+                data.get('transaction_type', 'N/A'),
+                data.get('amount', 0.00),
+                data.get('status', 'N/A'),
+                data.get('date', ''),
+                # Include all original fields for completeness, even if not in the simple header, 
+                # or just use the fields you explicitly want in the header:
+                data.get('gst_total', 0.00), 
+                data.get('cgst', 0.00),
+                data.get('sgst', 0.00)
+            ])
+            
+        # Auto-size columns (Standard best practice for Excel exports)
+        for col in ws.columns:
+            max_length = 0
+            column = col[0].column_letter 
+            for cell in col:
+                if cell.value is not None and len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+            adjusted_width = (max_length + 2)
+            ws.column_dimensions[column].width = adjusted_width
+
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+        
+        response = HttpResponse(
+            output,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.xlsx"'
         return response
 # ----------------------------------------------------------------------------
 # --- NEW SPECIFIC REPORT VIEWS (Replacing AllAdminReportsView logic) ---

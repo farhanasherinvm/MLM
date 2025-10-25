@@ -133,6 +133,7 @@ class AUCReportSerializer(serializers.Serializer):
     user_id = serializers.SerializerMethodField()
     user_name = serializers.SerializerMethodField()
     phone_number = serializers.SerializerMethodField()
+    email = serializers.SerializerMethodField()
     # email = serializers.SerializerMethodField()
     
     # Payment Details
@@ -189,9 +190,9 @@ class AUCReportSerializer(serializers.Serializer):
         user = self._get_user(obj)
         return getattr(user, 'mobile', 'N/A')
 
-    # def get_email(self, obj):
-    #     user = self._get_user(obj)
-    #     return getattr(user, 'email', 'N/A')
+    def get_email(self, obj):
+        user = self._get_user(obj)
+        return getattr(user, 'email', 'N/A')
 
     def get_transaction_type(self, obj):
         if obj.__class__.__name__ == 'Payment':
