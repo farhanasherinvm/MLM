@@ -147,7 +147,7 @@ class ProfileSerializer(serializers.ModelSerializer):
     user_id = serializers.CharField(source='user.user_id', read_only=True)
     first_name = serializers.CharField(source='user.first_name')
     last_name = serializers.CharField(source='user.last_name')
-    email = serializers.EmailField(source='user.email', read_only=True)
+    email = serializers.EmailField(source='user.email')
     mobile = serializers.CharField(source='user.mobile')
     date_of_join = serializers.DateTimeField(
         source="user.date_of_joining", format="%Y-%m-%d %H:%M:%S", read_only=True
@@ -183,18 +183,27 @@ class ProfileSerializer(serializers.ModelSerializer):
             "whatsapp_number", "profile_image",
              "placements", "referrals",
         ]
+        read_only_fields = ["user_id", "date_of_join", "placement_id"]
 
     # ---------- Update method ----------
     def update(self, instance, validated_data):
         user_data = validated_data.pop('user', {})
         user = instance.user
+
+        # Prevent user_id or placement_id from being modified
+        user_data.pop("user_id", None)
+        user_data.pop("placement_id", None)
+
+        # Update user fields
         for attr, value in user_data.items():
             setattr(user, attr, value)
         user.save()
 
+        # Update profile fields
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
+
         return instance
 
     # ---------- Common helpers ----------
