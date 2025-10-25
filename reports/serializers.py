@@ -464,10 +464,11 @@ class LevelUsersSerializer(serializers.ModelSerializer):
     sender_email = serializers.SerializerMethodField() 
     sender_phone = serializers.SerializerMethodField()
     date_joined = serializers.SerializerMethodField()
+    proof= serializers.SerializerMethodField()
 
     class Meta:
         model = UserLevel
-        fields = ['from_user', 'username', 'from_name', 'linked_username', 'amount', 'status', 'level', 'requested_date', 'total', 'payment_method', 'placement_id_count', 'sender_email', 'sender_phone','date_joined']
+        fields = ['from_user', 'username', 'from_name', 'linked_username', 'amount', 'status', 'level', 'requested_date', 'total', 'payment_method', 'placement_id_count', 'sender_email', 'sender_phone','date_joined', 'proof']
         extra_kwargs = {
             'requested_date': {'required': False, 'allow_null': True},
         }
@@ -486,6 +487,30 @@ class LevelUsersSerializer(serializers.ModelSerializer):
         """Get the PAYER's (obj.user) user_id (original field was Payer's user_id)."""
         payer = getattr(obj, 'user', None)
         return getattr(payer, 'user_id', 'N/A') if payer else 'N/A'
+
+    def get_proof(self, obj):
+       
+        try:
+            # 1. Access the related manager and filter for records where payment_proof is NOT null.
+            latest_payment = (
+                    obj.payments 
+                    .filter(payment_proof__isnull=False) # <--- This is where the check happens
+                    .order_by('-created_at') 
+                    .first()
+                )
+        except AttributeError:
+            return 'N/A'
+
+        if latest_payment and latest_payment.payment_proof:
+            proof_file = latest_payment.payment_proof
+
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(proof_file.url)
+            
+            return proof_file.url
+            
+        return 'N/A'
 
     def get_from_name(self, obj):
         """Get the RECIPIENT's (current user's) full name (original field was Recipient's name)."""

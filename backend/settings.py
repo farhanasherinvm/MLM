@@ -30,7 +30,7 @@ CORS_ALLOWED_ORIGINS = [
 SECRET_KEY = 'django-insecure-5*(zbso#o2n0ur6wt1-2ku#r^!ev0m9=ob8y67d1u37522s@rr'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
+DEBUG = True
 #DEBUG = config('DEBUG', default=False, cast=bool)
 
 ALLOWED_HOSTS = ["mlm-pmif.onrender.com", "mlm-oiat.onrender.com", '127.0.0.1:8000', '127.0.0.1', 'localhost', "winnersclubxbackendserver.onrender.com",]
