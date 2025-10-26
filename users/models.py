@@ -124,7 +124,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
             else:
                 last_number = 0
         # Increment for new user
-                self.user_id = f"WCC{last_number + 1:06d}"  # e.g., WCC000001, WCC000002
+            self.user_id = f"WCC{last_number + 1:06d}"  # e.g., WCC000001, WCC000002
 
     # Set role
         self.role = "child" if self.parent else "parent"
