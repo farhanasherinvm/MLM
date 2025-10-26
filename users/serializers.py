@@ -77,19 +77,27 @@ class RazorpayVerifySerializer(serializers.Serializer):
 class UploadReceiptSerializer(serializers.ModelSerializer):
     registration_token = serializers.UUIDField(write_only=True)
     receipt = serializers.FileField(required=True)  # ✅ ensure it must be sent
+    parent_user_id = serializers.CharField(required=False, allow_blank=True)
 
     class Meta:
         model = Payment
-        fields = ["registration_token", "receipt"]
+        fields = ["registration_token", "receipt","parent_user_id"]
 
     def create(self, validated_data):
         registration_token = validated_data.pop("registration_token")
+        parent_user_id = validated_data.pop("parent_user_id", None)  #  get parent id if provided
         try:
             payment = Payment.objects.get(registration_token=registration_token, status="Pending")
         except Payment.DoesNotExist:
             raise serializers.ValidationError({"error": "Invalid or expired registration token."})
 
         payment.receipt = validated_data.get("receipt")  # safer
+        # Preserve parent_user_id in registration data if provided
+        reg_data = payment.get_registration_data() or {}
+        if parent_user_id:
+            reg_data["parent_user_id"] = parent_user_id
+            payment.set_registration_data(reg_data)
+            
         payment.save()
         return payment
 

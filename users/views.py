@@ -488,35 +488,80 @@ class AdminVerifyPaymentView(APIView):
 
                     # --- Replacement: Always create a new user on admin verification by default ---
                     reg_data = payment.get_registration_data() or {}
-                    email = reg_data.get("email")
+                    # email = reg_data.get("email")
 
-                    # Allow admin to explicitly link to an existing user by passing ?link_existing=true (optional)
-                    link_existing = str(request.query_params.get("link_existing", "")).lower() == "true" \
-                                    or str(request.data.get("link_existing", "")).lower() == "true"
+                    # # Allow admin to explicitly link to an existing user by passing ?link_existing=true (optional)
+                    # link_existing = str(request.query_params.get("link_existing", "")).lower() == "true" \
+                    #                 or str(request.data.get("link_existing", "")).lower() == "true"
 
-                    if link_existing and email:
-                        # preserve current behavior if admin explicitly wants to link to existing user
-                        user = CustomUser.objects.filter(email=email).first()
-                        if user:
-                            user.is_active = True
-                            user.save(update_fields=["is_active"])
-                            payment.user = user
-                            payment.save(update_fields=["user"])
-                            RegistrationRequest.objects.filter(token=payment.registration_token).update(is_completed=True)
+                    # if link_existing and email:
+                    #     # preserve current behavior if admin explicitly wants to link to existing user
+                    #     user = CustomUser.objects.filter(email=email).first()
+                    #     if user:
+                    #         user.is_active = True
+                    #         user.save(update_fields=["is_active"])
+                    #         payment.user = user
+                    #         payment.save(update_fields=["user"])
+                    #         RegistrationRequest.objects.filter(token=payment.registration_token).update(is_completed=True)
 
-                            safe_send_mail(
-                                subject="Your MLM User ID",
-                                message=f"Hello {user.first_name},\nYour payment is verified. Your User ID is: {user.user_id}",
-                                recipient_list=[user.email],
-                                html_message=f"<p>Hello <strong>{user.first_name}</strong>,</p><p>Your payment is verified. Your User ID is: <strong>{user.user_id}</strong>.</p>",
-                            )
+                    #         safe_send_mail(
+                    #             subject="Your MLM User ID",
+                    #             message=f"Hello {user.first_name},\nYour payment is verified. Your User ID is: {user.user_id}",
+                    #             recipient_list=[user.email],
+                    #             html_message=f"<p>Hello <strong>{user.first_name}</strong>,</p><p>Your payment is verified. Your User ID is: <strong>{user.user_id}</strong>.</p>",
+                    #         )
 
-                            return Response({
-                                "message": "Payment verified, UserId is send to your email.",
-                                "user_id": user.user_id
-                            }, status=status.HTTP_200_OK)
+                    #         return Response({
+                    #             "message": "Payment verified, UserId is send to your email.",
+                    #             "user_id": user.user_id
+                    #         }, status=status.HTTP_200_OK)
 
                     # Otherwise: always create a new user from RegistrationRequest (if present) or from registration_data
+                    # If child registration
+                    if reg_data.get("parent_user_id"):
+                        parent = CustomUser.objects.filter(user_id=reg_data["parent_user_id"]).first()
+                        if not parent:
+                            return Response({"error": "Parent user not found"}, status=400)
+
+                        child_user = CustomUser.objects.create(
+                            parent=parent,
+                            sponsor_id=parent.user_id,
+                            placement_id=reg_data.get("placement_id"),
+                            first_name=reg_data.get("first_name", ""),
+                            last_name=reg_data.get("last_name", ""),
+                            email=reg_data.get("email"),
+                            mobile=reg_data.get("mobile"),
+                            whatsapp_number=reg_data.get("whatsapp_number"),
+                            pincode=reg_data.get("pincode"),
+                            payment_type="Manual",
+                            is_active=True,
+                            pmf_status=False,
+                        )
+                        if reg_data.get("password"):
+                            child_user.set_password(reg_data.get("password"))
+                        else:
+                            child_user.set_unusable_password()
+                        child_user.save()
+
+                        payment.user = child_user
+                        payment.save(update_fields=["user"])
+
+                    # Send confirmation email
+                        safe_send_mail(
+                            subject="Child Account Created Successfully",
+                            message=f"Hello {parent.first_name}, your child '{child_user.first_name}' has been registered successfully.\nChild User ID: {child_user.user_id}",
+                            recipient_list=[parent.email],
+                            html_message=f"<p>Hello <strong>{parent.first_name}</strong>,</p>"
+                                        f"<p>Your child <strong>{child_user.first_name}</strong> has been successfully registered.</p>"
+                                        f"<p>Child User ID: <strong>{child_user.user_id}</strong></p>",
+                        )
+
+                        return Response({
+                            "message": "Child account created successfully after manual payment verification.",
+                            "child_user_id": child_user.user_id,
+                            "parent_user_id": parent.user_id,
+                        }, status=200)
+
                     reg_req = RegistrationRequest.objects.filter(token=payment.registration_token).first()
 
                     if reg_req:
