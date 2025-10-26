@@ -341,6 +341,7 @@ class ChildRegistrationSerializer(serializers.Serializer):
     mobile = serializers.CharField(required=False, allow_blank=True)
     whatsapp_number = serializers.CharField(required=False, allow_blank=True)
     pincode = serializers.CharField(required=False, allow_blank=True)
+    upi_number = serializers.CharField(required=False, allow_blank=True) 
     password = serializers.CharField(write_only=True)  # mandatory for child
     placement_id = serializers.CharField()  # required field
 
@@ -360,6 +361,7 @@ class ChildRegistrationSerializer(serializers.Serializer):
         parent = self.context['request'].user
         password = validated_data.pop('password')
         placement_user_id = validated_data.pop('placement_id')
+        
 
          
           #  Check eligibility before allowing child creation
@@ -388,6 +390,7 @@ class ChildRegistrationSerializer(serializers.Serializer):
                 "mobile": validated_data.get('mobile', ''),
                 "whatsapp_number": validated_data.get('whatsapp_number', ''),
                 "pincode": validated_data.get('pincode', ''),
+                "upi_number": validated_data.get('upi_number', ''),
                 "placement_id": placement_user_id,
                 "password": password,
                 "parent_user_id": parent.user_id,  # to link back later
@@ -403,7 +406,9 @@ class ChildRegistrationSerializer(serializers.Serializer):
             "registration_token": str(payment.registration_token),
             "amount": str(payment.amount),
             "payment_status": payment.status,
+            
         }
+        
 
 
 class ChildPaymentInitSerializer(serializers.Serializer):

@@ -1451,6 +1451,7 @@ class ChildListView(generics.GenericAPIView):
             mobile = query_params.get("mobile")
             date_joined = query_params.get("date_joined")  # format: YYYY-MM-DD
 
+
             if parent_user_id:
                 children = children.filter(parent__user_id=parent_user_id)
             if child_user_id:
@@ -1488,6 +1489,7 @@ class ChildListView(generics.GenericAPIView):
                     "last_name": c.last_name,
                     "email": c.email,
                     "mobile": c.mobile,
+                    "upi_number": c.upi_number,
                     "whatsapp_number": c.whatsapp_number,
                     "role": c.role,
                     "parent_user_id": c.parent.user_id if c.parent else None,
@@ -1501,6 +1503,8 @@ class ChildListView(generics.GenericAPIView):
                     "last_name": c.last_name,
                     "email": c.email,
                     "mobile": c.mobile,
+                    "upi_number": c.upi_number,
+                    
                 })
         return data
 
