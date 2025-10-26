@@ -35,6 +35,8 @@ from users.models import Payment
 from level.models import PmfPayment
 from operator import attrgetter
 from decimal import Decimal
+from datetime import timedelta
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +46,6 @@ def safe_parse_date(date_str):
         return timezone.datetime.strptime(date_str, '%Y-%m-%d').date()
     except (ValueError, TypeError):
         return None
-
 
 
 class AdminAUCReportView(APIView):
@@ -155,32 +156,70 @@ class AdminAUCReportView(APIView):
     def get(self, request):
         combined_data = self.get_all_payment_data()
         
-        # 1. Apply Filters
+        # 1. Apply Date Range Logic and Prepare Query Params
+        date_range = request.query_params.get("date_range", '').lower()
+        today = timezone.localdate()
+
+        start_date_str = request.query_params.get("start_date")
+        end_date_str = request.query_params.get("end_date")
+
+        if date_range == 'today':
+            start_date_str = today.isoformat()
+            end_date_str = today.isoformat()
+        elif date_range == 'this_week':
+            start_of_week = today - timedelta(days=today.weekday())
+            start_date_str = start_of_week.isoformat()
+            end_date_str = today.isoformat()
+        elif date_range == 'this_month':
+            start_of_month = today.replace(day=1)
+            start_date_str = start_of_month.isoformat()
+            end_date_str = today.isoformat()
+        elif date_range == 'this_year':
+            start_of_year = today.replace(month=1, day=1)
+            start_date_str = start_of_year.isoformat()
+            end_date_str = today.isoformat()
+
+        # Update request query params so apply_filters can use the calculated dates
+        if start_date_str is not None or end_date_str is not None:
+            request.query_params._mutable = True
+            request.query_params['start_date'] = start_date_str if start_date_str else ''
+            request.query_params['end_date'] = end_date_str if end_date_str else ''
+            request.query_params._mutable = False
+
+        # Collect all filter parameters for export header
+        filter_params = {
+            'User ID': request.query_params.get("user_id", ''),
+            'Search Term': request.query_params.get('search', ''),
+            'Email': request.query_params.get("email", ''),
+            'Start Date': start_date_str, 
+            'End Date': end_date_str,
+            'Date Range Key': date_range if date_range not in ('', None) else 'Manual'
+        }
+        # --------------------------------------------------------------------------------
+
+        # 2. Apply Filters
         filtered_data = self.apply_filters(request, combined_data)
         
         limit = request.query_params.get("limit")
         export = request.query_params.get("export")
         
-        # 2. Handle Limit
+        # 3. Handle Limit
         if limit:
             try:
                 limit_int = int(limit)
                 queryset_for_export = filtered_data[:limit_int]
-                # If we're exporting, we use this limited set.
             except ValueError:
                 pass 
 
-                
-
-        # 3. Serialize all filtered data to calculate totals, regardless of pagination/limit
+        # 4. Serialize all filtered data to calculate totals, regardless of pagination/limit
         full_serialized_data = AUCReportSerializer(filtered_data, many=True).data
 
-        # 4. Calculate Total Payments and GST
+        # 5. Calculate Total Payments and GST
         total_payments = sum((Decimal(item['amount']) for item in full_serialized_data), Decimal('0.00'))
         total_gst = sum((Decimal(item['gst_total']) for item in full_serialized_data), Decimal('0.00'))
         total_cgst = sum((Decimal(item['cgst']) for item in full_serialized_data), Decimal('0.00'))
         total_sgst = sum((Decimal(item['sgst']) for item in full_serialized_data), Decimal('0.00'))
-                
+            
         totals = {
             'total_payments': total_payments.quantize(Decimal('0.01')),
             'total_gst': total_gst.quantize(Decimal('0.01')),
@@ -188,17 +227,17 @@ class AdminAUCReportView(APIView):
             'total_sgst': total_sgst.quantize(Decimal('0.01')),
         }
 
-        # 5. Handle Export
+        # 6. Handle Export
         if export in ["csv", "pdf", "xlsx"]:
-            # Use the filtered_data for export
+            # Use the filtered_data for export and pass filter_params
             if export == "csv":
-                return self.export_csv(filtered_data, totals, 'auc_report')
+                return self.export_csv(filtered_data, totals, 'auc_report', filter_params)
             elif export == "pdf":
-                return self.export_pdf(filtered_data, totals, 'auc_report')
+                return self.export_pdf(filtered_data, totals, 'auc_report', filter_params)
             elif export == "xlsx":
-                return self.export_xlsx(filtered_data, totals, 'auc_report') 
+                return self.export_xlsx(filtered_data, totals, 'auc_report', filter_params)
 
-        # 6. Handle Pagination (for JSON response)
+        # 7. Handle Pagination (for JSON response)
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(filtered_data, request)
         
@@ -215,12 +254,22 @@ class AdminAUCReportView(APIView):
             'report_totals': totals
         })
 
-    # --- Export Methods (Updated to include totals) ---
+    # --------------------------------------------------------------------------------
+    # --- Export Methods (Updated to include totals and filters) ---
+    # --------------------------------------------------------------------------------
 
-    def export_csv(self, queryset, totals, filename_prefix):
+    def export_csv(self, queryset, totals, filename_prefix, filter_params):
         response = HttpResponse(content_type="text/csv")
         response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.csv"'
         writer = csv.writer(response)
+        
+        # --- ADD FILTER INFO ---
+        writer.writerow(['Report Filters:'])
+        for key, value in filter_params.items():
+            if value:
+                writer.writerow([f"{key}:", value])
+        writer.writerow([])
+        # -----------------------
         
         writer.writerow(['User ID', 'Name', 'Phone', 'Email', 'Type', 'Amount', 'Status', 'Date', 'GST Total', 'CGST', 'SGST'])
         
@@ -243,7 +292,7 @@ class AdminAUCReportView(APIView):
         
         return response
 
-    def export_pdf(self, queryset, totals, filename_prefix):
+    def export_pdf(self, queryset, totals, filename_prefix, filter_params):
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=40, leftMargin=40)
         elements = []
@@ -251,6 +300,17 @@ class AdminAUCReportView(APIView):
         elements.append(Paragraph(f"{filename_prefix.replace('_', ' ').upper()} REPORT", styles["Title"]))
         elements.append(Spacer(1, 12))
 
+        # --- ADD FILTER INFO ---
+        filter_text = []
+        for key, value in filter_params.items():
+            if value:
+                filter_text.append(f"<b>{key}:</b> {value}")
+
+        if filter_text:
+            elements.append(Paragraph(" | ".join(filter_text), styles["BodyText"]))
+            elements.append(Spacer(1, 12))
+        # -----------------------
+        
         # --- Data Table ---
         # 1. CORRECTED HEADER (10 Columns - Email removed)
         data = [['User ID', 'Name', 'Phone', 'Type', 'Amount', 'Status', 'Date', 'GST Total', 'CGST', 'SGST']]
@@ -315,13 +375,25 @@ class AdminAUCReportView(APIView):
         return response
 
 
-    def export_xlsx(self, queryset, totals, filename_prefix):
-        from openpyxl import Workbook # Local import inside method for clarity
+    def export_xlsx(self, queryset, totals, filename_prefix, filter_params):
+        from openpyxl import Workbook 
         
         wb = Workbook()
         ws = wb.active
         ws.title = "AUCReportSimple"
         
+        # --- ADD FILTER INFO ---
+        ws.append(['Report Filters:'])
+        row = 2
+        for key, value in filter_params.items():
+            if value:
+                ws.cell(row=row, column=1, value=f"{key}:")
+                ws.cell(row=row, column=2, value=value)
+                row += 1
+        
+        ws.append([]) # Add a blank row for separation
+        # -----------------------
+
         # Headers based on your example structure, excluding GST fields
         ws.append(['User ID', 'User Name', 'Phone', 'Type', 'Amount', 'Status', 'Date', 'Total Payment', 'Total GST', 'Total CGST', 'Total SGST'])
         
