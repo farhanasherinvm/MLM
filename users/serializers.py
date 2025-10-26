@@ -77,19 +77,27 @@ class RazorpayVerifySerializer(serializers.Serializer):
 class UploadReceiptSerializer(serializers.ModelSerializer):
     registration_token = serializers.UUIDField(write_only=True)
     receipt = serializers.FileField(required=True)  # ✅ ensure it must be sent
+    parent_user_id = serializers.CharField(required=False, allow_blank=True)
 
     class Meta:
         model = Payment
-        fields = ["registration_token", "receipt"]
+        fields = ["registration_token", "receipt","parent_user_id"]
 
     def create(self, validated_data):
         registration_token = validated_data.pop("registration_token")
+        parent_user_id = validated_data.pop("parent_user_id", None)  #  get parent id if provided
         try:
             payment = Payment.objects.get(registration_token=registration_token, status="Pending")
         except Payment.DoesNotExist:
             raise serializers.ValidationError({"error": "Invalid or expired registration token."})
 
         payment.receipt = validated_data.get("receipt")  # safer
+        # Preserve parent_user_id in registration data if provided
+        reg_data = payment.get_registration_data() or {}
+        if parent_user_id:
+            reg_data["parent_user_id"] = parent_user_id
+            payment.set_registration_data(reg_data)
+            
         payment.save()
         return payment
 
@@ -333,6 +341,7 @@ class ChildRegistrationSerializer(serializers.Serializer):
     mobile = serializers.CharField(required=False, allow_blank=True)
     whatsapp_number = serializers.CharField(required=False, allow_blank=True)
     pincode = serializers.CharField(required=False, allow_blank=True)
+    upi_number = serializers.CharField(required=False, allow_blank=True) 
     password = serializers.CharField(write_only=True)  # mandatory for child
     placement_id = serializers.CharField()  # required field
 
@@ -352,6 +361,7 @@ class ChildRegistrationSerializer(serializers.Serializer):
         parent = self.context['request'].user
         password = validated_data.pop('password')
         placement_user_id = validated_data.pop('placement_id')
+        
 
          
           #  Check eligibility before allowing child creation
@@ -380,6 +390,7 @@ class ChildRegistrationSerializer(serializers.Serializer):
                 "mobile": validated_data.get('mobile', ''),
                 "whatsapp_number": validated_data.get('whatsapp_number', ''),
                 "pincode": validated_data.get('pincode', ''),
+                "upi_number": validated_data.get('upi_number', ''),
                 "placement_id": placement_user_id,
                 "password": password,
                 "parent_user_id": parent.user_id,  # to link back later
@@ -395,7 +406,9 @@ class ChildRegistrationSerializer(serializers.Serializer):
             "registration_token": str(payment.registration_token),
             "amount": str(payment.amount),
             "payment_status": payment.status,
+            
         }
+        
 
 
 class ChildPaymentInitSerializer(serializers.Serializer):
