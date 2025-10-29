@@ -246,7 +246,7 @@ class ProfileSerializer(serializers.ModelSerializer):
         else:
             max_level = 6
 
-        return self._build_levels(obj.user.user_id, level=1, max_level=max_level)
+        return self._build_levels(obj.user.user_id, level=1, max_level=max_level, visited=set())
 
     def _build_levels(self, user_id, level=1, max_level=6, visited=None):
          # Prevent infinite recursion
