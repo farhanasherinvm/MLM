@@ -242,7 +242,7 @@ class ProfileSerializer(serializers.ModelSerializer):
 
         # Admins see all levels, normal users see only 6
         if user and user.is_staff:
-            max_level = 100  # practically unlimited for admin
+            max_level = 50  # practically unlimited for admin
         else:
             max_level = 6
 
@@ -279,7 +279,7 @@ class ProfileSerializer(serializers.ModelSerializer):
                 "referred_by_id": child.sponsor_id,
                 "referred_by_name": self._get_sponsor_name(child),
                 "profile_image":( profile.profile_image.url if profile and profile.profile_image else None),
-                "next_level": self._build_levels(child.user_id, level + 1, max_level),
+                "next_level": self._build_levels(child.user_id, level + 1, max_level, visited),
             }
         return {f"Level {level}": slots}
 
