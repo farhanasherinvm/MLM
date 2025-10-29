@@ -284,6 +284,7 @@ class ProfileSerializer(serializers.ModelSerializer):
                 "next_level": self._build_levels(child.user_id, level + 1, max_level, visited, user_map),
             }
         return {f"Level {level}": slots}
+        
 
     # ---------- Referrals ----------
     def get_referrals(self, obj):
