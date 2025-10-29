@@ -237,11 +237,24 @@ class ProfileSerializer(serializers.ModelSerializer):
 
     # ---------- Placements Tree (recursive) ----------
     def get_placements(self, obj):
-        return self._build_levels(obj.user.user_id)
+        request = self.context.get("request")
+        user = request.user if request else None
 
-    def _build_levels(self, user_id, level=1, max_level=6):
-        if level > max_level:
+        # Admins see all levels, normal users see only 6
+        if user and user.is_staff:
+            max_level = 100  # practically unlimited for admin
+        else:
+            max_level = 6
+
+        return self._build_levels(obj.user.user_id, level=1, max_level=max_level)
+
+    def _build_levels(self, user_id, level=1, max_level=6, visited=None):
+         # Prevent infinite recursion
+        if visited is None:
+            visited = set()
+        if user_id in visited or level > max_level:
             return {}
+        visited.add(user_id)
         slots = [
             {"position": "Left", "status": "Not Available"},
             {"position": "Right", "status": "Not Available"},
@@ -265,7 +278,7 @@ class ProfileSerializer(serializers.ModelSerializer):
                 "percentage": f"{(child_count / 2) * 100:.0f}%",
                 "referred_by_id": child.sponsor_id,
                 "referred_by_name": self._get_sponsor_name(child),
-                "profile_image": profile.profile_image.url if profile and profile.profile_image else None,
+                "profile_image":( profile.profile_image.url if profile and profile.profile_image else None),
                 "next_level": self._build_levels(child.user_id, level + 1, max_level),
             }
         return {f"Level {level}": slots}
