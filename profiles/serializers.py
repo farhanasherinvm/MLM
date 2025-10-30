@@ -141,7 +141,7 @@ class ReferralListSerializer(serializers.ModelSerializer):
         if profile and profile.profile_image:
             return profile.profile_image.url
         return None
-
+from collections import defaultdict
 class ProfileSerializer(serializers.ModelSerializer):
     # User fields
     user_id = serializers.CharField(source='user.user_id', read_only=True)
@@ -237,9 +237,33 @@ class ProfileSerializer(serializers.ModelSerializer):
 
     # ---------- Placements Tree (recursive) ----------
     def get_placements(self, obj):
-        return self._build_levels(obj.user.user_id)
+        request = self.context.get("request")
+        current_user = request.user
 
-    def _build_levels(self, user_id, level=1, max_level=6):
+        
+        # Prefetch all placement relations into memory
+        users = CustomUser.objects.values(
+            "user_id", "first_name", "last_name", "email",
+            "mobile", "is_active", "placement_id",
+            "date_of_joining", "sponsor_id", "id"
+        )
+        child_map = defaultdict(list)
+        user_map = {}
+
+        for u in users:
+            user_map[u["user_id"]] = u
+            if u["placement_id"]:
+                child_map[u["placement_id"]].append(u)
+
+        visited = set()
+        return self._build_levels(current_user.user_id, child_map, user_map, visited)
+
+
+    def _build_levels(self, user_id, child_map, user_map, visited, level=1, max_level=6):
+         # Stop recursion loop
+        if user_id in visited:
+            return {"error": "cycle_detected"}
+        visited.add(user_id)
         if level > max_level:
             return {}
         slots = [
@@ -265,8 +289,8 @@ class ProfileSerializer(serializers.ModelSerializer):
                 "percentage": f"{(child_count / 2) * 100:.0f}%",
                 "referred_by_id": child.sponsor_id,
                 "referred_by_name": self._get_sponsor_name(child),
-                "profile_image": profile.profile_image.url if profile and profile.profile_image else None,
-                "next_level": self._build_levels(child.user_id, level + 1, max_level),
+                "profile_image": None,
+                "next_level": self._build_levels(child.user_id,child_map,user_map,visited,level + 1, max_level),
             }
         return {f"Level {level}": slots}
 
