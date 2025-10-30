@@ -237,33 +237,20 @@ class ProfileSerializer(serializers.ModelSerializer):
 
     # ---------- Placements Tree (recursive) ----------
     def get_placements(self, obj):
-        request = self.context.get("request")
-        user = request.user if request else None
-        max_level = 10 if user and user.is_staff else 6  # Admin can see deeper
+        return self._build_levels(obj.user.user_id)
 
-        # Prefetch all users and build a placement map
-        all_users = CustomUser.objects.all().select_related("profile")
-        user_map = {}
-        for u in all_users:
-            user_map.setdefault(u.placement_id, []).append(u)
-
-        # Start recursive build
-        return self._build_levels(obj.user.user_id, level=1, max_level=max_level, visited=set(), user_map=user_map)
-
-    def _build_levels(self, user_id, level=1, max_level=6, visited=None, user_map=None):
-        if user_id in visited or level > max_level:
+    def _build_levels(self, user_id, level=1, max_level=6):
+        if level > max_level:
             return {}
-        visited.add(user_id)
-
-        children = user_map.get(user_id, [])[:2]
         slots = [
             {"position": "Left", "status": "Not Available"},
             {"position": "Right", "status": "Not Available"},
         ]
 
+        children = list(CustomUser.objects.filter(placement_id=user_id).order_by("id")[:2])
         for i, child in enumerate(children):
             profile = getattr(child, "profile", None)
-            child_count = len(user_map.get(child.user_id, []))
+            child_count = CustomUser.objects.filter(placement_id=child.user_id).count()
             slots[i] = {
                 "position": "Left" if i == 0 else "Right",
                 "user_id": child.user_id,
@@ -271,20 +258,17 @@ class ProfileSerializer(serializers.ModelSerializer):
                 "email": child.email,
                 "mobile": child.mobile,
                 "status": "Active" if child.is_active else "Inactive",
+                "placement_id": child.placement_id,
                 "placement_status": "Placed",
                 "date_of_join": child.date_of_joining.strftime("%Y-%m-%d %H:%M:%S"),
                 "count_out_of_2": f"{child_count}/2",
                 "percentage": f"{(child_count / 2) * 100:.0f}%",
                 "referred_by_id": child.sponsor_id,
                 "referred_by_name": self._get_sponsor_name(child),
-                "profile_image":( profile.profile_image.url if profile and profile.profile_image else None),
-                "placements": self._build_levels(
-                child.user_id, level + 1, max_level, visited, user_map
-                ),
-                "next_level": self._build_levels(child.user_id, level + 1, max_level, visited, user_map),
+                "profile_image": profile.profile_image.url if profile and profile.profile_image else None,
+                "next_level": self._build_levels(child.user_id, level + 1, max_level),
             }
         return {f"Level {level}": slots}
-        
 
     # ---------- Referrals ----------
     def get_referrals(self, obj):

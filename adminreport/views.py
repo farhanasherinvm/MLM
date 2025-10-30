@@ -770,7 +770,13 @@ class AdminAnalyticsView(APIView):
         user_id_search = request.query_params.get('user_id')
         if user_id_search:
             queryset = queryset.filter(user_id__icontains=user_id_search)
-
+        search_query = request.query_params.get('search')
+        if search_query:
+            queryset = queryset.filter(
+                Q(user_id__icontains=search_query) |
+                Q(first_name__icontains=search_query) |
+                Q(last_name__icontains=search_query)
+            )
         levels_completed_filter = request.query_params.get('levels_completed')
         if levels_completed_filter:
             try:
