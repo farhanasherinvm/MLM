@@ -217,14 +217,22 @@ class ProfileSerializer(serializers.ModelSerializer):
     def get_referred_by_name(self, obj):
         return self._get_sponsor_name(obj.user)
 
-    def _get_sponsor_name(self, user):
-        if user.sponsor_id:
-            try:
-                sponsor = CustomUser.objects.get(user_id__iexact=user.sponsor_id)
-                return f"{(sponsor.first_name or '').strip()} {(sponsor.last_name or '').strip()}".strip()
-            except CustomUser.DoesNotExist:
-                return None
-        return None
+    # def _get_sponsor_name(self, user):
+    #     if user.sponsor_id:
+    #         try:
+    #             sponsor = CustomUser.objects.get(user_id__iexact=user.sponsor_id)
+    #             return f"{(sponsor.first_name or '').strip()} {(sponsor.last_name or '').strip()}".strip()
+    #         except CustomUser.DoesNotExist:
+    #             return None
+    #     return None
+    def _get_sponsor_name(self, sponsor_id):
+        if not sponsor_id:
+            return None
+        try:
+            sponsor = CustomUser.objects.only("first_name", "last_name").get(user_id=sponsor_id)
+            return f"{(sponsor.first_name or '').strip()} {(sponsor.last_name or '').strip()}".strip()
+        except CustomUser.DoesNotExist:
+            return None
 
     def get_count_out_of_2(self, obj):
         placed_count = CustomUser.objects.filter(placement_id=obj.user.user_id).count()
@@ -298,7 +306,7 @@ class ProfileSerializer(serializers.ModelSerializer):
                 "count_out_of_2": f"{child_count}/2",
                 "percentage": f"{(child_count / 2) * 100:.0f}%",
                 "referred_by_id": child.sponsor_id,
-                "referred_by_name": self._get_sponsor_name(child),
+                "referred_by_name": self._get_sponsor_name(child.sponsor_id),
                 "profile_image": None,
                 #"profile_image": child.profile__profile_image.url if child.profile__profile_image else None,
                 #"next_level": self._build_levels(child.user_id,child_map,user_map,visited,level + 1, max_level),
