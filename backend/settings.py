@@ -40,7 +40,7 @@ ALLOWED_HOSTS = ["mlm-pmif.onrender.com", "mlm-oiat.onrender.com", '127.0.0.1:80
 # Application definition
 
 INSTALLED_APPS = [
-    'django.contrib.admin',
+    'django.contrib.admin', 
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
