@@ -37,7 +37,7 @@ from operator import attrgetter
 from decimal import Decimal
 from datetime import timedelta
 from django.utils import timezone
-
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 logger = logging.getLogger(__name__)
 
 # Helper function for safe date conversion (used in both views)
@@ -292,12 +292,35 @@ class AdminAUCReportView(APIView):
         
         return response
 
+    
     def export_pdf(self, queryset, totals, filename_prefix, filter_params):
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=40, leftMargin=40)
         elements = []
         styles = getSampleStyleSheet()
-        elements.append(Paragraph(f"{filename_prefix.replace('_', ' ').upper()} REPORT", styles["Title"]))
+        centered_heading2 = ParagraphStyle(
+            'CenteredHeading2', 
+            parent=styles['Heading2'], 
+            alignment=1, # Center alignment
+        )
+        company_style = ParagraphStyle(
+            'CompanyStyle', 
+            parent=styles['Normal'], 
+            alignment=1, # Center alignment
+            fontSize=10,
+            spaceAfter=4 # Small space after the line
+        )
+        # Define company data (Replace with your actual company details)
+        COMPANY_NAME = "JBMVP VENTURES LLP" 
+        COMPANY_ADDRESS = "FIRST FLOOR, No:18/9  NEAR MARACCANA FOOTBALL <br/>COURTOLAVANNA POST KOZHIKODE - 673019"
+        GST_NUMBER = "GST 32AAWFJ1132C1ZR"
+        # 4. Add Company Details
+        elements.append(Paragraph(COMPANY_NAME, centered_heading2))
+        #elements.append(Paragraph(COMPANY_NAME, styles["Heading2"])) # Use a slightly bigger Heading2 style
+        elements.append(Paragraph(COMPANY_ADDRESS, company_style))
+        elements.append(Paragraph(f"GST Number: <b>{GST_NUMBER}</b>", company_style))
+        #elements.append(Paragraph(f"{filename_prefix.replace('_', ' ').upper()}", styles["Title"]))
+        elements.append(Paragraph("REPORT", styles["Title"]))
         elements.append(Spacer(1, 12))
 
         # --- ADD FILTER INFO ---
@@ -310,7 +333,13 @@ class AdminAUCReportView(APIView):
             elements.append(Paragraph(" | ".join(filter_text), styles["BodyText"]))
             elements.append(Spacer(1, 12))
         # -----------------------
-        
+        centered_style = ParagraphStyle('CenteredType', parent=styles['Normal'], alignment=1) # 1 for center
+        # Style for the 'Name' column (left-aligned, but using Paragraph)
+        left_style = ParagraphStyle('LeftAlign', parent=styles['Normal'], alignment=0) # 0 for left
+        # Style for the 'Date' column (centered, but using Paragraph)
+        #date_style = ParagraphStyle('DateCentered', parent=styles['Normal'], alignment=1) # 1 for center
+        # 💥 CRITICAL FIX: Add FONTSIZE=7 to the date style
+        date_style = ParagraphStyle('DateCentered', parent=styles['Normal'], alignment=1, fontSize=7)
         # --- Data Table ---
         # 1. CORRECTED HEADER (10 Columns - Email removed)
         data = [['User ID', 'Name', 'Phone', 'Type', 'Amount', 'Status', 'Date', 'GST Total', 'CGST', 'SGST']]
@@ -318,23 +347,37 @@ class AdminAUCReportView(APIView):
         serializer = AUCReportSerializer(queryset, many=True)
         for data_item in serializer.data:
             # 2. CORRECTED DATA ROW (10 Items - Email removed)
+            user_name_text = data_item['user_name'].replace(' ', '<br/>', 1)
+            transaction_type_text = data_item['transaction_type'].replace(' ', '<br/>')
+            # date_time_text = str(data_item['date']).replace(' ', '<br/>', 1) if data_item['date'] else ''
+            date_time_text = str(data_item['date']).replace(' ', '<br/>', 1) if data_item['date'] else ''
             data.append([
+                # data_item['user_id'],
                 data_item['user_id'], 
-                data_item['user_name'], 
+                # 💥 Use Paragraph for Name 
+                Paragraph(user_name_text, left_style), 
+                # data_item['user_name'], 
                 data_item['phone_number'],
                 # data_item['email'], <-- REMOVED THIS LINE
-                data_item['transaction_type'], 
+                Paragraph(transaction_type_text, centered_style), 
                 str(data_item['amount']), 
-                data_item['status'], 
-                str(data_item['date']) if data_item['date'] else '', 
+                data_item['status'],
+                # data_item['transaction_type'], 
+                # str(data_item['amount']), 
+                # data_item['status'], 
+                #str(data_item['date']) if data_item['date'] else '', 
+                # 💥 Use Paragraph for Date
+                Paragraph(date_time_text, date_style),
                 str(data_item['gst_total']), 
                 str(data_item['cgst']),     
                 str(data_item['sgst'])      
             ])
-
+        
         table_width = A4[0] - 80 
         # 3. RECALCULATED ColWidths for 10 columns (Approximate widths for better fit)
-        col_widths = [table_width * w for w in [0.10, 0.18, 0.12, 0.10, 0.08, 0.08, 0.12, 0.09, 0.06, 0.07]]
+        #col_widths = [table_width * w for w in [0.10, 0.18, 0.12, 0.10, 0.08, 0.08, 0.12, 0.09, 0.06, 0.07]]
+        col_widths = [table_width * w for w in [0.13, 0.14, 0.13, 0.13, 0.09, 0.08, 0.11, 0.11, 0.07, 0.07]]
+        
         table = Table(data, colWidths=col_widths)
         
         table.setStyle(TableStyle([

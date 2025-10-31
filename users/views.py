@@ -796,12 +796,28 @@ class UserAccountDetailsView(APIView):
     parser_classes = [MultiPartParser, FormParser, JSONParser]  # for file upload
 
     def get(self, request):
+        user = request.user
         """Get current user account details"""
         try:
             details = UserAccountDetails.objects.get(user=request.user)
             return Response(UserAccountDetailsSerializer(details).data)
         except UserAccountDetails.DoesNotExist:
-            return Response({"message": "Account details not found"}, status=404)
+            default_data = {
+                # Inherit UPI data from CustomUser
+                "upi_number": getattr(user, 'upi_number', None),
+                "upi_type": getattr(user, 'payment_type', None),
+                
+                # Set all other fields to None/default to indicate they are missing
+                "account_number": None,
+                "ifsc": None,
+                "account_holder_name": None,
+                "branch": None,
+                "qr_code": None,
+            }
+            cleaned_data = {k: v for k, v in default_data.items() if v is not None}
+            
+            return Response(cleaned_data, status=200)
+            #return Response({"message": "Account details not found"}, status=404)
     
     def post(self, request):
         """Create or update account details"""

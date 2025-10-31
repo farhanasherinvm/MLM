@@ -142,6 +142,7 @@ class ReferralListSerializer(serializers.ModelSerializer):
             return profile.profile_image.url
         return None
 from collections import defaultdict
+from types import SimpleNamespace
 class ProfileSerializer(serializers.ModelSerializer):
     # User fields
     user_id = serializers.CharField(source='user.user_id', read_only=True)
@@ -251,9 +252,15 @@ class ProfileSerializer(serializers.ModelSerializer):
         user_map = {}
 
         for u in users:
-            user_map[u["user_id"]] = u
+            user_obj = SimpleNamespace(**u) 
+            user_map[u["user_id"]] = user_obj 
             if u["placement_id"]:
-                child_map[u["placement_id"]].append(u)
+                child_map[u["placement_id"]].append(user_obj)
+        for children_list in child_map.values():
+            children_list.sort(key=lambda x: x.id)
+            # user_map[u["user_id"]] = u
+            # if u["placement_id"]:
+            #     child_map[u["placement_id"]].append(u)
 
         visited = set()
         return self._build_levels(current_user.user_id, child_map, user_map, visited)
@@ -271,10 +278,13 @@ class ProfileSerializer(serializers.ModelSerializer):
             {"position": "Right", "status": "Not Available"},
         ]
 
-        children = list(CustomUser.objects.filter(placement_id=user_id).order_by("id")[:2])
+        # children = list(CustomUser.objects.filter(placement_id=user_id).order_by("id")[:2])
+        children = child_map.get(user_id, [])[:2]
         for i, child in enumerate(children):
-            profile = getattr(child, "profile", None)
-            child_count = CustomUser.objects.filter(placement_id=child.user_id).count()
+            # profile = getattr(child, "profile", None)
+            #child_count = CustomUser.objects.filter(placement_id=child.user_id).count()
+            child_count = len(child_map.get(child.user_id, [])) # ✅ Use in-memory map
+            #profile_image_path = getattr(child, 'profile__profile_image', None)
             slots[i] = {
                 "position": "Left" if i == 0 else "Right",
                 "user_id": child.user_id,
@@ -290,8 +300,16 @@ class ProfileSerializer(serializers.ModelSerializer):
                 "referred_by_id": child.sponsor_id,
                 "referred_by_name": self._get_sponsor_name(child),
                 "profile_image": None,
-                "next_level": self._build_levels(child.user_id,child_map,user_map,visited,level + 1, max_level),
+                #"profile_image": child.profile__profile_image.url if child.profile__profile_image else None,
+                #"next_level": self._build_levels(child.user_id,child_map,user_map,visited,level + 1, max_level),
+                "next_level": self._build_levels(child.user_id, child_map, user_map, visited, level + 1, max_level),
             }
+        for i in range(len(children), 2):
+            slots[i] = {
+                "position": "Left" if i == 0 else "Right", 
+                "status": "Available",
+                "placement_id": user_id,
+            }    
         return {f"Level {level}": slots}
 
     # ---------- Referrals ----------
