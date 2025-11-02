@@ -824,11 +824,13 @@ class UserAccountDetailsView(APIView):
         user = request.user
         data = request.data.copy()
 
-        if not data.get("upi_number"):
-            data["upi_number"] = user.upi_number
-        if not data.get("upi_type"):
-            data["upi_type"] = user.payment_type
-
+        # if not data.get("upi_number"):
+        #     data["upi_number"] = user.upi_number
+        # if not data.get("upi_type"):
+        #     data["upi_type"] = user.payment_type
+        # UPI values to be updated on CustomUser later
+        new_upi_number = data.pop("upi_number", user.upi_number)
+        new_upi_type = data.pop("upi_type", user.payment_type) # Keep the original or use default
         try:
             details = UserAccountDetails.objects.get(user=user)
             serializer = UserAccountDetailsSerializer(details, data=data, partial=True)
@@ -837,6 +839,10 @@ class UserAccountDetailsView(APIView):
 
         if serializer.is_valid():
             account_details = serializer.save(user=user)
+            # 2. 🌟 REQUIREMENT: Update CustomUser UPI ID 🌟
+            user.upi_number = new_upi_number
+            user.payment_type = new_upi_type
+            user.save(update_fields=['upi_number', 'payment_type'])
             return Response(UserAccountDetailsSerializer(account_details).data, status=200)
 
         return Response(serializer.errors, status=400)
@@ -851,14 +857,20 @@ class UserAccountDetailsView(APIView):
         except UserAccountDetails.DoesNotExist:
             return Response({"error": "Account details not found"}, status=404)
         
-        if not data.get("upi_number"):
-            data["upi_number"] = details.upi_number or user.upi_number
-        if not data.get("upi_type"):
-            data["upi_type"] = details.upi_type or user.payment_type
-
+        # if not data.get("upi_number"):
+        #     data["upi_number"] = details.upi_number or user.upi_number
+        # if not data.get("upi_type"):
+        #     data["upi_type"] = details.upi_type or user.payment_type
+        # UPI values to be updated on CustomUser later
+        new_upi_number = data.pop("upi_number", details.user.upi_number)
+        new_upi_type = data.pop("upi_type", details.user.payment_type)
         serializer = UserAccountDetailsSerializer(details, data=data, partial=True)
         if serializer.is_valid():
             account_details = serializer.save(user=user)
+            # 2. 🌟 REQUIREMENT: Update CustomUser UPI ID 🌟
+            user.upi_number = new_upi_number
+            user.payment_type = new_upi_type
+            user.save(update_fields=['upi_number', 'payment_type'])
             return Response(UserAccountDetailsSerializer(account_details).data, status=200)
 
         return Response(serializer.errors, status=400)

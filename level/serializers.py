@@ -217,12 +217,31 @@ class AdminPaymentReportSerializer(serializers.ModelSerializer):
     payment_proof_url = serializers.SerializerMethodField()
     created_at = serializers.SerializerMethodField()
     payment_id = serializers.SerializerMethodField()
-
+    # ⭐ NEW FIELDS FOR LINKED USER ⭐
+    linked_user_id = serializers.SerializerMethodField()
+    linked_user_name = serializers.SerializerMethodField()
     class Meta:
         model = UserLevel
         fields = [ 'id','username', 'level_name', 'user_id', 'amount', 'payment_method', 'transaction_id', 
-                  'status', 'approved_at', 'payment_proof_url', 'created_at', 'requested_date','payment_id']
-    
+                  'status', 'approved_at', 'payment_proof_url', 'created_at', 'requested_date','payment_id','linked_user_id', 'linked_user_name']
+    # --- New method to get the linked user's ID ---
+    def get_linked_user_id(self, obj):
+        # The ID is directly on the UserLevel model
+        return getattr(obj, 'linked_user_id', None)
+
+    # --- New method to get the linked user's FULL NAME ---
+    def get_linked_user_name(self, obj):
+        linked_user_id = self.get_linked_user_id(obj)
+        if linked_user_id:
+            try:
+                # 2. Fetch the CustomUser object using the ID
+                linked_user = CustomUser.objects.get(user_id=linked_user_id)
+                # 3. Return the full name
+                full_name = f"{getattr(linked_user, 'first_name', '')} {getattr(linked_user, 'last_name', '')}".strip()
+                return full_name if full_name else linked_user_id # Fallback to ID if name is empty
+            except CustomUser.DoesNotExist:
+                return 'User Not Found'
+        return 'N/A' # Or whatever default value you prefer    
     def get_username(self, obj):
         return f"{obj.user.first_name or ''} {obj.user.last_name or ''}".strip() or obj.user.user_id
 

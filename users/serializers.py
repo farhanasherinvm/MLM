@@ -170,7 +170,9 @@ class ResetPasswordSerializer(serializers.Serializer):
     
 class UserAccountDetailsSerializer(serializers.ModelSerializer):
     confirm_account_number = serializers.CharField(write_only=True)
-
+    # 🌟 NEW: Custom fields to handle UPI data from CustomUser 🌟
+    upi_number = serializers.CharField(source='user.upi_number', required=False, allow_blank=True, allow_null=True)
+    upi_type = serializers.CharField(source='user.payment_type', required=False, allow_blank=True, allow_null=True)
     class Meta:
         model = UserAccountDetails
         fields = [

@@ -82,10 +82,13 @@ class AdminSendRequestReportSerializer(serializers.ModelSerializer):
         return representation
 
 
+
 class AdminPaymentSerializer(serializers.ModelSerializer):
     from_user = serializers.SerializerMethodField()
     username = serializers.SerializerMethodField()
+    # 1. New field for the user's name
     linked_username = serializers.SerializerMethodField()
+    linked_user_name = serializers.SerializerMethodField()
     level = serializers.SerializerMethodField()
     
     amount = serializers.DecimalField(max_digits=12, decimal_places=2)
@@ -96,7 +99,7 @@ class AdminPaymentSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = LevelPayment
-        fields = ['id', 'from_user', 'username', 'linked_username', 'level', 'amount', 'gic', 'status', 'payment_method', 'created_at']
+        fields = ['id', 'from_user', 'username', 'linked_user_name','linked_username', 'level', 'amount', 'gic', 'status', 'payment_method', 'created_at']
 
     def get_gic(self, obj):
         amount = getattr(obj, 'amount', 0)
@@ -109,7 +112,19 @@ class AdminPaymentSerializer(serializers.ModelSerializer):
     def get_username(self, obj):
         user = getattr(obj.user_level, 'user', None) if getattr(obj, 'user_level', None) else None
         return getattr(user, 'user_id', 'N/A') if user else 'N/A'
-
+    # --- New method to get the linked user's FULL NAME ---
+    def get_linked_user_name(self, obj):
+        linked_user_id = getattr(obj.user_level, 'linked_user_id', None) if getattr(obj, 'user_level', None) else None
+        if linked_user_id:
+            try:
+                # Fetch the CustomUser object
+                linked_user = CustomUser.objects.get(user_id=linked_user_id)
+                # Return the full name
+                full_name = f"{getattr(linked_user, 'first_name', '')} {getattr(linked_user, 'last_name', '')}".strip()
+                return full_name if full_name else 'N/A'
+            except ObjectDoesNotExist:
+                return 'N/A'
+        return 'N/A'
     def get_linked_username(self, obj):
         linked_user_id = getattr(obj.user_level, 'linked_user_id', None) if getattr(obj, 'user_level', None) else None
         if linked_user_id:
@@ -123,7 +138,7 @@ class AdminPaymentSerializer(serializers.ModelSerializer):
     def get_level(self, obj):
         level = getattr(obj.user_level, 'level', None) if getattr(obj, 'user_level', None) else None
         return getattr(level, 'name', 'N/A') if level else 'N/A'
-    
+
 class AUCReportSerializer(serializers.Serializer):
     """
     Serializer to unify data from Payment (Registration) and PmfPayment models, 
