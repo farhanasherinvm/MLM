@@ -294,6 +294,7 @@ class AdminUserListSerializer(serializers.ModelSerializer):
     joindate = serializers.DateTimeField(source="date_of_joining", format="%Y-%m-%d", read_only=True)
     username = serializers.SerializerMethodField()
     profile_image = serializers.SerializerMethodField()
+     
 
     class Meta:
         model = CustomUser
@@ -329,6 +330,8 @@ class AdminUserListSerializer(serializers.ModelSerializer):
             request = self.context.get("request")
             return request.build_absolute_uri(obj.profile.profile_image.url)
         return None
+
+
 
 class UserFullNameSerializer(serializers.Serializer):
     user_id = serializers.CharField()

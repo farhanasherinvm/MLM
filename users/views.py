@@ -1066,6 +1066,31 @@ class AdminUserListView(APIView):
     permission_classes = [IsProjectAdmin]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
+    def compute_levels_from_root(self, root_user_id="WC948395"):
+        from users.models import CustomUser
+
+        # Build placement map {placement_id: [children]}
+        placement_map = {}
+        users = CustomUser.objects.values("user_id", "placement_id")
+
+        for u in users:
+            pid = u["placement_id"]
+            uid = u["user_id"]
+            placement_map.setdefault(pid, []).append(uid)
+
+            level_map = {}
+        queue = [(root_user_id, 0)]
+        level_map[root_user_id] = 0
+
+        while queue:
+            user, level = queue.pop(0)
+            for child in placement_map.get(user, []):
+                level_map[child] = level + 1
+                queue.append((child, level + 1))
+
+        return level_map
+
+
     def get_search_query(self, request):
         return (request.query_params.get("search") or request.data.get("search") or "").strip()
 
@@ -1080,7 +1105,8 @@ class AdminUserListView(APIView):
     def get(self, request):
         queryset = CustomUser.objects.select_related("profile").all().order_by("-date_of_joining", "-id")
         # Precompute latest paid user levels
-        user_levels = self.compute_latest_paid_user_levels()
+        user_levels = self.compute_levels_from_root("WC948395")
+
 
         # Apply filters/search/sort using the helper (note: helper will re-order if 'sort_by' provided)
         queryset = apply_search_and_filters(queryset, request, user_levels=user_levels)

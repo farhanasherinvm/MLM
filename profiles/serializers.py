@@ -415,6 +415,7 @@ class AdminUserListSerializer(serializers.ModelSerializer):
     level = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
     date_of_joining = serializers.SerializerMethodField()
+    level = serializers.SerializerMethodField() 
 
     class Meta:
         model = CustomUser
@@ -425,6 +426,7 @@ class AdminUserListSerializer(serializers.ModelSerializer):
         last = getattr(obj, "last_name", "") or ""
         full = f"{first} {last}".strip()
         return full if full else obj.user_id
+    
 
     def get_profile_image(self, obj):
         try:
@@ -439,41 +441,41 @@ class AdminUserListSerializer(serializers.ModelSerializer):
             return None
         return None
 
-    def get_level(self, obj):
-        """
-        Return the latest 'paid' level if available,
-        otherwise fall back to the latest level of any status.
-        We also accept a precomputed mapping in context to avoid DB hits.
-        """
-        # First, see if view provided a precomputed map
-        level_map = self.context.get("user_levels") or self.context.get("level_map") or {}
+    # def get_level(self, obj):
+    #     """
+    #     Return the latest 'paid' level if available,
+    #     otherwise fall back to the latest level of any status.
+    #     We also accept a precomputed mapping in context to avoid DB hits.
+    #     """
+    #     # First, see if view provided a precomputed map
+    #     level_map = self.context.get("user_levels") or self.context.get("level_map") or {}
 
-        cached = level_map.get(obj.user_id)
-        if cached:
-            return cached
+    #     cached = level_map.get(obj.user_id)
+    #     if cached:
+    #         return cached
 
-        # Fetch latest 'paid' level for this user (prefer approved records)
-        latest_paid = (
-            UserLevel.objects.filter(user=obj, status="paid", level__isnull=False)
-            .select_related("level")
-            .order_by("-approved_at", "-requested_date", "-id")
-            .first()
-        )
-        if latest_paid and latest_paid.level:
-            return latest_paid.level.name
+    #     # Fetch latest 'paid' level for this user (prefer approved records)
+    #     latest_paid = (
+    #         UserLevel.objects.filter(user=obj, status="paid", level__isnull=False)
+    #         .select_related("level")
+    #         .order_by("-approved_at", "-requested_date", "-id")
+    #         .first()
+    #     )
+    #     if latest_paid and latest_paid.level:
+    #         return latest_paid.level.name
 
-        # Fallback to any level record (maybe unpaid/pending). pick the latest by timestamps
-        latest_any = (
-            UserLevel.objects.filter(user=obj, level__isnull=False)
-            .select_related("level")
-            .order_by("-approved_at", "-requested_date", "-id")
-            .first()
-        )
-        if latest_any and latest_any.level:
-            return latest_any.level.name
+    #     # Fallback to any level record (maybe unpaid/pending). pick the latest by timestamps
+    #     latest_any = (
+    #         UserLevel.objects.filter(user=obj, level__isnull=False)
+    #         .select_related("level")
+    #         .order_by("-approved_at", "-requested_date", "-id")
+    #         .first()
+    #     )
+    #     if latest_any and latest_any.level:
+    #         return latest_any.level.name
 
-        # No level found
-        return ""
+    #     # No level found
+    #     return ""
 
     def get_status(self, obj):
         return "Active" if obj.is_active else "Blocked"
@@ -483,6 +485,26 @@ class AdminUserListSerializer(serializers.ModelSerializer):
         if doj:
             return doj.strftime("%Y-%m-%d")
         return None
+    def get_level(self, obj):
+        ROOT_USER = "WC948395"  # root placement id
+    
+        # If this is the root user
+        if obj.user_id == ROOT_USER:
+            return "Level 0"
+
+        # Get precomputed levels (coming from view)
+        level_map = self.context.get("user_levels", {})
+
+        # Default: pending/no level
+        paid_level = level_map.get(obj.user_id)
+
+        # If user has paid level, show it (like Level 1, Level 2...)
+        if paid_level:
+            return paid_level
+
+        # If not paid, just show "Refer Help"
+        return "Refer Help"
+
     
 class AdminUserDetailSerializer(serializers.ModelSerializer):
     profile = ProfileSerializer(required=False)
