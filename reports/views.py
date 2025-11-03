@@ -1507,7 +1507,11 @@ class CurrentUserBonusSummaryView(SingleUserBonusSummaryView):
         current_user_id = request.user.user_id # Assuming user_id is an attribute
         return super().get(request, user_id=current_user_id)
 
-
+from reportlab.lib.pagesizes import landscape, A4
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib import colors
+import io 
 class LevelUsersReport(APIView):
     pagination_class = PageNumberPagination
     pagination_class.page_size = 10
@@ -1595,6 +1599,9 @@ class LevelUsersReport(APIView):
             return self.export_pdf(queryset, 'level_users_report')
         elif export == "xlsx":
             return self.export_xlsx(queryset, 'level_users_report')
+        elif export == "joinpdf":
+            return self.export_joining_pdf(queryset, 'user_joining_report')
+
 
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(queryset, request)
@@ -1689,4 +1696,76 @@ class LevelUsersReport(APIView):
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         response["Content-Disposition"] = f'attachment; filename="{filename_prefix}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.xlsx"'
+        return response
+
+  
+    def export_joining_pdf(self, queryset, filename_prefix):
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=landscape(A4))  # ✅ Landscape
+        elements = []
+        styles = getSampleStyleSheet()
+        wrap_style = styles["Normal"]
+        wrap_style.fontSize = 8   # ✅ Smaller text
+
+        elements.append(Paragraph(f"{filename_prefix.replace('_', ' ').title()} Report", styles["Title"]))
+
+        # ✅ Table Header
+        data = [[
+            'From User', 'Username', 'From Name', 'Linked Username', 'Amount', 
+            'Status', 'Level', 'Date Joined', 'Total', 'Payment Method', 'Placement Count'
+        ]]
+
+        serializer = LevelUsersSerializer(queryset, many=True, context={"request": self.request})
+
+        for item in serializer.data:
+            data.append([
+                item.get('from_user', ''),
+                item.get('username', ''),
+                item.get('from_name', ''),
+                item.get('linked_username', ''),
+                str(item.get('amount', '')),
+                item.get('status', ''),
+                item.get('level', ''),
+                item.get('date_joined', ''),  # ✅ Correct key
+                str(item.get('total', '')),
+                item.get("payment_method", ''),
+                item.get("placement_id_count", '')
+            ])
+
+        # ✅ Wrap text to fit cells
+        wrapped_data = []
+        for row in data:
+            new_row = []
+            for cell in row:
+                if isinstance(cell, str) and len(cell) > 12:
+                    new_row.append(Paragraph(cell, wrap_style))
+                else:
+                    new_row.append(cell)
+            wrapped_data.append(new_row)
+
+        # ✅ Set column widths (adjust as needed)
+        col_widths = [80, 60, 90, 80, 50, 60, 50, 80, 50, 90, 60]
+
+        table = Table(wrapped_data, colWidths=col_widths, repeatRows=1)
+
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),  # Header
+            ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),      # Body ✅ Fix text color
+            ("TEXTCOLOR", (0, 1), (-1, -1), colors.black),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),  # ✅ Smaller font for entire table
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ]))
+
+        elements.append(table)
+        doc.build(elements)
+
+        response = HttpResponse(content_type="application/pdf")
+        response["Content-Disposition"] = f"attachment; filename={filename_prefix}_{timezone.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        response.write(buffer.getvalue())
+        buffer.close()
         return response
