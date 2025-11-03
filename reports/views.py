@@ -277,6 +277,106 @@ class PaymentReportViewSet(viewsets.ReadOnlyModelViewSet):
             })
 
         return Response(report_data)
+    @action(detail=False, methods=['get'], url_path='export-pending-csv')
+    def export_pending_csv(self, request):
+        queryset = self.filter_queryset(self.get_queryset().filter(status='pending'))
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="pending_payments.csv"'
+        writer = csv.writer(response)
+        writer.writerow(['Username', 'Level', 'Amount', 'Payment_Mode', 'Transaction_ID', 'Status', 'Requested_Date'])
+
+        for obj in queryset:
+            writer.writerow([
+                getattr(obj.user, 'email', obj.user.user_id),
+                obj.level.name,
+                obj.level.amount,
+                obj.payment_mode,
+                obj.transaction_id or '',
+                obj.status,
+                obj.requested_date.strftime('%Y-%m-%d %H:%M:%S') if obj.requested_date else ''
+            ])
+        return response
+
+    @action(detail=False, methods=['get'], url_path='export-approved-csv')
+    def export_approved_csv(self, request):
+        queryset = self.filter_queryset(self.get_queryset().filter(status='paid'))
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="approved_payments.csv"'
+        writer = csv.writer(response)
+        writer.writerow(['Username', 'Level', 'Amount', 'Payment_Mode', 'Transaction_ID', 'Status', 'Requested_Date'])
+
+        for obj in queryset:
+            writer.writerow([
+                getattr(obj.user, 'email', obj.user.user_id),
+                obj.level.name,
+                obj.level.amount,
+                obj.payment_mode,
+                obj.transaction_id or '',
+                obj.status,
+                obj.requested_date.strftime('%Y-%m-%d %H:%M:%S') if obj.requested_date else ''
+            ])
+        return response
+
+
+
+
+    @action(detail=False, methods=['get'], url_path='export-pending-excel')
+    def export_pending_excel(self, request):
+        queryset = self.filter_queryset(self.get_queryset().filter(status='pending'))
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Pending Payments"
+
+        headers = ['Username', 'Level', 'Amount', 'Payment Mode', 'Transaction ID', 'Status', 'Requested Date']
+        ws.append(headers)
+
+        for obj in queryset:
+            ws.append([
+                getattr(obj.user, 'email', obj.user.user_id),
+                obj.level.name,
+                obj.level.amount,
+                obj.payment_mode,
+                obj.transaction_id or '',
+                obj.status,
+                obj.requested_date.strftime('%Y-%m-%d %H:%M:%S') if obj.requested_date else ''
+            ])
+
+        response = HttpResponse(content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        response['Content-Disposition'] = 'attachment; filename="pending_payments.xlsx"'
+        wb.save(response)
+        return response
+    @action(detail=False, methods=['get'], url_path='export-approved-excel')
+    def export_approved_excel(self, request):
+        queryset = self.filter_queryset(self.get_queryset().filter(status='paid'))
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Approved Payments"
+
+        headers = ['Username', 'Level', 'Amount', 'Payment Mode', 'Transaction ID', 'Status', 'Requested Date']
+        ws.append(headers)
+
+        for obj in queryset:
+            ws.append([
+                getattr(obj.user, 'email', obj.user.user_id),
+                obj.level.name,
+                obj.level.amount,
+                obj.payment_mode,
+                obj.transaction_id or '',
+                obj.status,
+                obj.requested_date.strftime('%Y-%m-%d %H:%M:%S') if obj.requested_date else ''
+            ])
+
+        response = HttpResponse(content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        response['Content-Disposition'] = 'attachment; filename="approved_payments.xlsx"'
+        wb.save(response)
+        return response
+
+
+
+
+
 
 # Existing DashboardReportViewSet (unchanged)
 # Assuming necessary imports (Decimal, Sum, Count, Q, timezone, timedelta) are present
