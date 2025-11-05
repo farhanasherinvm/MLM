@@ -159,6 +159,8 @@ class AUCReportSerializer(serializers.Serializer):
     gst_total = serializers.SerializerMethodField()
     cgst = serializers.SerializerMethodField()
     sgst = serializers.SerializerMethodField()
+    received_payment = serializers.SerializerMethodField()
+
     
     # Standard Fields
     status = serializers.CharField()
@@ -256,6 +258,16 @@ class AUCReportSerializer(serializers.Serializer):
         _, half_gst = self._calculate_gst(obj)
         return half_gst
 
+    def get_received_payment(self, obj):
+        total_gst, _ = self._calculate_gst(obj)
+        amount = getattr(obj, 'amount', Decimal('0.00'))
+        try:
+            amount = Decimal(amount)
+        except:
+            amount = Decimal('0.00')
+
+        received_payment = amount - total_gst
+        return received_payment.quantize(Decimal('0.01'))
 
 
 

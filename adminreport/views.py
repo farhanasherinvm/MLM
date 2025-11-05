@@ -152,7 +152,6 @@ class AdminAUCReportView(APIView):
 
         return filtered_data
 
-
     def get(self, request):
         combined_data = self.get_all_payment_data()
         
@@ -219,12 +218,17 @@ class AdminAUCReportView(APIView):
         total_gst = sum((Decimal(item['gst_total']) for item in full_serialized_data), Decimal('0.00'))
         total_cgst = sum((Decimal(item['cgst']) for item in full_serialized_data), Decimal('0.00'))
         total_sgst = sum((Decimal(item['sgst']) for item in full_serialized_data), Decimal('0.00'))
-            
+        total_received_payment = sum(
+            (Decimal(item['received_payment']) for item in full_serialized_data), Decimal('0.00')
+        )
+    
         totals = {
-            'total_payments': total_payments.quantize(Decimal('0.01')),
+            # 'total_payments': total_payments.quantize(Decimal('0.01')),
+            'total_received_payment': total_received_payment.quantize(Decimal('0.01')),
             'total_gst': total_gst.quantize(Decimal('0.01')),
             'total_cgst': total_cgst.quantize(Decimal('0.01')),
             'total_sgst': total_sgst.quantize(Decimal('0.01')),
+            'total_payments': total_payments.quantize(Decimal('0.01')),
         }
 
         # 6. Handle Export
@@ -271,7 +275,7 @@ class AdminAUCReportView(APIView):
         writer.writerow([])
         # -----------------------
         
-        writer.writerow(['User ID', 'Name', 'Phone', 'Email', 'Type', 'Amount', 'Status', 'Date', 'GST Total', 'CGST', 'SGST'])
+        writer.writerow(['User ID', 'Name', 'Phone', 'Email', 'Type', 'Amount', 'Status', 'Date', 'GST Total', 'CGST', 'SGST','Total Received Payment'])
         
         serializer = AUCReportSerializer(queryset, many=True)
         for data in serializer.data:
@@ -279,16 +283,19 @@ class AdminAUCReportView(APIView):
                 data['user_id'], data['user_name'], data['phone_number'], data['email'], 
                 data['transaction_type'], str(data['amount']), data['status'], 
                 str(data['date']) if data['date'] else '', 
-                str(data['gst_total']), str(data['cgst']), str(data['sgst'])
+                str(data['gst_total']), str(data['cgst']), str(data['sgst']),
+                str(data['received_payment']) 
             ])
             
         # Add totals section
         writer.writerow([])
         writer.writerow(['TOTALS:', '', '', '', '', ''])
-        writer.writerow(['Total Payments', str(totals['total_payments'])])
+        writer.writerow(['Total Received Payment', str(totals['total_received_payment'])]) 
         writer.writerow(['Total GST', str(totals['total_gst'])])
         writer.writerow(['Total CGST', str(totals['total_cgst'])])
         writer.writerow(['Total SGST', str(totals['total_sgst'])])
+        writer.writerow(['Total Payments', str(totals['total_payments'])]) 
+
         
         return response
 
@@ -342,7 +349,7 @@ class AdminAUCReportView(APIView):
         date_style = ParagraphStyle('DateCentered', parent=styles['Normal'], alignment=1, fontSize=7)
         # --- Data Table ---
         # 1. CORRECTED HEADER (10 Columns - Email removed)
-        data = [['User ID', 'Name', 'Phone', 'Type', 'Amount', 'Status', 'Date', 'GST Total', 'CGST', 'SGST']]
+        data = [['User ID', 'Name', 'Phone', 'Type', 'Amount', 'Status', 'Date', 'GST Total', 'CGST', 'SGST','TRP']]
         
         serializer = AUCReportSerializer(queryset, many=True)
         for data_item in serializer.data:
@@ -368,9 +375,13 @@ class AdminAUCReportView(APIView):
                 #str(data_item['date']) if data_item['date'] else '', 
                 # 💥 Use Paragraph for Date
                 Paragraph(date_time_text, date_style),
-                str(data_item['gst_total']), 
+                str(data_item['gst_total']),
                 str(data_item['cgst']),     
-                str(data_item['sgst'])      
+                str(data_item['sgst']),
+                str(data_item['received_payment'])
+                 
+                
+      
             ])
         
         table_width = A4[0] - 80 
@@ -394,10 +405,11 @@ class AdminAUCReportView(APIView):
         # --- Totals Table ---
         totals_data = [
             ['Report Totals', ''],
-            ['Total Payments', f"₹ {totals['total_payments']}"],
+            ['Total Received Payment', f"₹ {totals['total_received_payment']}"],
             ['Total GST (18%)', f"₹ {totals['total_gst']}"],
             ['Total CGST (9%)', f"₹ {totals['total_cgst']}"],
             ['Total SGST (9%)', f"₹ {totals['total_sgst']}"],
+            ['Total Payments', f"₹ {totals['total_payments']}"],
         ]
         
         totals_table = Table(totals_data, colWidths=[2.5*inch, 1.5*inch])
@@ -438,7 +450,7 @@ class AdminAUCReportView(APIView):
         # -----------------------
 
         # Headers based on your example structure, excluding GST fields
-        ws.append(['User ID', 'User Name', 'Phone', 'Type', 'Amount', 'Status', 'Date', 'Total Payment', 'Total GST', 'Total CGST', 'Total SGST'])
+        ws.append(['User ID', 'User Name', 'Phone', 'Type', 'Amount', 'Status', 'Date', 'Total Payment', 'Total GST', 'Total CGST', 'Total SGST', 'Received Payment'])
         
         serializer = AUCReportSerializer(queryset, many=True)
         for data in serializer.data:
@@ -454,7 +466,8 @@ class AdminAUCReportView(APIView):
                 # or just use the fields you explicitly want in the header:
                 data.get('gst_total', 0.00), 
                 data.get('cgst', 0.00),
-                data.get('sgst', 0.00)
+                data.get('sgst', 0.00),
+                data.get('received_payment', 0.00)
             ])
             
         # Auto-size columns (Standard best practice for Excel exports)
