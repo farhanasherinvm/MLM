@@ -378,8 +378,9 @@ class KYCSerializer(serializers.ModelSerializer):
 
         # Verhoeff checksum
         if not verhoeff_validate(value):
+            
             raise serializers.ValidationError("Invalid Aadhaar number (failed checksum).")
-
+         
         # Check uniqueness
         user = self.context['request'].user
         if KYC.objects.exclude(user=user).filter(aadhaar_number=value).exists():

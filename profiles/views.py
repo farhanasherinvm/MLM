@@ -47,6 +47,9 @@ from rest_framework.pagination import PageNumberPagination
 
 
 
+
+from collections import defaultdict
+
 class ProfileView(generics.RetrieveUpdateAPIView):
     serializer_class = ProfileSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -503,3 +506,76 @@ class FreePlacementListView(APIView):
                 })
 
         return Response(free_list)
+
+
+
+class PlacementAvailabilityView(generics.ListAPIView):
+    permission_classes = []
+    authentication_classes = []
+
+    def list(self, request, *args, **kwargs):
+        root_user_id = "WC948395"  # the starting placement ID
+        all_users = CustomUser.objects.all().values(
+            "user_id", "placement_id", "first_name", "last_name", "date_of_joining"
+        )
+
+        # Step 1: Build a mapping of placement_id -> [children]
+        placement_tree = defaultdict(list)
+        for user in all_users:
+            if user["placement_id"]:
+                placement_tree[user["placement_id"]].append(user)
+
+        # Step 2: Recursively find all downline users
+        def get_downline(user_id):
+            downline = []
+            for child in placement_tree.get(user_id, []):
+                downline.append(child)
+                downline.extend(get_downline(child["user_id"]))
+            return downline
+
+        downline_users = get_downline(root_user_id)
+
+        # Step 3: Count children for each placement_id
+        child_counts = defaultdict(int)
+        for u in all_users:
+            if u["placement_id"]:
+                child_counts[u["placement_id"]] += 1
+
+        # Step 4: Separate users by available slots
+        two_slot_free = []
+        one_slot_free = []
+
+        for u in downline_users:
+            count = child_counts.get(u["user_id"], 0)
+            if count == 0:
+                two_slot_free.append(u)
+            elif count == 1:
+                one_slot_free.append(u)
+
+        # Step 5: Sort both groups by date_of_joining
+        two_slot_free.sort(key=lambda x: x["date_of_joining"])
+        one_slot_free.sort(key=lambda x: x["date_of_joining"])
+
+        # Step 6: Prepare response
+        data = {
+            "two_slot_free": [
+                {
+                    "placement_id": u["user_id"],
+                    "name": f"{u['first_name']} {u['last_name']}",
+                    "available_slots": 2,
+                    "date_of_join": u["date_of_joining"].strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                for u in two_slot_free
+            ],
+            "one_slot_free": [
+                {
+                    "placement_id": u["user_id"],
+                    "name": f"{u['first_name']} {u['last_name']}",
+                    "available_slots": 1,
+                    "date_of_join": u["date_of_joining"].strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                for u in one_slot_free
+            ],
+        }
+
+        return Response(data)
